@@ -1,0 +1,114 @@
+<div class="min-h-screen py-8">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <div class="bg-orange-50 border border-gray-200 rounded-xl shadow-md hover:shadow-lg transition-shadow duration-200 p-6">
+      <!-- Header Row -->
+      <div class="w-full">
+        <div class="flex items-start justify-between mb-6">
+          <div class="pr-6">
+            <h2 class="text-2xl font-semibold mb-2">Community News (<%= @community_news_count %>)</h2>
+          </div>
+          <div class="text-right text-end">
+            <% if current_user.super_user? %>
+              <%= link_to "New Post",
+                          new_community_news_path,
+                          class: "admin-only bg-blue-100 btn btn-primary-outline" %>
+            <% end %>
+          </div>
+        </div>
+
+        <% if @community_news.any? %>
+      <div class="overflow-x-auto bg-white border border-gray-200 rounded-xl shadow-sm">
+        <table class="min-w-full divide-y divide-gray-200">
+          <thead class="bg-gray-50">
+          <tr>
+            <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Title</th>
+            <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Author</th>
+            <th class="px-6 py-3 text-left text-sm font-semibold text-gray-700">Project</th>
+            <th class="px-6 py-3 text-center text-sm font-semibold text-gray-700">Updated</th>
+            <th class="px-6 py-3 text-center text-sm font-semibold text-gray-700">Actions</th>
+          </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100">
+          <% @community_news.each do |news| %>
+            <tr class="hover:bg-gray-50 transition">
+              <td class="px-4 py-2 text-sm text-gray-800 flex items-center gap-2">
+
+                <!-- BOOKMARK -->
+                <span class="pointer-events-auto">
+                  <%= render "bookmarks/editable_bookmark_icon", resource: news %>
+                </span>
+
+                <span class="w-24 h-14 rounded bg-gray-200 flex items-center justify-center shrink-0 mr-2">
+                  <% if news.main_image&.file&.blob&.persisted? %>
+                    <%= link_to (image_tag news.main_image.file,
+                                  class: "w-full rounded shadow-sm border border-gray-200",
+                                  alt: news.title),
+                                          community_news_path(news) %>
+                  <% else %>
+                    <svg class="w-6 h-6 text-gray-400"
+                         fill="currentColor" viewBox="0 0 20 18"></svg>
+                  <% end %>
+                </span>
+
+                <!-- TITLE + BADGES -->
+                <span class="inline-flex items-center gap-2">
+                  <%= link_to title_with_badges(news, admin: current_user.super_user?).html_safe,
+                              community_news_path(news),
+                              class: "font-bold hover:text-indigo-800 hover:underline" %>
+                </span>
+              </td>
+
+              <td class="px-6 py-4 text-gray-800">
+                <%= news.author&.full_name || "—" %>
+              </td>
+
+              <td class="px-6 py-4 text-gray-600">
+                <%= news.project&.name || "—" %>
+              </td>
+
+              <td class="px-6 py-4 text-center text-sm text-gray-500">
+                <%= news.updated_at.strftime("%b %d, %Y") %>
+              </td>
+
+              <td class="px-6 py-4 text-right">
+                <div class="inline-flex gap-2">
+                  <% if current_user.super_user? %>
+                    <%= link_to "Edit",
+                                edit_community_news_path(news),
+                                class: "admin-only bg-blue-100 btn btn-secondary-outline" %>
+                  <% end %>
+
+                  <%= link_to "View",
+                              community_news_path(news),
+                              class: "btn btn-secondary-outline" %>
+                </div>
+              </td>
+            </tr>
+          <% end %>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Pagination -->
+      <div class="mt-6 flex justify-center">
+        <div class="pagination mt-6">
+          <%= tailwind_paginate @community_news %>
+        </div>
+      </div>
+    <% else %>
+      <div class="text-center py-16 bg-white rounded-xl border border-gray-200 shadow-sm">
+        <h2 class="text-gray-600 text-lg mb-2">No community news yet</h2>
+        <% if current_user.super_user? %>
+          <div class="admin-only bg-blue-100 p-3">
+            <%= link_to "Create a post",
+                        new_community_news_path,
+                        class: "btn btn-primary" %>
+          </div>
+        <% end %>
+      </div>
+    <% end %>
+      </div>
+    </div>
+  </div>
+</div>
+
