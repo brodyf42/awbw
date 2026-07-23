@@ -5,36 +5,36 @@
   method: :post do |f| %>
   <hr>
  <% unless params[:form_builder_id].to_i == 7 %>
-   <h4>Report Type</h4>
+   <h4>Report type</h4>
   </hr>
   <!-- ######### row 1 ##### -->
   <div class="row">
     <div class="visible-xs">
       <div class="col-md-8 form-group">
-      	<div class='btn-container windows-type btns-aligned'>
+        <div class='btn-container windows-type btns-aligned'>
           <%= link_to("Adult Monthly Report", "/reports/monthly?form_builder_id=4",
               class: "btn btn-primary btn--small #{'btn-active' if params['form_builder_id'] == '4'}") %>
           <%= link_to("Children's Monthly Report", "/reports/monthly?form_builder_id=2",
               class: "btn btn-primary btn--small #{'btn-active' if params['form_builder_id'] == '2'}") %>
-      	</div>
+        </div>
       </div>
     </div>
 
     <div class="hidden-xs">
-    	<div class="col-md-8 form-group">
-    	  <div class='btn-container windows-type btns-aligned'>
-    	    <%= link_to("Adult Monthly Report", "/reports/monthly?form_builder_id=4",
-    		class: "btn btn-primary btn--small") %>
+      <div class="col-md-8 form-group">
+        <div class='btn-container windows-type btns-aligned'>
+          <%= link_to("Adult Monthly Report", "/reports/monthly?form_builder_id=4",
+        class: "btn btn-primary btn--small") %>
 
-    	    <%= link_to("Children's Monthly Report", "/reports/monthly?form_builder_id=2",
-    		class: "btn btn-primary btn--small") %>
-    	  </div>
-	   </div>
+          <%= link_to("Children's Monthly Report", "/reports/monthly?form_builder_id=2",
+        class: "btn btn-primary btn--small") %>
+        </div>
+     </div>
     </div>
 
     <% if not @workshop_log_summary_page %>
       <div class='col-md-8'>
-        <%= f.label 'Reporting for the Month Of' %>
+        <%= f.label 'Reporting for the month of' %>
         <%= f.date_select :date,
           { discard_day: true, selected: Date.new( @year.to_i, @month.to_i ), use_hidden: true },
             onchange: 'window.location = window.location.toString().split("&month=")[0 + "&month=" +  $("#report_date_2i").val() + "&year=" + $("#report_date_1i").val()' %>
@@ -56,9 +56,9 @@
 
       <!-- ######### form fields ####### -->
       <div class='form-group'>
-        <%= f.label 'Facilitator' %>
+        <%= f.label "Person" %>
         <%= f.text_field :user, disabled: false, value: current_user.name, class:"form-control" %>
-        <%= f.hidden_field :user_id, value: current_user.id %>
+        <%= f.hidden_field :created_by_id, value: current_user.id %>
         <%= f.hidden_field :type %>
         <%= f.hidden_field :windows_type_id, value: @report.windows_type_id %>
         <%= f.hidden_field :id, value: @report.id %>
@@ -71,7 +71,7 @@
           <div class="custom-smaller">Please contact AWBW if your agency is not listed.</div>
         </div>
         <% agency = @agencies.find_by(windows_type_id: f.object.windows_type.id) %>
-        <%= f.collection_select :project_id, @agencies, :id, :name,
+        <%= f.collection_select :organization_id, @agencies, :id, :name,
         { selected: agency ? agency.id : nil,class: 'js-agency-select' },
         class:"selectpicker form-control form-control-custom", onchange: "window.location = $.replaceUrlParam(window.location.toString(),'agency_id',$(this).val() )" %>
       </div>
@@ -92,7 +92,7 @@
                   :workshop_id,
                   @workshop_list,
                     :id,
-                    :log_title, { :selected => params[:workshop_id],
+                    :type_name, { :selected => params[:workshop_id],
                     :prompt => "Select a workshop" },
 {
 :class  =>  "form-control form-control-custom",
@@ -102,9 +102,6 @@
             </div>
           </div>
         </div>
-        <script type="text/javascript">
-          $('#select-workshop').select2();
-        </script>
 
       <% end %>
 
@@ -125,8 +122,8 @@
          <% @report.log_fields.each do |field| %>
            <%= render 'shared/form_field', :field => field, :report => @report %>
 
-           <% if field.question == 'Share challenges for this month' ||
-    (field.question == 'Anything we can do to help you?' and params[:form_builder_id].to_i == 2) %>
+           <% if field.name == 'Share challenges for this month' ||
+    (field.name == 'Anything we can do to help you?' and params[:form_builder_id].to_i == 2) %>
              <br />
              <script>
                window.quotesIndex = 0;
@@ -181,7 +178,7 @@
   <!-- ######### row 3 ########## -->
   <div class="row">
     <div class="col-md-8 align-right">
-      <%= f.submit 'Submit', id: "btn_submit", class: "btn btn-primary btn-blued" %>
+      <%= f.button :submit, id: "btn_submit", class: "btn btn-primary" %>
     </div>
   </div>
 <% end %>
@@ -261,7 +258,7 @@
 
 
   if ($.urlParam('agency_id') != null){
-    $("#report_project_id").val("<%=params[:agency_id] %>");
+    $("#report_organization_id").val("<%=params[:agency_id] %>");
   }
 
   function validateOptions(event, div_id, input_type) {

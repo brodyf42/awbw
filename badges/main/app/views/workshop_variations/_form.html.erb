@@ -1,86 +1,219 @@
-<%= simple_form_for @workshop_variation, html: { multipart: true } do |f| %>
-  <%= hidden_field_tag(:from, params[:from]) %>
+<div class="rounded-xl bg-white p-6">
+  <%= simple_form_for @workshop_variation, html: { multipart: true }, data: { turbo: false, controller: "submit-once", "submit-once-submitting-text-value": "Saving…" } do |f| %>
+    <%= hidden_field_tag(:from, params[:from]) %>
 
-  <%= render 'shared/errors', resource: workshop_variation if workshop_variation.errors.any? %>
+    <%= render "shared/errors", resource: @workshop_variation if @workshop_variation.errors.any? %>
 
-  <!-- Workshop selection / reference -->
-  <div class="mb-6">
-    <% if @workshop %>
-      <%= f.hidden_field :workshop_id, value: @workshop.id %>
-      <div class="text-lg font-semibold mb-2">
-        Variant of workshop:
-        <span class="text-2xl font-bold">
-          <%= link_to(@workshop.name, workshop_path(@workshop), class: "hover:underline") %>
-        </span>
+    <% linked_idea = @workshop_variation_idea || f.object.workshop_variation_idea %>
+
+    <!-- Workshop + Name + Windows (left) parallel with Visibility (right) -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-4 items-start">
+      <div class="md:col-span-3 space-y-6">
+        <!-- Workshop selection / reference -->
+        <div>
+          <% if params[:admin] == "true" || (f.object.new_record? && !@workshop) %>
+            <%= f.input :workshop_id,
+              collection: f.object.workshop.present? ? [[ f.object.workshop.remote_search_label[:label], f.object.workshop.id]] : [],
+              include_blank: true,
+              required: true,
+              input_html: {
+                class: "h-10 rounded-md",
+                data: {
+                  controller: "remote-select",
+                  remote_select_model_value: "workshop"
+                }
+              },
+              prompt: "Type to search workshops…",
+              label: "Workshop" %>
+          <% elsif @workshop %>
+            <%= f.hidden_field :workshop_id, value: @workshop.id %>
+          <% elsif f.object.workshop_id.present? %>
+            <%= f.hidden_field :workshop_id, value: f.object.workshop_id %>
+          <% end %>
+        </div>
+
+        <% if linked_idea %>
+          <div class="admin-only bg-purple-100 rounded-lg border border-purple-200 p-4">
+            <div class="flex items-center gap-2">
+              <i class="fas fa-arrow-up-from-bracket text-purple-600"></i>
+              <span class="text-sm font-medium text-purple-800"><%= f.object.persisted? ? "Promoted from:" : "Promoting from:" %></span>
+              <%= link_to linked_idea.name,
+                          workshop_variation_idea_path(linked_idea),
+                          class: "btn btn-secondary-outline text-sm" %>
+            </div>
+          </div>
+        <% end %>
+
+        <!-- Name + Windows type -->
+        <div class="flex flex-col md:flex-row md:space-x-4">
+          <div class="flex-1">
+            <%= f.input :name, label: "Variation name", input_html: { class: "w-full h-10" } %>
+          </div>
+          <div class="w-full md:w-1/3">
+            <%= f.input :windows_type_id,
+                      as: :select,
+                      required: true,
+                      collection: WindowsType.all,
+                      label_method: :short_name,
+                      value_method: :id,
+                      selected: f.object.windows_type_id || WindowsType.find_by(name: "Combined")&.id,
+                      include_blank: "Select type",
+                      label: "Windows type",
+                      input_html: { class: "w-full h-10 rounded-md border border-gray-300 px-3 py-2 text-gray-800 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-200 focus:outline-none" } %>
+          </div>
+        </div>
       </div>
-    <% else %>
-      <%= f.input :workshop_id,
-                  as: :select,
-                  collection: @workshops,
-                  required: true,
-                  prompt: "Select a Workshop",
-                  input_html: { class: "w-full" } %>
-    <% end %>
-  </div>
 
-  <!-- Variation fields -->
-  <div class="grid grid-cols-1 md:grid-cols-1 gap-6">
-    <div>
-      <%= f.input :name, label: "Variation name", input_html: { class: "w-full" } %>
-
-      <%= f.input :code,
-                  as: :text,
-                  required: true,
-                  label: "Share a little bit about your workshop variation, how you modified the workshop to fit your population/setting/facilitation style, and/or anything about how the workshop was received by participants, things you would do differently next time, etc.",
-                  input_html: { rows: 10, class: "w-full" } %>
-
-      <%= f.input :youtube_url,
-                  label: "YouTube link <span class='text-normal text-sm text-gray-400'>(optional)</span>".html_safe,
-                  hint: "If you already have a video on YouTube you’d like to share",
-                  input_html: { class: "w-full" } %>
+      <% if allowed_to?(:manage?, WorkshopVariation) %>
+        <div class="admin-only bg-blue-100 rounded mt-6 md:mt-0 p-3">
+          <%= render "shared/visibility_info", flags: %i[published publicly_visible] %>
+          <div class="grid grid-cols-1 items-center">
+            <%= visibility_flag_input f, :published, input_html: { checked: f.object.id ? f.object.published? : false } %>
+            <%= visibility_flag_input f, :publicly_visible, input_html: { checked: f.object.id ? f.object.publicly_visible? : false } %>
+          </div>
+        </div>
+      <% end %>
     </div>
 
-    <%= render "shared/form_image_fields", f: f, include_main_image: true %>
+    <!-- Variation fields -->
+    <div class="grid grid-cols-1 md:grid-cols-1 gap-6">
+      <div>
+        <div class="form-group <%= 'has-error' if f.object.errors[:rhino_body].present? %>">
+          <%= rhino_editor(f, :body) %>
 
-    <% if current_user.super_user? %>
-      <div class="flex items-start gap-6 bg-blue-50 p-4 rounded-lg">
-        <%= f.input :inactive, as: :boolean, label: "Hidden?", input_html: { checked: f.object.id ? f.object.inactive : false } %>
+          <% if f.object.errors[:rhino_body].present? %>
+            <div class="text-danger mt-1 text-sm">Field <%= f.object.errors[:rhino_body].first %></div>
+          <% end %>
+        </div>
 
-        <%= f.input :ordering, as: :integer, label: "Ordering", input_html: { class: "w-24" } %>
-
-        <%= f.input :created_by_id,
-                    as: :select,
-                    collection: User.order(:first_name, :last_name),
-                    selected: (f.object.created_by_id || current_user.id),
-                    input_html: { class: "w-full rounded-lg px-3 py-2" } %>
       </div>
-    <% else %>
-      <%= f.hidden_field :created_by_id, value: current_user.id %>
-    <% end %>
-  </div>
 
-  <!-- Action buttons -->
-  <div class="mt-6 flex flex-wrap gap-3">
-    <% if @workshop_variation.persisted? %>
-      <%= link_to "Delete", @workshop_variation,
-                  method: :delete,
-                  data: { confirm: "Are you sure?" },
-                  class: "px-4 py-2 border border-red-600 rounded-lg text-red-600 hover:bg-red-50 hover:text-red-700" %>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div>
+          <%= f.input :author_credit_preference,
+                      as: :select,
+                      required: true,
+                      collection: AuthorCreditable::ADMIN_FORM_OPTIONS,
+                      include_blank: "Select a preference",
+                      selected: f.object.author_credit_preference || "full_name",
+                      label: "Author credit preference",
+                      hint: "Controls how the author’s name is displayed",
+                      input_html: { class: "h-10 rounded-md" } %>
+
+          <% if allowed_to?(:manage?, WorkshopVariation) %>
+            <div class="admin-only bg-blue-100 p-4 rounded-lg mt-4">
+              <% if params[:admin] == "true" %>
+                <%= f.input :position, as: :integer, label: "Ordering", input_html: { class: "w-24" } %>
+              <% end %>
+              <%= f.input :author_id,
+                        as: :select,
+                        label: (f.object.author ? (
+                          link_to "Variation author",
+                                  person_path(f.object.author),
+                                  class: "hover:underline") : "Variation author").html_safe,
+                        collection: f.object.author_person.present? ? [[ f.object.author_person.remote_search_label[:label], f.object.author_person.id ]] : [],
+                        selected: f.object.author_person&.id || current_user.person_id,
+                        include_blank: true,
+                        input_html: {
+                          data: {
+                            controller: "remote-select",
+                            remote_select_model_value: "person"
+                          }
+                        } %>
+            </div>
+          <% end %>
+        </div>
+
+        <div>
+          <%= f.input :youtube_url,
+                    label: "YouTube link <span class=’text-normal text-sm text-gray-400’>(optional)</span>".html_safe,
+                    hint: "If you already have a video on YouTube you’d like to share",
+                    input_html: { class: "w-full" } %>
+
+          <% if allowed_to?(:manage?, WorkshopVariation) %>
+            <div class="admin-only bg-blue-100 p-4 rounded-lg mt-4">
+              <div data-controller="searchable-select" data-searchable-select-mode-value="default">
+                <%= f.input :workshop_variation_idea_id,
+                            as: :select,
+                            label: "Variation idea",
+                            collection: WorkshopVariationIdea.includes(:workshop, :windows_type, :created_by).order(:name),
+                            label_method: ->(idea) { "#{idea.name} (#{idea.windows_type&.short_name&.first || 'C'}) by #{idea.created_by&.name || '?'} — #{idea.workshop&.title || 'No workshop'} (#{idea.workshop&.windows_type&.short_name&.first || 'C'})" },
+                            value_method: :id,
+                            include_blank: "Select a variation idea",
+                            selected: (f.object.workshop_variation_idea_id || @workshop_variation_idea&.id),
+                            input_html: { class: "w-full rounded-lg px-3 py-2",
+                                          data: { searchable_select_target: "select" } } %>
+              </div>
+            </div>
+          <% end %>
+        </div>
+      </div>
+    </div>
+
+    <% if linked_idea %>
+      <% idea_assets = linked_idea.assets.select { |a| a.file.attached? } %>
+      <% if idea_assets.any? %>
+        <% idea_blob_ids = Set.new(idea_assets.map { |a| a.file.blob_id }) %>
+        <% variation_blob_ids = Set.new(f.object.assets.select { |a| a.file.attached? }.map { |a| a.file.blob_id }) %>
+        <% assets_already_transferred = idea_blob_ids.subset?(variation_blob_ids) %>
+        <% unless assets_already_transferred && params[:admin] != "true" %>
+          <div class="rounded-lg border border-blue-200 bg-blue-50 p-4 mt-6">
+            <div class="flex items-start space-x-3">
+              <%= label_tag :promote_idea_assets, class: "flex items-start space-x-3 cursor-pointer" do %>
+                <%= check_box_tag :promote_idea_assets, true, f.object.new_record?, class: "mt-1 h-5 w-5 text-blue-600 rounded border-gray-300 focus:ring-blue-500" %>
+                <div class="flex flex-col">
+                  <span class="text-gray-900 font-medium">
+                    Check this box to transfer attachments from the variation idea.
+                  </span>
+                  <p class="text-amber-600 text-sm mt-1 font-medium">
+                    <i class="fas fa-triangle-exclamation"></i>
+                    This will add the idea’s attachments to any existing attachments on this variation once you click submit.
+                  </p>
+                </div>
+              <% end %>
+            </div>
+
+            <h3 class="text-sm font-semibold text-gray-700 mt-4 mb-2 ml-8"><%= link_to "Variation idea attachments:", edit_workshop_variation_idea_path(linked_idea, anchor: "attachments"), class: "underline hover:text-blue-600" %></h3>
+            <div class="flex flex-wrap gap-4 ml-8">
+              <% first_gallery = true %>
+              <% idea_assets.sort_by(&:id).each do |asset| %>
+                <% promoted_label = if first_gallery && asset.type == "GalleryAsset"
+                     first_gallery = false
+                     "Primary asset"
+                   else
+                     asset.type.underscore.humanize
+                   end %>
+                <div class="flex flex-col items-center">
+                  <%= render "assets/display_image", resource: linked_idea, item: asset, variant: :gallery %>
+                  <span class="text-xs text-gray-500 mt-1"><%= promoted_label %></span>
+                </div>
+              <% end %>
+            </div>
+          </div>
+        <% end %>
+      <% end %>
     <% end %>
 
-    <% cancel_path =
-         if params[:workshop_id].present?
+    <%= render "shared/form_image_fields", f: f, include_primary_asset: true %>
+
+    <div class="action-buttons mt-8 flex justify-center gap-3">
+      <% if allowed_to?(:destroy?, f.object) %>
+        <%= link_to "Delete", @workshop_variation, class: "btn btn-danger-outline",
+                    data: { turbo_method: :delete, turbo_confirm: "Are you sure you want to delete?" } %>
+      <% end %>
+
+      <% cancel_path =
+         if params[:workshop_id].present? && @workshop
            workshop_path(@workshop, anchor: "workshop-variations")
-         elsif current_user.super_user?
-           workshop_variations_path
+         elsif (allowed_to?(:index?, WorkshopVariation))
+          workshop_variations_path
          else
-           authenticated_root_path
-         end
-    %>
-    <%= link_to 'Cancel', cancel_path,
-                class: "btn btn-secondary-outline" %>
-
-    <%= f.submit 'Submit',
-                 class: "btn btn-primary" %>
-  </div>
-<% end %>
+          root_path
+         end %>
+      <%= link_to "Cancel",
+                  cancel_path,
+                  class: "btn btn-secondary-outline" %>
+      <%= f.button :submit, class: "btn btn-primary" %>
+    </div>
+  <% end %>
+</div>

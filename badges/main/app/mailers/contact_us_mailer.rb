@@ -1,20 +1,24 @@
 class ContactUsMailer < ApplicationMailer
-  default from: 'contactus@no-reply.com'
-
-  def hello(contact_us)
+  def hello(contact_us, user = nil)
     @contact_us = contact_us
+    @user = user
 
-    case @contact_us[:q]
-    when "adult"
-      @mail_to = "cturek@awbw.org"
-    when "children"
-      @mail_to = "cturekrials@awbw.org"
-    when "general"
-      @mail_to = "programs@awbw.org"
+    @mail_to = ENV.fetch("REPLY_TO_EMAIL", "programs@awbw.org")
+
+    sender_name = if user.present?
+      user.full_name
     else
-      @mail_to = "programs@awbw.org"
+      "#{contact_us[:first_name]} #{contact_us[:last_name]}".strip
     end
 
-    mail(to: @mail_to, subject: @contact_us[:subject], from: @contact_us[:from])
+    mail(to: @mail_to, subject: "AWBW Portal: [FYI] New contact form submission from #{sender_name}: #{@contact_us[:subject]}", from: @contact_us[:from])
+  end
+
+  def confirmation(contact_us, user = nil)
+    @contact_us = contact_us
+    @user = user
+
+    recipient = user&.email || contact_us[:from]
+    mail(to: recipient, subject: "AWBW Portal: We received your message re #{contact_us[:subject]}")
   end
 end

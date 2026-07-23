@@ -1,66 +1,220 @@
-require "rails_helper"
+require 'rails_helper'
+require 'securerandom'
 
 RSpec.describe Workshop do
+  it_behaves_like "featureable", factory: :workshop
   # pending "add some examples to (or delete) #{__FILE__}"
-  describe "associations" do
+  describe 'associations' do
     # Need create for association tests to work correctly with callbacks/scopes
     subject { create(:workshop) } # Assumes functional factory
 
-    it { should belong_to(:user).optional }
-    it { should belong_to(:windows_type) }
+    it { should belong_to(:created_by).optional }
+    it { should belong_to(:author).class_name("Person").optional }
+    it { should belong_to(:windows_type).optional }
 
     it { should have_many(:sectorable_items).dependent(:destroy).inverse_of(:sectorable) }
     it { should have_many(:sectors).through(:sectorable_items) }
-    it { should have_many(:images).dependent(:destroy) } # As owner
-    it { should have_many(:workshop_logs).dependent(:destroy) } # As owner
+    it { should have_many(:workshop_logs).dependent(:restrict_with_error) }
     it { should have_many(:bookmarks).dependent(:destroy) } # As bookmarkable
-    it { should have_many(:workshop_variations).dependent(:destroy) }
+    it { should have_many(:workshop_variations).dependent(:restrict_with_error) }
     it { should have_many(:categorizable_items).dependent(:destroy) } # As categorizable
     it { should have_many(:categories).through(:categorizable_items) }
-    it { should have_many(:metadata).through(:categories) }
+    it { should have_many(:category_types).through(:categories) }
     it { should have_many(:quotable_item_quotes).dependent(:destroy) } # As quotable
     it { should have_many(:quotes).through(:quotable_item_quotes) }
     it { should have_many(:workshop_resources).dependent(:destroy) }
     it { should have_many(:resources).through(:workshop_resources) }
-    it { should have_many(:attachments).dependent(:destroy) } # As owner
-    it { should have_many(:workshop_age_ranges) }
+    it { should have_many(:age_ranges) }
 
     # Nested Attributes
-    it { should accept_nested_attributes_for(:gallery_images).allow_destroy(true) }
-    it { should accept_nested_attributes_for(:sectorable_items).allow_destroy(true) }
-    it { should accept_nested_attributes_for(:sectors).allow_destroy(true) }
-    it { should accept_nested_attributes_for(:workshop_age_ranges).allow_destroy(true) }
+    # it { should accept_nested_attributes_for(:category_ids) } # assigns them in the controller
+    # it { should accept_nested_attributes_for(:sector_ids) } # assigns them in the controller
     it { should accept_nested_attributes_for(:quotes) }
     it { should accept_nested_attributes_for(:workshop_variations) }
-    it { should accept_nested_attributes_for(:workshop_logs).allow_destroy(true) }
   end
 
-  describe "validations" do
+  describe 'validations' do
     # Requires associations for create
-    subject { build(:workshop, user: create(:user), windows_type: create(:windows_type)) }
+    subject { build(:workshop, created_by: create(:user), windows_type: create(:windows_type)) }
 
     it { should validate_presence_of(:title) }
-    it { should validate_length_of(:age_range).is_at_most(16) }
 
     # Conditional presence validation for legacy workshops (month, year)
-    context "when legacy is true" do
+    context 'when legacy is true' do
       before { allow(subject).to receive(:legacy).and_return(true) }
       # Cannot easily test conditional validation with shoulda-matchers, test manually
       # it { should validate_presence_of(:month) }
       # it { should validate_presence_of(:year) }
     end
-    context "when legacy is false" do
+    context 'when legacy is false' do
       before { allow(subject).to receive(:legacy).and_return(false) }
       # it { should_not validate_presence_of(:month) }
       # it { should_not validate_presence_of(:year) }
     end
   end
 
-  it "is valid with valid attributes" do
+  it 'is valid with valid attributes' do
     # Note: Factory needs associations uncommented for create
     # expect(build(:workshop)).to be_valid
   end
 
+  describe '#type_name' do
+    it 'returns title + windows type (when present) + # + id' do
+      record = create(:workshop, title: 'The best workshop in the world', windows_type: create(:windows_type, :adult))
+
+      expect(record.type_name).to eq "The best workshop in the world (Adult) ##{record.id}"
+    end
+
+    it 'omits the windows type part when there is no windows_type' do
+      record = create(:workshop, title: 'The best workshop in the world', windows_type: nil)
+
+      expect(record.type_name).to eq "The best workshop in the world ##{record.id}"
+    end
+  end
+
+  # SearchCop
+  describe 'search' do
+    it 'returns correct workshops when searching for the same random string' do
+      random_string = Array.new(3) { SecureRandom.alphanumeric(6) }.join(' ')
+
+      workshop1 = Workshop.create!(title: "Workshop One", rhino_objective: random_string)
+      workshop2 = Workshop.create!(title: "Workshop Two", rhino_setup: random_string)
+      workshop3 = Workshop.create!(title: "Workshop Three", rhino_warm_up: random_string)
+      workshop4 = Workshop.create!(title: "Workshop Four", rhino_objective: "Other")
+
+      results = Workshop.search(random_string)
+
+      expect(results).to contain_exactly(workshop1, workshop2, workshop3)
+    end
+  end
+
+  it_behaves_like "author_creditable", factory: :workshop
+
+  describe "#author_person" do
+    let(:creator) { create(:user, :with_person) }
+    let(:facilitator) { create(:person) }
+
+    it "returns the explicitly chosen author when present" do
+      workshop = create(:workshop, created_by: creator, author: facilitator)
+      expect(workshop.author_person).to eq(facilitator)
+    end
+
+    it "falls back to the creating user's person when no author is set" do
+      workshop = create(:workshop, created_by: creator, author: nil)
+      expect(workshop.author_person).to eq(creator.person)
+    end
+
+    it "credits the author over the creator via author_credit" do
+      workshop = create(:workshop, created_by: creator, author: facilitator,
+                                   author_credit_preference: "full_name")
+      expect(workshop.author_credit).to eq(facilitator.full_name)
+    end
+  end
+
+  describe "#remote_search_label" do
+    it "returns title with windows type short_name" do
+      record = create(:workshop, title: "Art Therapy", windows_type: create(:windows_type, :children))
+
+      expect(record.remote_search_label).to eq({ id: record.id, label: "Art Therapy (Children)" })
+    end
+
+    it "returns just the title when no windows type" do
+      record = create(:workshop, title: "Art Therapy", windows_type: nil)
+
+      expect(record.remote_search_label).to eq({ id: record.id, label: "Art Therapy" })
+    end
+  end
+
+  describe ".resolve_duplicate_labels" do
+    it "omits id when labels are unique" do
+      wt = create(:windows_type, :adult)
+      w1 = create(:workshop, title: "Art Therapy", windows_type: wt)
+      w2 = create(:workshop, title: "Music Therapy", windows_type: wt)
+
+      labels = Workshop.resolve_duplicate_labels([ w1, w2 ].map(&:remote_search_label))
+
+      expect(labels).to contain_exactly(
+        { id: w1.id, label: "Art Therapy (Adult)" },
+        { id: w2.id, label: "Music Therapy (Adult)" }
+      )
+    end
+
+    it "appends id only to duplicate labels" do
+      wt = create(:windows_type, :adult)
+      w1 = create(:workshop, title: "Art Therapy", windows_type: wt)
+      w2 = create(:workshop, title: "Art Therapy", windows_type: wt)
+      w3 = create(:workshop, title: "Music Therapy", windows_type: wt)
+
+      labels = Workshop.resolve_duplicate_labels([ w1, w2, w3 ].map(&:remote_search_label))
+
+      expect(labels).to contain_exactly(
+        { id: w1.id, label: "Art Therapy (Adult) ##{w1.id}" },
+        { id: w2.id, label: "Art Therapy (Adult) ##{w2.id}" },
+        { id: w3.id, label: "Music Therapy (Adult)" }
+      )
+    end
+
+    it "treats labels as duplicates regardless of case" do
+      wt = create(:windows_type, :adult)
+      w1 = create(:workshop, title: "Art Therapy", windows_type: wt)
+      w2 = create(:workshop, title: "art therapy", windows_type: wt)
+
+      labels = Workshop.resolve_duplicate_labels([ w1, w2 ].map(&:remote_search_label))
+
+      expect(labels).to contain_exactly(
+        { id: w1.id, label: "Art Therapy (Adult) ##{w1.id}" },
+        { id: w2.id, label: "art therapy (Adult) ##{w2.id}" }
+      )
+    end
+
+    it "treats labels as duplicates regardless of extra whitespace" do
+      wt = create(:windows_type, :adult)
+      w1 = create(:workshop, title: "Art Therapy", windows_type: wt)
+      w2 = create(:workshop, title: "Art  Therapy", windows_type: wt)
+
+      labels = Workshop.resolve_duplicate_labels([ w1, w2 ].map(&:remote_search_label))
+
+      expect(labels).to contain_exactly(
+        { id: w1.id, label: "Art Therapy (Adult) ##{w1.id}" },
+        { id: w2.id, label: "Art  Therapy (Adult) ##{w2.id}" }
+      )
+    end
+  end
+
+  describe ".remote_search" do
+    it "finds workshops matching the query" do
+      matching = create(:workshop, title: "Healing Through Art")
+      create(:workshop, title: "Unrelated Workshop")
+
+      results = Workshop.remote_search("Healing")
+
+      expect(results).to contain_exactly(matching)
+    end
+
+    it "eager loads windows_type to avoid N+1" do
+      create(:workshop, title: "Healing Through Art")
+
+      results = Workshop.remote_search("Healing")
+
+      expect(results.includes_values).to include(:windows_type)
+    end
+  end
+
+  describe "dependent restrictions" do
+    it "prevents deletion when workshop_logs exist" do
+      workshop = create(:workshop)
+      create(:workshop_log, workshop: workshop)
+
+      expect { workshop.destroy }.not_to change(Workshop, :count)
+      expect(workshop.errors[:base]).to include(a_string_matching(/cannot be deleted/i).or(a_string_matching(/restrict/i)).or(a_string_matching(/Cannot delete record/i)))
+    end
+
+    it "allows deletion when no workshop_logs exist" do
+      workshop = create(:workshop)
+
+      expect { workshop.destroy }.to change(Workshop, :count).by(-1)
+    end
+  end
+
   # Add tests for scopes, methods like #rating, #log_count, SearchCop etc.
 end
-

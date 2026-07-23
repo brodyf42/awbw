@@ -1,0 +1,166 @@
+<% content_for(:page_bg_class, "admin-only bg-blue-100") %>
+<div class="<%= DomainTheme.bg_class_for(:admin_only) %> border border-gray-200 rounded-xl shadow p-6">
+
+      <div class="flex flex-wrap items-center gap-y-2 mb-2">
+        <% if allowed_to?(:index?, with: Admin::HomePolicy) %>
+          <%= link_to admin_path, class: "inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700" do %>
+            <i class="fas fa-arrow-left"></i>
+            <span>Admin</span>
+          <% end %>
+        <% end %>
+        <div class="ml-auto">
+          <%= render "admin/shared/activities_tabs" %>
+        </div>
+      </div>
+
+      <div class="flex items-baseline gap-3 mb-6 leading-none">
+        <h1 class="text-2xl font-semibold text-gray-900 leading-none">Visits</h1>
+        <span class="text-sm text-gray-500 leading-none"><%= @visits.total_entries %> total</span>
+      </div>
+
+      <div class="mb-6 text-sm min-h-10">
+        <%= render "admin/shared/active_filters_subheader" %>
+      </div>
+
+      <!-- Filters -->
+      <div class="bg-white border border-gray-200 rounded-xl shadow-sm p-6 mb-6">
+        <%= form_with url: request.path, method: :get, local: true do %>
+
+          <div class="flex flex-wrap lg:flex-nowrap gap-4">
+
+            <!-- User Filter -->
+            <div class="flex-1 min-w-0">
+              <label class="block text-sm font-medium text-gray-600 mb-1">
+                User
+              </label>
+              <%= select_tag :user_id,
+                             options_from_collection_for_select(
+                               User.where(id: Ahoy::Visit.select(:user_id).distinct).order(:first_name, :last_name),
+                               :id,
+                               :full_name,
+                               params[:user_id]
+                             ),
+                             include_blank: "All Users",
+                             class: "w-full px-3 py-2 border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500" %>
+            </div>
+
+            <!-- Audience -->
+            <div class="flex-1 min-w-0">
+              <%= render "admin/shared/audience_dropdown", auto_submit: false, stacked: true %>
+            </div>
+
+            <!-- Time Period -->
+            <div class="flex-1 min-w-0">
+              <label class="block text-sm font-medium text-gray-600 mb-1">
+                Time Period
+              </label>
+              <%= select_tag :time_period,
+                             options_for_select(
+                               [["All time", "all_time"], ["Past day", "past_day"], ["Past week", "past_week"], ["Past month", "past_month"], ["Past year", "past_year"]],
+                               params[:time_period] || "past_month"
+                             ),
+                             class: "w-full px-3 py-2 border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500" %>
+            </div>
+
+            <!-- Date From -->
+            <div class="flex-1 min-w-0">
+              <label class="block text-sm font-medium text-gray-600 mb-1">
+                From
+              </label>
+              <%= date_field_tag :from, params[:from],
+                                 class: "w-full px-3 py-2 border-gray-300 rounded-md shadow-sm" %>
+            </div>
+
+            <!-- Date To -->
+            <div class="flex-1 min-w-0">
+              <label class="block text-sm font-medium text-gray-600 mb-1">
+                To
+              </label>
+              <%= date_field_tag :to, params[:to],
+                                 class: "w-full px-3 py-2 border-gray-300 rounded-md shadow-sm" %>
+            </div>
+
+          </div>
+
+          <!-- Quick Ranges -->
+          <div class="flex items-center gap-3 mt-6 text-sm">
+            <span class="text-gray-500">Quick:</span>
+            <% safe_params = params.slice(:user_id, :from, :to).to_unsafe_h %>
+            <%= link_to "24h",
+                        url_for(safe_params.merge(from: 1.day.ago.to_date)),
+                        class: "text-indigo-600 hover:underline" %>
+
+            <%= link_to "7d",
+                        url_for(safe_params.merge(from: 7.days.ago.to_date)),
+                        class: "text-indigo-600 hover:underline" %>
+
+            <%= link_to "30d",
+                        url_for(safe_params.merge(from: 30.days.ago.to_date)),
+                        class: "text-indigo-600 hover:underline" %>
+          </div>
+
+          <div class="mt-6">
+            <%= submit_tag "Filter",
+                           class: "bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 transition" %>
+          </div>
+
+        <% end %>
+      </div>
+
+      <!-- Table -->
+      <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+        <table class="min-w-full divide-y divide-gray-200 text-sm">
+          <thead class="bg-gray-50 text-gray-600 uppercase tracking-wider text-xs">
+          <tr>
+            <th class="px-4 py-3 text-left">ID</th>
+            <th class="px-4 py-3 text-left">Started</th>
+            <th class="px-4 py-3 text-left">User</th>
+            <th class="px-4 py-3 text-left">IP</th>
+            <th class="px-4 py-3 text-left">Activities</th>
+            <th class="px-4 py-3 text-left">User Agent</th>
+          </tr>
+          </thead>
+
+          <tbody class="divide-y divide-gray-100">
+          <% @visits.each do |visit| %>
+            <tr class="hover:bg-gray-50 transition">
+              <td class="px-4 py-3 text-gray-700">
+                <%= visit.id %>
+              </td>
+
+              <td class="px-4 py-3 text-gray-500 whitespace-nowrap">
+                <%= visit.started_at.in_time_zone.strftime("%Y-%m-%d %H:%M %Z") %>
+              </td>
+
+              <td class="px-4 py-3 text-gray-700">
+                <% if visit.user %>
+                  <%= link_to visit.user.full_name,
+                              user_path(visit.user),
+                              class: "text-indigo-600 hover:underline" %>
+                <% else %>
+                  <span class="text-gray-400 italic">Guest</span>
+                <% end %>
+              </td>
+
+              <td class="px-4 py-3 text-gray-500">
+                <%= visit.ip %>
+              </td>
+
+              <td class="px-4 py-3 text-gray-500">
+                <%= link_to visit.attributes["events_count"],
+                            admin_activities_events_path(visit_id: visit.id) %>
+              </td>
+
+              <td class="px-4 py-3 text-gray-500 max-w-xs">
+                <%= visit.user_agent %>
+              </td>
+            </tr>
+          <% end %>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="flex justify-center mt-8">
+        <%= tailwind_paginate @visits %>
+      </div>
+</div>

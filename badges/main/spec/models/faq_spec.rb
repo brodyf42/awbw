@@ -4,7 +4,7 @@ RSpec.describe Faq do
   # let(:faq) { build(:faq) } # Keep if needed
 
   describe "associations" do
-    # Add association tests if any
+    it { should have_many(:bookmarks).dependent(:destroy) }
   end
 
   describe "validations" do
@@ -14,56 +14,54 @@ RSpec.describe Faq do
   end
 
   describe "scopes" do
-    describe ".active" do
-      let!(:active_faq) { create(:faq, inactive: false) }
-      let!(:inactive_faq) { create(:faq, inactive: true) }
+    describe ".published" do
+      let!(:published_faq) { create(:faq, :published) }
+      let!(:unpublished_faq) { create(:faq) }
 
-      it "returns only active FAQs" do
-        expect(Faq.active).to contain_exactly(active_faq)
-        expect(Faq.active).not_to include(inactive_faq)
+      it "returns only published FAQs" do
+        expect(Faq.published).to contain_exactly(published_faq)
+        expect(Faq.published).not_to include(unpublished_faq)
       end
     end
 
-    describe ".by_order" do
-      let!(:second_faq) { create(:faq, ordering: 1) }
-      let!(:third_faq) { create(:faq, ordering: 2) }
-      let!(:first_faq) { create(:faq, ordering: 0) }
+    describe ".by_position" do
+      let!(:second_faq) { create(:faq, position: 1) }
+      let!(:third_faq) { create(:faq, position: 2) }
+      let!(:first_faq) { create(:faq, position: 0) }
 
-      it "returns FAQs ordered by ordering ascending" do
-        expect(Faq.reorder(nil).by_order).to eq([first_faq, second_faq, third_faq])
+      it "returns FAQs ordered by position ascending" do
+        expect(Faq.reorder(nil).by_position).to eq([ first_faq, second_faq, third_faq ])
       end
     end
   end
 
   describe ".search_by_params" do
-    let!(:active_faq)   { create(:faq, question: "How to reset password?", inactive: false) }
-    let!(:inactive_faq) { create(:faq, question: "Admin only FAQ", inactive: true) }
+    let!(:published_faq)   { create(:faq, question: "How to reset password?") }
+    let!(:unpublished_faq) { create(:faq, :published, question: "Admin only FAQ") }
 
     it "returns all when no params" do
-      expect(Faq.search_by_params({})).to match_array([active_faq, inactive_faq])
+      expect(Faq.search_by_params({})).to match_array([ published_faq, unpublished_faq ])
     end
 
     it "filters by query (case-insensitive substring)" do
       results = Faq.search_by_params({ query: "reset" })
-      expect(results).to include(active_faq)
-      expect(results).not_to include(inactive_faq)
+      expect(results).to include(published_faq)
+      expect(results).not_to include(unpublished_faq)
     end
 
-    it "filters by inactive param when true" do
-      results = Faq.search_by_params({ inactive: true })
-      expect(results).to contain_exactly(inactive_faq)
+    it "filters by published param" do
+      results = Faq.search_by_params({ published: "true" })
+      expect(results).to contain_exactly(unpublished_faq)
     end
 
-    it "filters by inactive param when false" do
-      results = Faq.search_by_params({ inactive: false })
-      expect(results).to contain_exactly(active_faq)
+    it "filters by unpublished param" do
+      results = Faq.search_by_params({ unpublished: "true" })
+      expect(results).to contain_exactly(published_faq)
     end
 
-    it "chains query and inactive filters" do
-      results = Faq.search_by_params({ query: "Admin", inactive: true })
-      expect(results).to contain_exactly(inactive_faq)
+    it "chains query and published filters" do
+      results = Faq.search_by_params({ query: "Admin", published: "true" })
+      expect(results).to contain_exactly(unpublished_faq)
     end
   end
 end
-
-

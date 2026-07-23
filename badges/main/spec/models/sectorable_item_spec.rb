@@ -9,13 +9,9 @@ RSpec.describe SectorableItem do
   end
 
   describe 'validations' do
-    # Add validation tests if uncommented in model (presence, uniqueness)
-    # subject { build(:sectorable_item) } # Requires associations
-    # it { should validate_presence_of(:sector_id) }
-    # it { should validate_presence_of(:sectorable_id) }
-    # it { should validate_presence_of(:sectorable_type) }
-    # Uniqueness requires create and proper scoping:
-    # it { should validate_uniqueness_of(:sector_id).scoped_to([:sectorable_type, :sectorable_id]) }
+    subject { build(:sectorable_item) }
+    it { should validate_presence_of(:sector_id) }
+    it { should validate_uniqueness_of(:sector_id).scoped_to([ :sectorable_type, :sectorable_id ]).with_message("has already been added") }
   end
 
   # it 'is valid with valid attributes' do
@@ -23,4 +19,4 @@ RSpec.describe SectorableItem do
   #   # expect(build(:sectorable_item)).to be_valid
   #   pending("Requires functional sector/sectorable factories and associations uncommented")
   # end
-end 
+end

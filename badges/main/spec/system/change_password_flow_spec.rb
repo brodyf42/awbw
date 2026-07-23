@@ -1,0 +1,24 @@
+require 'rails_helper'
+
+RSpec.describe 'Change Password Flow', type: :system do
+  let(:user) { create(:user) }
+
+  # TODO: fix once we figure out how to get the end-to-end tests
+  # to work with Turbo Stream
+  # The redirect works when tested manually.
+  xit 'allows the user to log out and reset their password' do
+    sign_in user
+    visit root_path
+    expect(page).to have_no_link("Log In")
+
+    # Navigate to the change password page
+    visit change_password_path
+
+    # Click the "Log out and reset it" link
+    click_link 'Log out and reset it.'
+    page.accept_alert "This will log you out and send you to the password reset page. Continue?"
+
+    # Verify redirection to the password reset page
+    expect(page).to have_current_path(new_user_password_path)
+  end
+end

@@ -1,78 +1,114 @@
-<div class="relative ml-3" id="avatar" data-controller="dropdown">
+<div class="navbar-user-button relative" id="avatar" data-controller="dropdown">
+  <% user = current_user %>
+  <% person = user&.person %>
+  <% has_avatar = person&.avatar&.attached? %>
+
   <button
     type="button"
-    class="
-      relative flex rounded-full focus-visible:outline-2
-      focus-visible:outline-offset-2 focus-visible:outline-indigo-500
-    "
+    class="relative flex rounded-full focus-visible:outline-2
+           focus-visible:outline-offset-2 focus-visible:outline-indigo-500 cursor-pointer"
     data-action="dropdown#toggle"
-    data-dropdown-payload-param='[{"avatar-dropdown":"hidden"}]'
-  >
+    data-dropdown-payload-param='[{"avatar-dropdown":"hidden"}]'>
     <span class="sr-only">Open user menu</span>
     <span class="absolute -inset-1.5"></span>
-    <% image = current_user.avatar.attached? ? url_for(current_user.avatar) : "missing.png" %>
-    <%= image_tag image,
-                  id: "avatar-image",
-                  class: "size-10 rounded-full bg-gray-800 outline -outline-offset-1 outline-white/10 img-circle avatar" %>
 
-  </button>
-  <!-- Dropdown menu -->
-<div
-  class="absolute right-0 mt-2 w-48 rounded-md bg-white py-1 shadow-lg outline outline-black/5 transition hidden"
-  id="avatar-dropdown"
-  data-dropdown-target="content"
->
-  <% if current_user.super_user? %>
-    <%= link_to dashboard_admin_path,
-                class: "flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full space-x-2" do %>
-      <i class="fas fa-cog"></i>
-      <span>Admin</span>
+    <% if has_avatar %>
+      <%= image_tag person.avatar.variant(:thumbnail),
+                    id: "avatar-image",
+                    class: "size-10 rounded-full bg-gray-800 outline -outline-offset-1 outline-white/10" %>
+    <% else %>
+      <span id="avatar-image"
+            class="size-10 rounded-full bg-sky-200 text-sky-700 font-bold text-lg
+                   flex items-center justify-center border border-sky-300 shadow-sm">
+        <%= (person&.first_name.presence || user.first_name.presence || user.email).to_s.first.upcase %>
+      </span>
     <% end %>
-  <% end %>
+  </button>
 
-  <%= link_to (current_user.facilitator ? facilitator_path(current_user.facilitator) : generate_facilitator_user_path(current_user)),
-              class: "flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full space-x-2" do %>
-    <i class="fas fa-user"></i>
-    <span>My profile</span>
-  <% end %>
+  <!-- Dropdown menu -->
+  <div
+    class="absolute right-0 mt-2 w-56 rounded-md bg-white py-1 shadow-lg outline outline-black/5 hidden"
+    id="avatar-dropdown"
+    data-dropdown-target="content">
 
-  <% if current_user.project_users.any? %>
-    <% current_user.project_users.each do |project_user| %>
-      <%= link_to project_path(project_user.project),
-                  class: "flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full space-x-2" do %>
-        <i class="fas fa-users"></i>
-        <span>
-          My team<%= " (" + project_user.project.name.truncate(12) + ")" if current_user.project_users.many? %>
-        </span>
+    <% if allowed_to?(:index?, with: Admin::HomePolicy) %>
+      <%= link_to admin_path,
+                  class: "flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 space-x-2" do %>
+        <i class="fas fa-cog"></i>
+        <span>Admin</span>
       <% end %>
     <% end %>
-  <% end %>
 
-  <%= link_to personal_bookmarks_path,
-              class: "flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full space-x-2" do %>
-    <i class="fas fa-bookmark"></i>
-    <span>My bookmarks</span>
-  <% end %>
+    <% if person && allowed_to?(:manage?, Person) %>
+      <%= link_to person_path(person),
+                  class: "admin-only bg-blue-100 flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 space-x-2" do %>
+        <i class="fas fa-user"></i>
+        <span>My profile</span>
+      <% end %>
+    <% end %>
 
-  <%= link_to workshop_logs_path(user_id: current_user.id),
-              class: "flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full space-x-2" do %>
-    <i class="fas fa-clipboard-list"></i>
-    <span>My workshop logs</span>
-  <% end %>
+    <% active_affiliations = @current_user_active_affiliations || [] %>
+    <% if active_affiliations.any? %>
+      <% active_affiliations.each do |affiliation| %>
+        <% if allowed_to?(:show?, affiliation.organization) %>
+          <%= link_to organization_path(affiliation.organization),
+                      class: "admin-only bg-blue-100 flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 space-x-2" do %>
+            <i class="fas fa-users"></i>
+            <span>
+              My organization
+              <% if active_affiliations.many? %>
+                (<%= affiliation.organization.name.truncate(12) %>)
+              <% end %>
+            </span>
+          <% end %>
+        <% end %>
+      <% end %>
+    <% end %>
 
-  <%= link_to change_password_path,
-              class: "flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full space-x-2" do %>
-    <i class="fas fa-key"></i>
-    <span>Change password</span>
-  <% end %>
+    <% if @current_user_staffs_events %>
+      <%= link_to events_path(staffed_by_me: true),
+                  class: "admin-only bg-blue-100 flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 space-x-2" do %>
+        <i class="fas fa-calendar-check"></i>
+        <span>My events</span>
+      <% end %>
+    <% end %>
 
-  <%= link_to destroy_user_session_path,
-              method: :delete,
-              data: { turbo_method: :delete },
-              class: "flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full space-x-2" do %>
-    <i class="fas fa-sign-out-alt"></i>
-    <span>Logout</span>
-  <% end %>
-</div>
+    <% if user&.favorite_event && allowed_to?(:dashboard?, user.favorite_event) %>
+      <%= link_to dashboard_event_path(user.favorite_event),
+                  class: "flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 space-x-2" do %>
+        <i class="fas fa-calendar-day"></i>
+        <span>My favorite event</span>
+      <% end %>
+    <% end %>
 
+    <% if allowed_to?(:personal?, Bookmark) %>
+      <%= link_to personal_bookmarks_path,
+                  class: "flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 space-x-2" do %>
+        <i class="fas fa-bookmark"></i>
+        <span>My bookmarks</span>
+      <% end %>
+    <% end %>
+
+    <% if allowed_to?(:index?, WorkshopLog) %>
+      <%= link_to workshop_logs_path(created_by_id: user.id),
+                  class: "flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 space-x-2" do %>
+        <i class="fas fa-clipboard-list"></i>
+        <span>My workshop logs</span>
+      <% end %>
+    <% end %>
+
+    <%= link_to change_password_path,
+                class: "flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 space-x-2" do %>
+      <i class="fas fa-key"></i>
+      <span>Change password</span>
+    <% end %>
+
+    <%= link_to destroy_user_session_path,
+                data: { turbo_method: :delete },
+                class: "flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 space-x-2" do %>
+      <i class="fas fa-sign-out-alt"></i>
+      <span>Logout</span>
+    <% end %>
+
+  </div>
 </div>

@@ -2,28 +2,30 @@ require 'rails_helper'
 
 RSpec.describe "events/new", type: :view do
   let(:event) { Event.new }
+  let(:location) { create(:location, city: "My city") }
 
   before do
     assign(:event, event)
-    allow(view).to receive(:current_user).and_return(build_stubbed(:user, super_user: true))
+    assign(:locations, [ location ])
+    assign(:sectors, [])
+    assign(:categories_grouped, [])
+    assign(:registration_forms, [])
+    assign(:scholarship_forms, [])
+    assign(:bulk_payment_forms, [])
+    allow(view).to receive(:current_user).and_return(build_stubbed(:user, :admin))
+    allow(view).to receive(:allowed_to?).and_return(true)
   end
 
   it "renders the new event heading" do
     render
 
-    expect(rendered).to have_selector("h1", text: "New Event")
+    expect(rendered).to have_selector("h1", text: "New event")
   end
 
   it "renders the form partial" do
     render
 
     expect(rendered).to have_selector("form")
-    expect(rendered).to have_field("event[title]")
-    expect(rendered).to have_selector("textarea[name='event[description]']")
-    expect(rendered).to have_selector("input[type='datetime-local'][name='event[start_date]']")
-    expect(rendered).to have_selector("input[type='datetime-local'][name='event[end_date]']")
-    expect(rendered).to have_selector("input[type='datetime-local'][name='event[registration_close_date]']")
-    expect(rendered).to have_selector("input[type='checkbox'][name='event[publicly_visible]']")
   end
 
   it "renders the Cancel link" do

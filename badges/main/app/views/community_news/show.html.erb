@@ -1,66 +1,44 @@
+<% content_for(:page_bg_class, "admin-or-public-or-authpublished") %>
 <% community_news_url   = community_news_url(@community_news) %>
 <% community_news_title = ERB::Util.url_encode(@community_news.title) %>
-<div class="min-h-screen py-8">
-  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-    <div class="bg-orange-50 border border-gray-200 rounded-xl shadow-md hover:shadow-lg transition-shadow duration-200 p-6">
-      <!-- Top Right Utility Buttons -->
-      <div class="text-right mb-4 space-x-1">
+<div class="<%= DomainTheme.bg_class_for(:community_news) %> border border-gray-200 rounded-xl shadow p-6">
+      <!-- Top Right Utility Links -->
+      <div class="flex flex-wrap justify-end gap-2 mb-4">
+        <%= link_to "Home", root_path, class: "text-sm text-gray-500 hover:text-gray-700 px-2 py-1" %>
+        <%= link_to "Community news", community_news_index_path, class: "text-sm text-gray-500 hover:text-gray-700 px-2 py-1" %>
+        <% if allowed_to?(:edit?, @community_news) %>
+          <%= link_to "Edit", edit_community_news_path(@community_news),
+                      class: "admin-only bg-blue-100 text-sm text-gray-500 hover:text-gray-700 px-2 py-1" %>
+        <% end %>
         <span class="inline-block text-sm">
           <%= render "bookmarks/editable_bookmark_button", resource: @community_news %>
         </span>
-
-        <%= link_to "Dashboard", authenticated_root_path,
-                    class: "btn btn-secondary-outline" %>
-
-        <% if current_user.super_user? %>
-          <%= link_to "Edit", edit_community_news_path(@community_news),
-                      class: "btn btn-secondary-outline admin-only bg-blue-100" %>
-        <% end %>
+        <%= print_button(@community_news, printable_type: "CommunityNews", button_text: "Print page") %>
       </div>
 
       <!-- Header Row -->
-      <div class="w-full">
+      <div class="w-full bg-white rounded-lg shadow-md p-6 space-y-6">
         <div class="max-w-3xl mx-auto px-4 py-10 text-gray-800">
 
           <!-- Title -->
-          <h1 class="text-3xl font-bold mb-2 text-gray-900 leading-tight">
-            <%= @community_news.title %>
-          </h1>
+          <div class="font-bold my-6 text-gray-900 leading-tight">
+            <%= title_with_badges(@community_news, font_size: "text-3xl") %>
+          </div>
 
           <!-- Meta Data (exact screenshot style) -->
           <div class="text-sm text-gray-600 space-y-0.5 mb-6">
-            <p><strong>By:</strong> <%= @community_news.created_by.full_name %></p>
-            <p><strong>Organization Name:</strong> <%= @community_news.project&.name %></p>
+            <p><strong>By:</strong>
+              <%= credited_author_link(@community_news) %>
+            </p>
+            <p><strong>Organization Name:</strong> <%= @community_news.organization&.name %></p>
           </div>
 
-          <!-- Hero Image -->
-          <% if @community_news.main_image&.file&.attached? %>
-            <div class="mb-8">
-              <%= image_tag @community_news.main_image.file,
-                            class: "w-full rounded-lg shadow-sm border border-gray-200",
-                            alt: @community_news.title %>
-            </div>
-          <% end %>
-
-          <!-- Gallery Images -->
-          <% if @community_news.gallery_images.any? { |img| img.persisted? && img.file.attached? } %>
-            <div class="community_news-gallery single-community_news-detail text-center mb-4">
-              <div class="flex flex-wrap justify-center gap-4 mx-auto max-w-3xl">
-                <% @community_news.gallery_images.each_with_index do |gallery_image, idx| %>
-                  <% if gallery_image.file&.attached? %>
-                    <%= image_tag url_for(gallery_image.file),
-                                  alt: "Gallery Image #{idx + 1}",
-                                  data: { file_preview_target: "preview" },
-                                  class: "w-32 h-32 object-cover border border-gray-300 shadow-sm" %>
-                  <% end %>
-                <% end %>
-              </div>
-            </div>
-          <% end %>
+          <!-- Assets -->
+          <%= render "assets/display_assets", resource: @community_news, link: true %>
 
           <!-- community_news Body Text -->
-          <div class="prose prose-lg max-w-none text-gray-700 mb-10">
-            <%= simple_format(@community_news.body) %>
+          <div class="mb-10">
+            <%= @community_news.rhino_body %>
           </div>
 
           <!-- Share Section -->
@@ -70,28 +48,28 @@
 
             <!-- Facebook -->
             <%= link_to "https://www.facebook.com/sharer/sharer.php?u=#{community_news_url}",
-                        target: "_blank", rel: "noopener",
+                        target: "_blank", rel: "noopener noreferrer",
                         class: "text-blue-600 hover:text-blue-800" do %>
               <i class="fab fa-facebook-square fa-lg"></i>
             <% end %>
 
             <!-- X / Twitter -->
             <%= link_to "https://twitter.com/intent/tweet?url=#{community_news_url}&text=#{community_news_title}",
-                        target: "_blank", rel: "noopener",
+                        target: "_blank", rel: "noopener noreferrer",
                         class: "text-sky-500 hover:text-sky-700" do %>
               <i class="fab fa-x-twitter fa-lg"></i>
             <% end %>
 
             <!-- LinkedIn -->
             <%= link_to "https://www.linkedin.com/sharing/share-offsite/?url=#{community_news_url}",
-                        target: "_blank", rel: "noopener",
+                        target: "_blank", rel: "noopener noreferrer",
                         class: "text-blue-700 hover:text-blue-900" do %>
               <i class="fab fa-linkedin fa-lg"></i>
             <% end %>
 
             <!-- Pinterest -->
             <%= link_to "https://pinterest.com/pin/create/button/?url=#{community_news_url}&description=#{community_news_title}",
-                        target: "_blank", rel: "noopener",
+                        target: "_blank", rel: "noopener noreferrer",
                         class: "text-red-600 hover:text-red-800" do %>
               <i class="fab fa-pinterest-square fa-lg"></i>
             <% end %>
@@ -100,13 +78,8 @@
 
           <!-- Footer Copy (matches screenshot) -->
           <div class="text-sm text-gray-500 leading-relaxed border-t border-gray-300 pt-6">
-            <strong>A Window Between Worlds (AWBW)</strong>
-            supports hundreds of art workshop facilitators across the country to
-            incorporate creative expression into their work with trauma survivors.
-            These Windows Facilitators serve over 140,000 adults, teens, and children each year.
+            <%= render "shared/organization_footer" %>
           </div>
         </div>
       </div>
-    </div>
-  </div>
 </div>

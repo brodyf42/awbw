@@ -1,14 +1,14 @@
 FactoryBot.define do
   factory :report do
     # Associations
-    association :user
-    association :project
+    association :created_by, factory: :user
+    association :organization
     association :windows_type # Needed by callbacks/logic
     # Polymorphic association: belongs_to :owner (can be nil or another model like FormBuilder)
     owner { nil } # Default owner
 
     # STI type column
-    type { "Report" } # Default type, override for MonthlyReport, WorkshopLog etc.
+    type { "Report" } # Default type, override for MonthlyReport etc.
 
     # Other potential attributes
     date { Date.today }
@@ -28,4 +28,4 @@ FactoryBot.define do
     type { "MonthlyReport" }
     # Add specific attributes or associations for MonthlyReport if needed
   end
-end 
+end

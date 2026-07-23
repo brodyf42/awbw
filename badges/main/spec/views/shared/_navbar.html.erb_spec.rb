@@ -1,0 +1,144 @@
+require "rails_helper"
+
+RSpec.describe "shared/_navbar", type: :view do
+  let(:regular_user) { create(:user, super_user: false) }
+  let(:admin_user)   { create(:user, :admin) }
+
+  def render_nav
+    render partial: "shared/navbar"
+  end
+
+  context "when not logged in" do
+    before do
+      allow(view).to receive(:current_user).and_return(nil)
+      allow(view).to receive(:user_signed_in?).and_return(false)
+      render_nav
+    end
+
+    it "does not show admin-only links" do
+      expect(rendered).not_to include("People")
+      expect(rendered).not_to include("Organizations")
+      expect(rendered).not_to include("Admin")
+    end
+
+    it "does not render avatar menu" do
+      expect(rendered).not_to have_css("#avatar-dropdown")
+    end
+  end
+
+  context "when logged in as a regular user" do
+    before do
+      allow(view).to receive(:current_user).and_return(regular_user)
+      allow(view).to receive(:user_signed_in?).and_return(true)
+      allow(view).to receive(:allowed_to?).and_return(false)
+      allow(view).to receive(:allowed_to?).with(:personal?, Bookmark).and_return(true)
+      allow(view).to receive(:allowed_to?).with(:index?, WorkshopLog).and_return(true)
+      render_nav
+    end
+
+    it "shows general navigation" do
+      expect(rendered).to include("Curriculum")
+      expect(rendered).to include("Community")
+      expect(rendered).to include("Help")
+    end
+
+    it "does not show admin-only links" do
+      expect(rendered).not_to include("People")
+      expect(rendered).not_to include("Organizations")
+      expect(rendered).not_to include("Admin")
+    end
+
+    it "does not show admin-only New dropdown items" do
+      expect(rendered).not_to have_css(".admin-only", text: "New story")
+      expect(rendered).not_to have_css(".admin-only", text: "New workshop variation")
+      expect(rendered).not_to have_css(".admin-only", text: "New workshop")
+    end
+
+    it "shows personal menu items" do
+      expect(rendered).to include("My bookmarks")
+      expect(rendered).to include("My workshop logs")
+      expect(rendered).to include("Logout")
+    end
+  end
+
+  context "when logged in as an admin" do
+    before do
+      create(:person, user: admin_user)
+      admin_user.reload
+      allow(view).to receive(:current_user).and_return(admin_user)
+      allow(view).to receive(:user_signed_in?).and_return(true)
+      allow(view).to receive(:allowed_to?).and_return(true)
+      assign(:current_user_active_affiliations, [ create(:affiliation) ])
+      render_nav
+    end
+
+    it "shows admin-only links in Community menu" do
+      expect(rendered).to include("People")
+      expect(rendered).to include("Organizations")
+    end
+
+    it "shows Admin link in avatar menu" do
+      expect(rendered).to include("Admin")
+    end
+
+    it "shows profile and organization links" do
+      expect(rendered).to include("My profile")
+      expect(rendered).to include("My organization")
+    end
+
+    it "shows admin-only New dropdown items" do
+      expect(rendered).to have_css(".admin-only", text: "New story")
+      expect(rendered).to have_css(".admin-only", text: "New workshop variation")
+      expect(rendered).to have_css(".admin-only", text: "New workshop")
+    end
+  end
+
+  context "when admin has multiple active affiliations" do
+    before do
+      create(:person, user: admin_user)
+      admin_user.reload
+      allow(view).to receive(:current_user).and_return(admin_user)
+      allow(view).to receive(:user_signed_in?).and_return(true)
+      allow(view).to receive(:allowed_to?).and_return(true)
+      affiliations = [
+        create(:affiliation, organization: create(:organization, name: "Org Alpha")),
+        create(:affiliation, organization: create(:organization, name: "Org Beta"))
+      ]
+      assign(:current_user_active_affiliations, affiliations)
+      render_nav
+    end
+
+    it "shows an organization link per affiliation, each labelled with its name" do
+      expect(rendered).to have_css("a[href]", text: /My organization\s+\(Org Alpha\)/)
+      expect(rendered).to have_css("a[href]", text: /My organization\s+\(Org Beta\)/)
+    end
+  end
+
+  context "when in staging environment" do
+    before do
+      allow(ENV).to receive(:[]).and_call_original
+      allow(ENV).to receive(:[]).with("RAILS_ENV").and_return("staging")
+      allow(view).to receive(:current_user).and_return(nil)
+      allow(view).to receive(:user_signed_in?).and_return(false)
+      render_nav
+    end
+
+    it "uses red background color" do
+      expect(rendered).to have_css("nav.bg-red-600")
+    end
+  end
+
+  context "when not in staging environment" do
+    before do
+      allow(ENV).to receive(:[]).and_call_original
+      allow(ENV).to receive(:[]).with("RAILS_ENV").and_return("production")
+      allow(view).to receive(:current_user).and_return(nil)
+      allow(view).to receive(:user_signed_in?).and_return(false)
+      render_nav
+    end
+
+    it "uses primary background color" do
+      expect(rendered).to have_css("nav.bg-primary")
+    end
+  end
+end

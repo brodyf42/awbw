@@ -1,0 +1,67 @@
+require "rails_helper"
+
+RSpec.describe "Navbar avatar behavior", type: :system do
+  let(:user) { create(:user, :admin) }
+  let!(:person) { create(:person, user: user) }
+
+  before do
+    driven_by(:selenium_chrome_headless)
+    sign_in user
+  end
+
+  context "when uploading an avatar" do
+    it "updates the navbar avatar after person avatar change" do
+      visit edit_person_path(person)
+
+      attach_file(
+        "person_avatar",
+        Rails.root.join("spec/fixtures/files/sample.png"),
+        make_visible: true
+      )
+
+      click_button "Save changes"
+
+      # Saving direct-uploads the avatar before submitting, which can take well
+      # over the default 5s wait on a loaded CI runner, so allow extra time for
+      # the redirect rather than racing it.
+      expect(page).to have_current_path(person_path(person), wait: 20)
+
+      person.reload
+      expect(person.avatar).to be_attached
+
+      profile_img = find("#person_#{person.id}_avatar_image")
+      expect(profile_img[:src]).to include(person.avatar.filename.to_s)
+
+      avatar_img = find("#avatar-image")
+      expect(avatar_img[:src]).to include(person.avatar.filename.to_s)
+    end
+  end
+
+  context "when removing an avatar" do
+    before do
+      person.avatar.attach(
+        io: File.open(Rails.root.join("spec/fixtures/files/sample.png")),
+        filename: "sample.png",
+        content_type: "image/png"
+      )
+    end
+
+    it "removes the avatar and updates the navbar" do
+      visit edit_person_path(person)
+
+      check "person__destroy"
+      click_button "Save changes"
+
+      # Removal still posts the form and redirects; give the redirect the same
+      # generous wait as the upload case so a slow CI runner doesn't flake.
+      expect(page).to have_current_path(person_path(person), wait: 20)
+
+      person.reload
+      expect(person.avatar).not_to be_attached
+
+      avatar_el = find("#avatar-image")
+      expect(avatar_el.tag_name).to eq("span")
+      expect(avatar_el.text).to eq(person.first_name.first.upcase)
+    end
+  end
+end

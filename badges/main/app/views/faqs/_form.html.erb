@@ -2,47 +2,53 @@
   <!-- Form Errors -->
   <%= f.error_notification %>
   <%= render "shared/errors", resource: @faq if @faq.errors.any? %>
+
   <!-- Form Fields -->
-  <div class="flex flex-col">
-    <%= render "inline_fields", form: f, attribute: :question  do %>
-      <%= f.label :question unless turbo_frame_request? %>
-      <%= f.input_field :question,
-                    class:
-                      "w-full grow rounded-lg border border-gray-300 px-3 py-2 text-gray-800 shadow-sm" %>
-    <% end %>
+  <div class="grid grid-cols-1 md:grid-cols-4 gap-6 items-start">
+    <div class="md:col-span-3 flex flex-col gap-4">
+      <div class="flex flex-col">
+        <%= render "inline_fields", form: f, attribute: :question  do %>
+          <%= f.label :question unless turbo_frame_request? %>
+
+          <%= f.input_field :question,
+                        class:
+                          "w-full grow rounded-lg border border-gray-300 px-3 py-2 text-gray-800 shadow-sm" %>
+        <% end %>
+      </div>
+
+      <div class="flex flex-col">
+        <%= render "inline_fields", form: f, attribute: :answer do %>
+          <%= f.label :answer unless turbo_frame_request? %>
+
+          <%= f.input_field :answer,
+                        class:
+                          "w-full grow rounded-lg border border-gray-300 px-3 py-2 text-gray-800 shadow-sm",
+                        rows: "8" %>
+        <% end %>
+      </div>
+
+      <div class="flex"><%= f.input :position %></div>
+    </div>
+
+    <div class="admin-only bg-blue-100 rounded mt-6 md:mt-0 p-3">
+      <%= render "shared/visibility_info", flags: %i[published publicly_visible] %>
+      <div class="grid grid-cols-1 items-center">
+        <%= render "inline_fields", form: f, attribute: :published do %>
+          <%= visibility_flag_input f, :published %>
+        <% end %>
+        <%= render "inline_fields", form: f, attribute: :publicly_visible do %>
+          <%= visibility_flag_input f, :publicly_visible %>
+        <% end %>
+      </div>
+    </div>
   </div>
-  <div class="flex flex-col">
-    <%= render "inline_fields", form: f, attribute: :answer do %>
-      <%= f.label :answer unless turbo_frame_request? %>
-      <%= f.input_field :answer,
-                    class:
-                      "w-full grow rounded-lg border border-gray-300 px-3 py-2 text-gray-800 shadow-sm",
-                    rows: "6" %>
-    <% end %>
-  </div>
-  <div class="flex flex-col">
-    <%= render "inline_fields", form: f, attribute: :inactive do %>
-      <%= f.input :inactive, label: "Hidden?" %>
-    <% end %>
-  </div>
-  <div class="flex">
-    <%= f.input :ordering %>
-  </div>
-  <!-- Form Actions -->
-  <div class="form-actions flex flex-wrap gap-3 mt-6 justify-end">
-    <% if @faq.persisted? && current_user.super_user? %>
-      <%= link_to "Delete",
-      @faq,
-      method: :delete,
-      class: "btn btn-danger-outline",
-      data: {
-        confirm: "Are you sure?",
-      } %>
+
+  <div class="action-buttons mt-8 flex justify-center gap-3">
+    <% if allowed_to?(:destroy?, f.object) %>
+      <%= link_to "Delete", @faq, class: "btn btn-danger-outline",
+                  data: { turbo_method: :delete, turbo_confirm: "Are you sure you want to delete?" } %>
     <% end %>
     <%= link_to "Cancel", faqs_path, class: "btn btn-secondary-outline" %>
-    <%= f.button :submit,
-             class:
-               "bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        transition-colors duration-150" %>
+    <%= f.button :submit, class: "btn btn-primary" %>
   </div>
 <% end %>

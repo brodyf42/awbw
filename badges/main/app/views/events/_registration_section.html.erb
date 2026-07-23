@@ -1,0 +1,72 @@
+<% instance ||= 1 %>
+<% button_text ||= "Register" %>
+<% registered = event.actively_registered?(current_user&.person) %>
+<% slug_registration = params[:reg].present? ? EventRegistration.find_by(slug: params[:reg], event_id: event.id) : nil %>
+<% slug_registered = slug_registration&.active? %>
+<% slug_cancelled = slug_registration.present? && slug_registration.status == "cancelled" %>
+<%= tag.div id: dom_id(event.object, "registration_section_#{instance}"), class: "registration-section flex flex-col items-center gap-4 mb-6" do %>
+  <div class="flex flex-col items-center justify-center gap-3">
+    <% if event.ended? %>
+      <span class="text-2xl font-bold text-gray-400 italic">Event ended</span>
+      <% if allowed_to?(:manage?, event) %>
+        <%= button_to "Register",
+                      event_registrant_registration_path(event_id: event),
+                      class: "admin-only bg-blue-100 btn btn-primary-outline" %>
+      <% end %>
+    <% elsif !registered && !slug_registered %>
+      <% if slug_cancelled && event.registerable? %>
+        <%= button_to "Register again", registration_reactivate_path(slug_registration.slug),
+                      class: "text-sm text-gray-500 hover:text-blue-600 underline bg-transparent border-0 cursor-pointer p-0" %>
+      <% elsif !event.published? %>
+        <span class="admin-only bg-blue-100 p-1 text-sm text-gray-500 italic">Not published</span>
+      <% elsif event.registerable? %>
+        <% if user_signed_in? %>
+          <% if event.object.one_click_for_signed_in? %>
+            <%= button_to button_text,
+                          event_registrant_registration_path(event_id: event),
+                          data: { turbo: !event.object.cost_cents.to_i.positive? },
+                          class: "btn btn-accent px-10 py-2 text-2xl uppercase",
+                          style: "font-family: 'Telefon Bold', sans-serif;" %>
+          <% else %>
+            <%= link_to button_text,
+                        new_event_public_registration_path(event),
+                        class: "btn btn-accent px-10 py-2 text-2xl uppercase",
+                        style: "font-family: 'Telefon Bold', sans-serif;" %>
+          <% end %>
+        <% elsif event.object.public_registration_enabled? && event.object.event_forms.registration.exists? %>
+          <%= link_to button_text,
+                      new_event_public_registration_path(event),
+                      class: "btn btn-accent px-10 py-2 text-2xl uppercase",
+                      style: "font-family: 'Telefon Bold', sans-serif;" %>
+        <% end %>
+      <% else %>
+        <span class="text-2xl font-bold text-blue-400 italic">Registration closed</span>
+      <% end %>
+    <% end %>
+
+    <% if registered %>
+      <% registration = event.active_registration_for(current_user&.person) %>
+      <%= link_to "View ticket", registration_ticket_path(registration.slug),
+                  class: "btn px-10 py-2 text-2xl uppercase text-white hover:bg-white event-view-registration-btn",
+                  style: "font-family: 'Telefon Bold', sans-serif; background-color: rgb(22, 101, 52); border: 3px solid rgb(22, 101, 52);" %>
+    <% elsif slug_registered %>
+      <%= link_to "View ticket", registration_ticket_path(slug_registration.slug),
+                  class: "btn px-10 py-2 text-2xl uppercase text-white hover:bg-white event-view-registration-btn",
+                  style: "font-family: 'Telefon Bold', sans-serif; background-color: rgb(22, 101, 52); border: 3px solid rgb(22, 101, 52);" %>
+    <% end %>
+  </div>
+
+  <% if (registered || slug_registered) && !event.ended? %>
+    <!-- CALENDAR LINKS -->
+    <% calendar_registration = registered ? event.active_registration_for(current_user&.person) : slug_registration %>
+    <div class="flex flex-col items-center mt-4">
+      <div class="flex items-center gap-1 mb-2">
+        <p class="text-xs font-bold text-gray-400 uppercase tracking-wide">
+          Add to Your Calendar
+        </p>
+        <%= render "events/videoconference_calendar_notice", event: event, registration: calendar_registration %>
+      </div>
+      <div class="flex gap-2 items-center text-sm text-gray-700"><%= event.calendar_links(show_videoconference_details: calendar_registration&.videoconference_details_visible?) %></div>
+    </div>
+  <% end %>
+<% end %>

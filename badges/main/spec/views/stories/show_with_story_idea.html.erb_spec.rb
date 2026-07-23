@@ -1,23 +1,24 @@
 require 'rails_helper'
 
 RSpec.describe "stories/show", type: :view do
-  let(:admin) { create(:user, :admin) }
+  let(:admin) { create(:user, :admin, :with_person) }
   let(:story_idea) { create(:story_idea, :with_story,
                             created_by: admin, updated_by: admin,
                             body: "MyBody", youtube_url: "Youtube_url") }
-  let(:story) { story_idea.stories.first }
+  let(:story) { story_idea.stories.first.decorate }
 
   before(:each) do
     sign_in admin
     allow(view).to receive(:current_user).and_return(admin)
+    allow(view).to receive(:allowed_to?).and_return(true)
     assign(:story, story)
   end
 
   it "renders attributes in <p>" do
     render
-    expect(rendered).to match(story_idea.project.name)
+    expect(rendered).to match(story_idea.organization.name)
     expect(rendered).to match(story_idea.workshop.name)
-    expect(rendered).to match(/MyBody/)
-    expect(rendered).to match(story_idea.created_by.full_name)
+    expect(rendered).to match(/My Body/)
+    expect(rendered).to match(story.author_credit)
   end
 end

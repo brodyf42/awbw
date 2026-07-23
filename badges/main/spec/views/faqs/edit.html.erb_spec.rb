@@ -5,8 +5,8 @@ RSpec.describe "faqs/edit", type: :view do
     Faq.create!(
       question: "MyString",
       answer: "MyText",
-      inactive: false,
-      ordering: 1
+      published: true,
+      position: 1
     )
   }
 
@@ -19,14 +19,13 @@ RSpec.describe "faqs/edit", type: :view do
     render
 
     assert_select "form[action=?][method=?]", faq_path(faq), "post" do
-
       assert_select "input[name=?]", "faq[question]"
 
       assert_select "textarea[name=?]", "faq[answer]"
 
-      assert_select "input[name=?]", "faq[inactive]"
+      assert_select "input[name=?]", "faq[published]"
 
-      assert_select "input[name=?]", "faq[ordering]"
+      assert_select "input[name=?]", "faq[position]"
     end
   end
 end

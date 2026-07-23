@@ -1,30 +1,35 @@
 class BannersController < ApplicationController
-  before_action :set_banner, only: [:show, :edit, :update, :destroy]
+  before_action :set_banner, only: [ :show, :edit, :update, :destroy ]
 
   def index
+    authorize!
     per_page = params[:number_of_items_per_page].presence || 25
-    unpaginated = Banner.all
+    unpaginated = authorized_scope(Banner.all)
     @banners_count = unpaginated.count
     @banners = unpaginated.paginate(page: params[:page], per_page: per_page)
   end
 
   def show
+    authorize! @banner
   end
 
   def new
     @banner = Banner.new
+    authorize! @banner
     set_form_variables
   end
 
   def edit
+    authorize! @banner
     set_form_variables
   end
 
   def create
     @banner = Banner.new(banner_params)
+    authorize! @banner
 
     if @banner.save
-      redirect_to banners_path, notice: "Banner was successfully created."
+      redirect_to @banner, notice: "Banner was successfully created."
     else
       set_form_variables
       render :new, status: :unprocessable_content
@@ -32,8 +37,9 @@ class BannersController < ApplicationController
   end
 
   def update
+    authorize! @banner
     if @banner.update(banner_params)
-      redirect_to banners_path, notice: "Banner was successfully updated.", status: :see_other
+      redirect_to @banner, notice: "Banner was successfully updated.", status: :see_other
     else
       set_form_variables
       render :edit, status: :unprocessable_content
@@ -41,6 +47,7 @@ class BannersController < ApplicationController
   end
 
   def destroy
+    authorize! @banner
     @banner.destroy!
     redirect_to banners_path, notice: "Banner was successfully destroyed."
   end
@@ -58,7 +65,7 @@ class BannersController < ApplicationController
   # Strong parameters
   def banner_params
     params.require(:banner).permit(
-      :content, :show, :created_by_id, :updated_by_id
+      :content, :published, :created_by_id, :updated_by_id
     )
   end
 end

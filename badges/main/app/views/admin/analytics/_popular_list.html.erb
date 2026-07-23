@@ -1,0 +1,20 @@
+<div class="<%= DomainTheme.bg_class_for(color) %> border border-gray-200 rounded-lg shadow-sm p-5">
+  <div class="p-6">
+    <div class="text-xs font-semibold tracking-wide uppercase text-gray-500 mb-3">
+      <%= title %>
+    </div>
+
+    <ul class=""><!-- divide-y divide-gray-200-->
+      <% records.each do |record| %>
+        <li class="py-1 flex justify-between items-center">
+          <%= link_to record.title, public_send(path_method, record),
+                      class: "text-gray-800 hover:underline truncate" %>
+
+          <span class="text-sm text-gray-600 font-mono">
+          <%= record.public_send(metric) %>
+        </span>
+        </li>
+      <% end %>
+    </ul>
+  </div>
+</div>

@@ -13,7 +13,7 @@ require 'rails_helper'
 # sticking to rails and rspec-rails APIs to keep things simple and stable.
 
 RSpec.describe "/banners", type: :request do
-    let(:admin) { create(:user, :admin) }
+  let(:admin) { create(:user, :admin) }
 
   let(:valid_attributes) do
     {
@@ -71,7 +71,7 @@ RSpec.describe "/banners", type: :request do
 
       it "redirects to the created banner" do
         post banners_url, params: { banner: valid_attributes }
-        expect(response).to redirect_to(banners_url)
+        expect(response).to redirect_to(banner_url(Banner.last))
       end
     end
 
@@ -91,9 +91,11 @@ RSpec.describe "/banners", type: :request do
 
   describe "PATCH /update" do
     context "with valid parameters" do
-      let(:new_attributes) {
-        skip("Add a hash of attributes valid for your model")
-      }
+      let(:new_attributes) do
+        valid_attributes.merge(
+          content: "Updated welcome message for AWBW"
+        )
+      end
 
       it "updates the requested banner" do
         banner = Banner.create! valid_attributes
@@ -102,7 +104,7 @@ RSpec.describe "/banners", type: :request do
         skip("Add assertions for updated state")
       end
 
-      it "redirects to the banner" do
+      it "redirects to the updated banner" do
         banner = Banner.create! valid_attributes
         patch banner_url(banner), params: { banner: new_attributes }
         banner.reload

@@ -1,0 +1,99 @@
+<table class="min-w-full divide-y divide-gray-200 text-sm">
+  <thead class="bg-gray-50">
+  <tr>
+    <th class="px-4 py-3 text-left font-medium text-gray-600">Sent</th>
+    <!--        <th class="px-4 py-3 text-left font-medium text-gray-600">Kind</th>-->
+    <th class="px-4 py-3 text-left font-medium text-gray-600">People</th>
+    <th class="px-4 py-3 text-left font-medium text-gray-600">Subject</th>
+    <th class="px-4 py-3 text-left font-medium text-gray-600">Record</th>
+    <th class="px-4 py-3 text-center font-medium text-gray-600">Responded</th>
+    <th class="px-4 py-3 text-right font-medium text-gray-600"></th>
+  </tr>
+  </thead>
+
+  <tbody class="divide-y divide-gray-100">
+  <% @notifications.each do |notification| %>
+    <tr class="hover:bg-gray-50">
+      <!-- Sent -->
+      <td class="px-4 py-3 text-gray-700 whitespace-nowrap">
+        <% if notification.delivered_at.present? %>
+          <%= time_ago_in_words(notification.delivered_at.in_time_zone("Pacific Time (US & Canada)")) %> ago
+        <% elsif notification.failed? %>
+          <span class="text-red-600 font-medium" title="<%= notification.error_class %>: <%= notification.error_message %>">Failed</span>
+        <% else %>
+          <span class="text-yellow-600 font-medium">Pending</span>
+        <% end %>
+      </td>
+
+      <!-- Kind -->
+      <!--          <td class="px-4 py-3 text-gray-700">-->
+      <%#= notification.kind.to_s.humanize %>
+      <!--          </td>-->
+
+      <!-- People -->
+      <td class="px-4 py-3 text-gray-700">
+        <div><span class="text-xs uppercase text-gray-500">To:</span> <%= notification.recipient_email %></div>
+        <div class="text-[10px] text-gray-400"><span class="uppercase">From:</span> <%= notification.sender&.full_name.presence || "AWBW portal" %></div>
+      </td>
+
+      <!-- Subject -->
+      <td class="px-4 py-3 text-gray-900 font-medium">
+        <%= notification.email_subject.presence || "—" %>
+      </td>
+
+      <!-- Record -->
+      <td class="px-4 py-3 text-gray-700">
+        <% if notification.noticeable.present? %>
+          <% record_path = routable_path(notification.noticeable) %>
+          <div class="text-[10px] uppercase text-gray-400"><%= noticeable_type_label(notification.noticeable) %></div>
+          <% if record_path %>
+            <%= link_to noticeable_label(notification.noticeable),
+                        record_path,
+                        data: { turbo_frame: "_top" },
+                        class: "font-medium text-blue-600 hover:underline" %>
+          <% else %>
+            <span class="font-medium text-gray-700"><%= noticeable_label(notification.noticeable) %></span>
+          <% end %>
+        <% else %>
+          <span class="text-gray-400">—</span>
+        <% end %>
+      </td>
+
+      <!-- Responded -->
+      <td class="px-4 py-3 text-center"
+          data-controller="autosave"
+          data-autosave-url-value="<%= notification_path(notification) %>"
+          data-autosave-id-value="<%= notification.id %>"
+          data-action="change->autosave#save">
+        <% if notification.requires_response? %>
+          <input type="hidden" name="notification[responded]" value="0">
+          <input type="checkbox"
+                 name="notification[responded]"
+                 value="1"
+                 <%= "checked" if notification.responded? %>
+                 class="w-5 h-5 rounded border-gray-300 text-green-600 accent-green-600 focus:ring-green-500 cursor-pointer"
+                 title="Responded to by staff">
+        <% else %>
+          <span class="text-gray-300">—</span>
+        <% end %>
+      </td>
+
+      <!-- Actions -->
+      <td class="px-4 py-3 text-right whitespace-nowrap">
+        <%= link_to "View",
+                    notification_path(notification),
+                    data: { turbo_frame: "_top" },
+                    class: "btn btn-secondary-outline" %>
+      </td>
+    </tr>
+  <% end %>
+
+  <% if @notifications.empty? %>
+    <tr>
+      <td colspan="6" class="px-4 py-6 text-center text-gray-500">
+        <%= t("communications.empty") %>
+      </td>
+    </tr>
+  <% end %>
+  </tbody>
+</table>

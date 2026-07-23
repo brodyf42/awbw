@@ -1,6 +1,4 @@
-class ReportDecorator < Draper::Decorator
-  delegate_all
-
+class ReportDecorator < ApplicationDecorator
   def windows_type_name
     name.titleize
   end
@@ -14,7 +12,7 @@ class ReportDecorator < Draper::Decorator
   end
 
   def monthly?
-    type.include?('Monthly')
+    type.include?("Monthly")
   end
 
   def display_date

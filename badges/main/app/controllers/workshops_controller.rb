@@ -1,28 +1,35 @@
-# frozen_string_literal: true
-
 class WorkshopsController < ApplicationController
+  include AhoyTracking, TagAssignable, MentionableScopable
+
+  skip_before_action :authenticate_user!, only: [ :index, :show ]
 
   def index
-    search_service = WorkshopSearchService.new(params, super_user: current_user.super_user?).call
-    @sort = params[:sort] # search_service.default_sort
+    authorize!
+    @author = Person.find_by(id: params[:author_id]) if params[:author_id].present?
+    @category_types = CategoryType.published.general.order(:name).decorate
+    @sectors        = Sector.published.order(:name)
+    @windows_types  = WindowsType.all
 
-    @workshops = search_service.workshops
-                               .includes(:categories, :sectors, :windows_type, :user, :images,
-                                         :workshop_age_ranges, :bookmarks)
-                               .paginate(page: params[:page], per_page: params[:per_page] || 50)
+    if turbo_frame_request?
+      search_service = WorkshopSearchService.new(params, user: current_user).call
+      @sort = search_service.sort
 
-    @workshops_count = search_service.workshops.size
+      track_index_intent(Workshop, search_service.workshops, params)
 
-    @category_metadata = Metadatum.published.includes(:categories).decorate
-    @sectors = Sector.published
-    @windows_types = WindowsType.all
+      @workshops = authorized_scope(search_service.workshops
+                                                  .includes(:categories, :windows_type, :bookmarks, :author,
+                                                            created_by: [ :person ], primary_asset: [ :file_attachment ]))
+                                                  .paginate(page: params[:page], per_page: params[:per_page] || 12)
 
-    respond_to do |format|
-      format.html
+      render :workshops_results
+    else
+      @sort = params[:sort].presence || "title"
+      render :index
     end
   end
 
   def summary
+    authorize! :workshop, to: :summary?
     @year = params[:year] ? params[:year].to_i : Date.current.year.to_i
     @month = params[:month] ? params[:month].to_i : Date.current.month.to_i
 
@@ -32,7 +39,7 @@ class WorkshopsController < ApplicationController
     types = reports.map do |r|
       r.windows_type
     end
-    @workshop_logs = current_user.project_monthly_workshop_logs(
+    @workshop_logs = current_user.organization_monthly_workshop_logs(
       reports.first.date, *types,
     )
 
@@ -40,13 +47,15 @@ class WorkshopsController < ApplicationController
     @total_ongoing    = logs.reduce(0) { |sum, l| sum += l.num_ongoing }
     @total_first_time = logs.reduce(0) { |sum, l| sum += l.num_first_time }
 
-    combined_windows_type = WindowsType.where("name LIKE ?", "%COMBINED (FAMILY)%").first
-    @combined_workshop_logs = current_user.project_workshop_logs(
+    combined_windows_type = WindowsType.where(short_name: "Combined").first
+    @combined_workshop_logs = current_user.organization_workshop_logs(
       @report.date, combined_windows_type, current_user.agency_id
     )
+    authorize! @combined_workshop_logs
   end
 
   def build_report
+    authorize! :workshop, to: :summary?
     date = Date.new(@year, @month)
 
     form_builder = FormBuilder
@@ -71,104 +80,160 @@ class WorkshopsController < ApplicationController
     if params[:workshop_idea_id].present?
       @workshop_idea = WorkshopIdea.find(params[:workshop_idea_id])
       @workshop = WorkshopFromIdeaService.new(@workshop_idea, user: current_user).call
+      authorize! @workshop
     else
-      @workshop = Workshop.new(user: current_user)
+      @workshop = Workshop.new(created_by: current_user)
+      authorize! @workshop
     end
     set_form_variables
-  end
-
-  def edit
-    @workshop = Workshop.find(params[:id])
-    set_form_variables
-  end
-
-  def show
-    set_show
-  end
-
-  def update
-    @workshop = Workshop.find(params[:id])
-    if @workshop.update(workshop_params)
-      flash[:notice] = 'Workshop updated successfully.'
-      redirect_to workshops_path
-    else
-      set_form_variables
-      flash[:alert] = 'Unable to update the workshop.'
-      render :edit
-    end
   end
 
   def create
     @workshop = current_user.workshops.build(workshop_params)
+    authorize! @workshop
 
-    if @workshop.save
-      flash[:notice] = 'Workshop created successfully.'
-      redirect_to workshops_path(sort: "created")
+    success = false
+
+    Workshop.transaction do
+      if @workshop.save
+        assign_associations(@workshop)
+        if params[:promote_idea_assets] == "true"
+          @workshop.attach_assets_from_idea!
+        end
+        success = true
+      end
+    rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotSaved, ActiveRecord::RecordNotUnique => e
+      log_workshop_error("creation", e)
+      raise ActiveRecord::Rollback
+    end
+
+    if success
+      flash[:notice] = "Workshop created successfully."
+      redirect_to @workshop
     else
       set_form_variables
-      flash.now[:alert] = 'Unable to save the workshop.'
+      flash.now[:alert] = "Unable to save the workshop."
       render :new
     end
   end
 
-  def search
-    @params = params[:search]
-    @query = params[:search][:query] if @params
-    @workshops = Search.new.search(@params, current_user)
+  def edit
+    @workshop = Workshop.find(params[:id])
+    authorize! @workshop
+    set_form_variables
 
-    if @workshops.paginate(page: params[:search][:page], per_page: workshops_per_page).empty?
-      @workshops = @workshops.paginate(page: 1, per_page: workshops_per_page)
+    if turbo_frame_request?
+      render :editor_lazy
     else
-      @workshops = @workshops.paginate(page: params[:search][:page], per_page: workshops_per_page)
+      render :edit
+    end
+  end
+
+  def show
+    if turbo_frame_request?
+      @workshop = Workshop.find(params[:id]).decorate
+      authorize! @workshop
+      set_show
+      render partial: "show_lazy", locals: { workshop: @workshop }
+    else
+      @workshop = Workshop.find(params[:id]).decorate
+      authorize! @workshop
+      track_view(@workshop)
+      render :show
+    end
+  end
+
+  def destroy
+    @workshop = Workshop.find(params[:id])
+    authorize! @workshop
+    @workshop.destroy!
+    redirect_to workshops_path, notice: "Workshop was successfully destroyed."
+  end
+
+  def update
+    @workshop = Workshop.find(params[:id])
+    authorize! @workshop
+    success = false
+
+    @workshop.assign_attributes(workshop_params)
+    @workshop.comments.select(&:new_record?).each { |c| c.created_by = current_user; c.updated_by = current_user }
+    @workshop.comments.select { |c| c.persisted? && c.body_changed? }.each { |c| c.updated_by = current_user }
+
+    Workshop.transaction do
+      if @workshop.save
+        assign_associations(@workshop)
+        success = true
+      end
+    rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotSaved, ActiveRecord::RecordNotUnique => e
+      log_workshop_error("update", e)
+      raise ActiveRecord::Rollback
     end
 
-    load_sortable_fields
-    load_metadata
-
-    render :index
+    if success
+      flash[:notice] = "Workshop updated successfully."
+      redirect_to @workshop
+    else
+      set_form_variables
+      flash[:alert] = "Unable to update the workshop."
+      render :edit
+    end
   end
+
 
   private
 
   def set_show
-    @workshop = Workshop.find(params[:id]).decorate
-    @quotes = Quote.where(workshop_id: @workshop.id).active
-    @leader_spotlights = @workshop.resources.published.leader_spotlights
-    @workshop_variations = @workshop.workshop_variations.active
-    @sectors = @workshop.sectorable_items.published.map { |item| item.sector if item.sector.published }.compact if @workshop.sectorable_items.any?
+    @quotes = Quote.where(workshop_id: @workshop.id).published
+    @leader_spotlights = @workshop.associated_resources.leader_spotlights.where(published: true)
+    @workshop_variations = authorized_scope(@workshop.workshop_variations)
+                             .includes(:windows_type, :created_by, primary_asset: [ :file_attachment ])
+                             .order(created_at: :desc)
+    @sectors = @workshop.sectorable_items.map { |item| item.sector if item.sector.published? }.compact if @workshop.sectorable_items.any?
+    @mentioners = authorized_scope_mentions(@workshop.mentioner_records_grouped)
+    @mentionees = authorized_scope_mentions(@workshop.mentionee_records_grouped)
   end
+
 
   def set_form_variables
-    @workshop.build_main_image if @workshop.main_image.blank?
-    @workshop.gallery_images.build
-
-    @age_ranges = AgeRange.all
-    @potential_series_workshops = Workshop.published.where.not(id: @workshop.id).order(:title)
+    potential_series = authorized_scope(Workshop.published).includes(:windows_type)
+    potential_series = potential_series.where.not(id: @workshop.id) if @workshop.persisted?
+    @potential_series_workshops = authorized_scope(potential_series).order(:title)
     @windows_types = WindowsType.all
-    @workshop_ideas = WorkshopIdea.order(created_at: :desc)
+    @workshop_ideas = authorized_scope(WorkshopIdea.order(created_at: :desc))
                                   .map { |wi|
-                                    ["#{wi.created_at.strftime("%Y-%m-%d")
-                                    } - (#{wi.created_by.full_name}): #{wi.title}", wi.id] }
+                                    [ "#{wi.created_at.strftime("%Y-%m-%d")
+                                    } - (#{wi.created_by.full_name}): #{wi.title}", wi.id ] }
+    @categories_grouped =
+      Category
+        .includes(:category_type)
+        .published
+        .order(:position, :name)
+        .group_by(&:category_type)
+        .select { |type, _| type.nil? || (type.published? && !type.story_specific? && !type.profile_specific?) }
+        .sort_by { |type, _| type&.name.to_s.downcase }
+
+    @sectors = Sector.published.order(:name)
+    @age_range_comments = @workshop.persisted? ? @workshop.comments.where("body LIKE ?", "%[AGE_RANGE_DATA]%") : []
+
+    @workshop.build_primary_asset if @workshop.primary_asset.blank?
+    @workshop.gallery_assets.build
   end
 
-  def workshops_per_page
-    view_all_workshops? ? @workshops.published.size : 12
-  end
-
-  def view_all_workshops?
-    params[:search][:view_all] == '1'
+  def log_workshop_error(action, error)
+    Rails.logger.error "Workshop #{action} failed: #{error.class} - #{error.message}\n#{error.backtrace.join("\n")}"
   end
 
   def workshop_params
     params.require(:workshop).permit(
-      :title, :featured, :inactive,
-      :full_name, :user_id, :windows_type_id, :workshop_idea_id,
+      :title, :featured, :published,
+      :full_name, :author_id, :windows_type_id, :workshop_idea_id, :author_credit_preference,
       :month, :year,
+      :publicly_visible,
+      :publicly_featured,
 
       :time_intro, :time_closing, :time_creation, :time_demonstration,
       :time_warm_up, :time_opening, :time_opening_circle,
 
-      :age_range, :age_range_spanish,
       :closing, :closing_spanish,
       :creation, :creation_spanish,
       :demonstration, :demonstration_spanish,
@@ -187,19 +252,48 @@ class WorkshopsController < ApplicationController
       :visualization, :visualization_spanish,
       :warm_up, :warm_up_spanish,
 
-      workshop_series_children_attributes: [:id, :workshop_child_id, :workshop_parent_id, :theme_name,
+      :rhino_objective,
+      :rhino_materials,
+      :rhino_optional_materials,
+      :rhino_setup,
+      :rhino_introduction,
+      :rhino_opening_circle,
+      :rhino_demonstration,
+      :rhino_warm_up,
+      :rhino_visualization,
+      :rhino_creation,
+      :rhino_closing,
+      :rhino_notes,
+      :rhino_tips,
+      :rhino_misc1,
+      :rhino_misc2,
+      :rhino_extra_field,
+
+      :rhino_objective_spanish,
+      :rhino_materials_spanish,
+      :rhino_optional_materials_spanish,
+      :rhino_setup_spanish,
+      :rhino_introduction_spanish,
+      :rhino_opening_circle_spanish,
+      :rhino_demonstration_spanish,
+      :rhino_warm_up_spanish,
+      :rhino_visualization_spanish,
+      :rhino_creation_spanish,
+      :rhino_closing_spanish,
+      :rhino_notes_spanish,
+      :rhino_tips_spanish,
+      :rhino_misc1_spanish,
+      :rhino_misc2_spanish,
+      :rhino_extra_field_spanish,
+
+      category_ids: [],
+      sector_ids: [],
+      primary_asset_attributes: [ :id, :file, :_destroy ],
+      gallery_assets_attributes: [ :id, :file, :_destroy ],
+      workshop_series_children_attributes: [ :id, :workshop_child_id, :workshop_parent_id, :theme_name,
                                             :series_description, :series_description_spanish,
-                                            :series_order, :_destroy],
-      main_image_attributes: [:id, :file, :_destroy],
-      gallery_images_attributes: [:id, :file, :_destroy]
+                                            :position, :_destroy ],
+      comments_attributes: [ :id, :topic, :body, :flagged, :_destroy ]
     )
-  end
-
-  def load_sortable_fields
-    @sortable_fields = WindowsType.where('name NOT LIKE ?', '%COMBINED%')
-  end
-
-  def load_metadata
-    @metadata = Metadatum.published.includes(:categories).decorate
   end
 end

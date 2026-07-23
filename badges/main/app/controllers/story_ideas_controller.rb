@@ -1,34 +1,77 @@
 class StoryIdeasController < ApplicationController
-  before_action :set_story_idea, only: [:show, :edit, :update, :destroy]
+  include TagAssignable
+  before_action :set_story_idea, only: [ :show, :edit, :update, :destroy ]
 
   def index
+    authorize!
     per_page = params[:number_of_items_per_page].presence || 25
-
-
-    story_ideas = StoryIdea.includes(:windows_type, :project, :workshop, :created_by, :updated_by)
-    @story_ideas = story_ideas.order(created_at: :desc)
-                              .paginate(page: params[:page], per_page: per_page)
-
-    @story_ideas_count = story_ideas.size
+    base_scope = authorized_scope(StoryIdea.includes(:windows_type, :organization, :workshop, :created_by, :updated_by))
+    filtered = base_scope.search_by_params(params)
+    @story_ideas = filtered.order(created_at: :desc)
+                           .paginate(page: params[:page], per_page: per_page)
+                           .decorate
+    @story_ideas_count = filtered.count == base_scope.count ? base_scope.count : "#{filtered.count}/#{base_scope.count}"
+    @organizations = authorized_scope(Organization.all, as: :affiliated).order(:name)
   end
 
   def show
+    authorize! @story_idea
+    @updated_by = Ahoy::Event.where(resource_type: "StoryIdea", resource_id: @story_idea.id)
+                              .where("name LIKE 'update.%'")
+                              .order(time: :desc)
+                              .first&.user
   end
 
   def new
     @story_idea = StoryIdea.new
+    authorize! @story_idea
+
     set_form_variables
   end
 
   def edit
+    authorize! @story_idea
+
     set_form_variables
   end
 
   def create
-    @story_idea = StoryIdea.new(story_idea_params)
+    @story_idea = StoryIdea.new(story_idea_params.except(:category_ids, :sector_ids))
+    @story_idea.created_by = current_user
+    @story_idea.updated_by = current_user
+    authorize! @story_idea
 
-    if @story_idea.save
-      redirect_to story_ideas_path, notice: "StoryIdea was successfully created."
+    success = false
+
+    StoryIdea.transaction do
+      if @story_idea.save
+        assign_associations(@story_idea)
+        NotificationServices::CreateNotification.call(
+          noticeable: @story_idea,
+          kind: :idea_submitted,
+          recipient_role: :person,
+          recipient_email: @story_idea.created_by.email,
+          notification_type: 0)
+        NotificationServices::CreateNotification.call(
+          noticeable: @story_idea,
+          kind: :idea_submitted_fyi,
+          recipient_role: :admin,
+          recipient_email: ENV.fetch("REPLY_TO_EMAIL", "programs@awbw.org"),
+          notification_type: 0)
+        success = true
+      end
+    rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotSaved, ActiveRecord::RecordNotUnique => e
+      Rails.logger.error "StoryIdea create failed: #{e.class} - #{e.message}"
+      raise ActiveRecord::Rollback
+    end
+
+    if success
+      flash[:notice] = "StoryIdea was successfully created."
+      if allowed_to?(:show?, @story_idea)
+        redirect_to @story_idea
+      else
+        redirect_to root_path
+      end
     else
       set_form_variables
       render :new, status: :unprocessable_content
@@ -36,8 +79,28 @@ class StoryIdeasController < ApplicationController
   end
 
   def update
-    if @story_idea.update(story_idea_params.except(:images))
-      redirect_to story_ideas_path, notice: "StoryIdea was successfully updated.", status: :see_other
+    @story_idea.updated_by = current_user
+    authorize! @story_idea
+
+    success = false
+
+    StoryIdea.transaction do
+      if @story_idea.update(story_idea_params.except(:images, :category_ids, :sector_ids))
+        assign_associations(@story_idea)
+        success = true
+      end
+    rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotSaved, ActiveRecord::RecordNotUnique => e
+      Rails.logger.error "StoryIdea update failed: #{e.class} - #{e.message}"
+      raise ActiveRecord::Rollback
+    end
+
+    if success
+      flash[:notice] = "StoryIdea was successfully updated."
+      if allowed_to?(:show?, @story_idea)
+        redirect_to @story_idea, status: :see_other
+      else
+        redirect_to root_path, status: :see_other
+      end
     else
       set_form_variables
       render :edit, status: :unprocessable_content
@@ -45,33 +108,46 @@ class StoryIdeasController < ApplicationController
   end
 
   def destroy
+    authorize! @story_idea
+
     @story_idea.destroy!
     redirect_to story_ideas_path, notice: "StoryIdea was successfully destroyed."
   end
 
-  # Optional hooks for setting variables for forms or index
+  # ---------------------------------------------------------
+
   def set_form_variables
-    @story_idea.build_main_image if @story_idea.main_image.blank?
-    @story_idea.gallery_images.build
-
     @user = User.find(params[:user_id]) if params[:user_id].present?
-    @projects = (@user || current_user).projects.order(:name)
+    @organizations = (@user || current_user)&.organizations&.order(:name) || Organization.none
     @windows_types = WindowsType.all
-    @workshops = Workshop.all.order(:title)
-    @users = User.active.or(User.where(id: @story_idea.created_by_id))
-                 .order(:first_name, :last_name)
-  end
 
-  # def remove_image
-  #   @story_idea = StoryIdea.find(params[:id])
-  #   @image = @story_idea.images.find(params[:image_id])
-  #   @image.purge
-  #
-  #   respond_to do |format|
-  #     format.turbo_stream
-  #     format.html { redirect_to edit_story_path(@story_idea), notice: "Image removed." }
-  #   end
-  # end
+    users = authorized_scope(User.has_access.includes(:person))
+    users = users.or(User.where(id: @story_idea.created_by_id)) if @story_idea&.created_by_id
+    @users = users.distinct.order("people.first_name, people.last_name")
+
+    @story_population_type = CategoryType.find_by(name: "StoryPopulation")
+    @story_population_categories = @story_population_type&.categories&.published&.ordered_by_position_and_name || []
+    @sectors = Sector.published.order(:name)
+    submitted_sector_ids = Array(params.dig(:story_idea, :sector_ids)).reject(&:blank?)
+    submitted_category_ids = Array(params.dig(:story_idea, :category_ids)).reject(&:blank?)
+    if submitted_sector_ids.any? || submitted_category_ids.any?
+      @preselected_sector_ids = submitted_sector_ids.map(&:to_i)
+      @preselected_category_ids = submitted_category_ids.map(&:to_i)
+    end
+
+    if @story_idea.persisted?
+      @categories_grouped =
+        Category
+          .includes(:category_type)
+          .published
+          .order(:position, :name)
+          .group_by(&:category_type)
+          .select { |type, _| type.nil? || type.published? }
+          .sort_by { |type, _| [ type&.story_specific? ? 0 : 1, type&.name.to_s.downcase ] }
+    end
+    @story_idea.build_primary_asset if @story_idea.primary_asset.blank?
+    @story_idea.gallery_assets.build
+  end
 
   private
 
@@ -79,15 +155,16 @@ class StoryIdeasController < ApplicationController
     @story_idea = StoryIdea.find(params[:id])
   end
 
-  # Strong parameters
   def story_idea_params
     params.require(:story_idea).permit(
-      :title, :body, :youtube_url,
-      :permission_given, :publish_preferences, :promoted_to_story,
-      :windows_type_id, :project_id, :workshop_id, :external_workshop_title,
+      :title, :rhino_body, :youtube_url,
+      :permission_given, :author_credit_preference, :promoted_to_story,
+      :windows_type_id, :organization_id, :workshop_id, :external_workshop_title,
       :created_by_id, :updated_by_id,
-      main_image_attributes: [:id, :file, :_destroy],
-      gallery_images_attributes: [:id, :file, :_destroy]
+      category_ids: [],
+      sector_ids: [],
+      primary_asset_attributes: [ :id, :file, :_destroy ],
+      gallery_assets_attributes: [ :id, :file, :_destroy ]
     )
   end
 end

@@ -1,179 +1,265 @@
 class WorkshopSearchService
-	attr_reader :params, :super_user
-	attr_accessor :workshops, :sort
+  include ActionPolicy::Behaviour
+  include PunctuationStrippable
+  authorize :user
 
-	def initialize(params = {}, super_user: false)
-		@params = params
-		@super_user = super_user
-		@workshops = Workshop.all
-		@sort = default_sort
-	end
+  TITLE_SORT_SQL = "LOWER(TRIM(#{Workshop.strip_punctuation_sql_spaced('workshops.title')})) ASC".freeze
 
-	# Main entry point
-	def call
-		filter_by_params
-		order_by_params
-		resolve_ids_order
-		self # <- returns the WorkshopSearchService instance itself
-	end
+  attr_reader :params, :user, :admin
+  attr_accessor :workshops, :sort
 
-	# Compute the effective sort
-	def default_sort
-		params[:sort].presence || 'title'
-		# return params[:sort] if params[:sort].present?
-		# return 'keywords' if params[:query].present? # only when returning weighted results from # search_by_query
-		# 'title'
-	end
+  def initialize(params = {}, user: nil)
+    @params = params
+    @user = user
+    @admin = allowed_to?(:manage?, Workshop)
+    @sort = default_sort
+    @workshops = Workshop.all
+    if @sort == "popularity"
+      @workshops = @workshops.with_bookmarks_count
+    end
+  end
 
-	private
+  # Main entry point
+  def call
+    filter_by_params
+    order_by_params
+    resolve_ids_order
+    self # <- returns the WorkshopSearchService instance itself
+  end
 
-	# --- Filtering ---
+  # Compute the effective sort
+  def default_sort
+    params[:sort].presence || "title"
+    # return params[:sort] if params[:sort].present?
+    # return 'keywords' if params[:query].present? # only when returning weighted results from # search_by_query
+    # 'title'
+  end
 
-	def filter_by_params
-		filter_by_windows_type
-		filter_by_published_status
-		filter_by_title
-		filter_by_query
-		filter_by_author_name
-		filter_by_categories
-		filter_by_sectors
-	end
+  private
 
-	def filter_by_windows_type
-		return unless params[:windows_types].present?
-		ids = params[:windows_types].values.map(&:to_i)
-		@workshops = @workshops.windows_type_ids(ids)
-	end
+  # --- Filtering ---
 
-	def filter_by_published_status
-		if super_user
-			active   = ActiveModel::Type::Boolean.new.cast(params[:active])   if params.key?(:active)
-			inactive = ActiveModel::Type::Boolean.new.cast(params[:inactive]) if params.key?(:inactive)
+  def filter_by_params
+    filter_by_windows_type
+    filter_by_windows_type_name
+    filter_by_published_status
+    filter_by_title
+    filter_by_query
+    filter_by_author_name
+    filter_by_author_id
+    filter_by_categories
+    filter_by_sectors
+    filter_by_tag_names
+  end
 
-			@workshops =
-				if active && !inactive
-					@workshops.published(true)
-				elsif inactive && !active
-					@workshops.published(false)
-				else
-					@workshops
-				end
-		else
-			@workshops = @workshops.published
-		end
-	end
+  def filter_by_windows_type
+    return unless params[:windows_types].present?
+    ids = params[:windows_types].values.map(&:to_i)
+    @workshops = @workshops.windows_type_ids(ids)
+  end
 
-	def filter_by_author_name
-		return unless params[:author_name].present?
-		@workshops = search_by_author_name(@workshops, params[:author_name])
-	end
+  def filter_by_windows_type_name
+    return unless params[:windows_type_name].present?
+    @workshops = @workshops.windows_type_name(params[:windows_type_name])
+  end
 
-	def filter_by_categories
-		return unless params[:categories].present?
-		@workshops = search_by_categories(@workshops, params[:categories])
-	end
+  def filter_by_published_status
+    if Workshop.visibility_params_present?(params)
+      @workshops = Workshop.apply_visibility_filters(@workshops, params)
+    elsif admin
+      @workshops # ALL (no checkboxes checked, admin sees everything)
+    elsif user
+      @workshops = @workshops.published
+    else
+      @workshops = @workshops.publicly_visible
+    end
+  end
 
-	def filter_by_sectors
-		return unless params[:sectors].present?
-		@workshops = search_by_sectors(@workshops, params[:sectors])
-	end
+  def filter_by_author_name
+    return unless params[:author_name].present?
+    @workshops = search_by_author_name(@workshops, params[:author_name])
+  end
 
-	def filter_by_title
-		return unless params[:title].present?
-		@workshops = @workshops.title(params[:title])
-	end
+  def filter_by_author_id
+    @workshops = @workshops.authored_by(params[:author_id])
+  end
 
-	def filter_by_query
-		return unless params[:query].present?
+  def filter_by_categories
+    return unless params[:categories].present?
+    @workshops = search_by_categories(@workshops, params[:categories])
+  end
 
-		results = @workshops.search(params[:query]) # Use the SearchCop search scope directly on the relation
+  def filter_by_sectors
+    sector_ids = []
 
-		# If SearchCop returned an Array (e.g., because of scoring), convert back to Relation
-		if results.is_a?(Array)
-			ordered_ids = results.map(&:id)
-			@workshops = Workshop.where(id: ordered_ids)
-													 .order(Arel.sql("FIELD(id, #{ordered_ids.join(',')})"))
-		else
-			@workshops = results
-		end
-	end
+    # From dropdown IDs
+    if params[:sectors].present?
+      sector_ids += params[:sectors].to_unsafe_h.values.reject(&:blank?).map(&:to_i)
+    end
 
-	# --- Search methods ---
+    # From tagging links (?sector_names=...)
+    sector_ids += sector_ids_from_names
 
-	def search_by_author_name(workshops, author_name)
-		return workshops if author_name.blank?
+    sector_ids.uniq!
+    return if sector_ids.blank?
 
-		sanitized = author_name.strip.gsub(/\s+/, '')
-		workshops.left_outer_joins(:user)
-						 .where(
-							 "LOWER(REPLACE(workshops.full_name, ' ', '')) LIKE :name
-                OR LOWER(REPLACE(CONCAT(users.first_name, users.last_name), ' ', '')) LIKE :name
-                OR LOWER(REPLACE(CONCAT(users.last_name, users.first_name), ' ', '')) LIKE :name
-                OR LOWER(REPLACE(users.first_name, ' ', '')) LIKE :name
-                OR LOWER(REPLACE(users.last_name, ' ', '')) LIKE :name",
-							 name: "%#{sanitized}%"
-						 )
-	end
+    @workshops = @workshops
+        .joins(:sectorable_items)
+        .where(
+          sectorable_items: {
+            sectorable_type: "Workshop",
+            sector_id: sector_ids
+          }
+        )
+        .distinct
 
-	def search_by_categories(workshops, categories)
-		ids = categories.to_unsafe_h.values.reject(&:blank?)
-		return workshops if ids.empty?
-		workshops.joins(:categorizable_items)
-						 .where(categorizable_items: { categorizable_type: "Workshop", category_id: ids })
-						 .distinct
-	end
+    params[:sectors] ||= {}
+    sector_ids.each { |id| params[:sectors][id.to_s] = id.to_s }
+  end
 
-	def search_by_sectors(workshops, sectors)
-		ids = sectors.to_unsafe_h.values.reject(&:blank?)
-		return workshops if ids.empty?
-		workshops.joins(:sectorable_items)
-						 .where(sectorable_items: { sectorable_type: "Workshop", sector_id: ids })
-						 .distinct
-	end
+  def filter_by_tag_names
+    @workshops = @workshops.sector_names_all(@params[:sector_names_all]) if @params[:sector_names_all].present?
+    @workshops = @workshops.category_names_all(@params[:category_names_all]) if @params[:category_names_all].present?
+    @workshops
+  end
 
-	# --- Sorting ---
+  def filter_by_title
+    return unless params[:title].present?
+    @workshops = @workshops.title(params[:title])
+  end
 
-	def order_by_params
-		case sort
-		when 'created'
-			# order by year/month desc, then created_at desc, then title asc
-			@workshops = @workshops.order(
-				Arel.sql(<<~SQL.squish)
-          CASE WHEN year IS NOT NULL AND month IS NOT NULL THEN 1 ELSE 2 END ASC,
-          year DESC,
-          month DESC,
-          created_at DESC,
-          title ASC
-        SQL
-			)
-		when 'led'
-			@workshops = @workshops.order(led_count: :desc, title: :asc)
-		when 'title'
-			@workshops = @workshops.order(title: :asc)
-		when 'keywords'
-			# already ordered in filter_by_query
-		else
-			@workshops = @workshops.order(title: :asc)
-		end
-	end
+  def filter_by_query
+    return unless params[:query].present?
 
-	# --- Handle distinct + order by FIELD(id, ...) for complex joins ---
-	def resolve_ids_order
-		return if sort == 'keywords' # ordering is already handled if this is the case
+    spaced = ActiveRecord::Base.sanitize_sql_like(
+      self.class.strip_punctuation_spaced(params[:query]).strip
+    )
+    spaceless = ActiveRecord::Base.sanitize_sql_like(
+      self.class.strip_punctuation_spaceless(params[:query]).strip
+    )
+    return if spaced.blank?
 
-		# Determine sort columns for select
-		sort_columns = case sort
-									 when 'created' then [:id, :created_at, :year, :month, :title]
-									 when 'led'     then [:id, :led_count, :title]
-									 when 'title'   then [:id, :title]
-									 else [:id, :title]
-									 end
+    # Match against spaced variant (punctuation → space) and spaceless variant (punctuation + spaces removed)
+    fields = %w[workshops.title workshops.full_name action_text_rich_texts.plain_text_body]
+    conditions = fields.flat_map do |field|
+      [
+        "#{self.class.strip_punctuation_sql_spaced(field)} LIKE :spaced",
+        "#{self.class.strip_punctuation_sql_spaceless(field)} LIKE :spaceless"
+      ]
+    end.join(" OR ")
 
-    workshop_ids = @workshops
-      .select(*sort_columns)
-      .order(sort_columns)
-      .map(&:id)
-		@workshops = Workshop.where(id: workshop_ids)
-												 .order(Arel.sql("FIELD(id, #{workshop_ids.join(',')})"))
-	end
+    @workshops = @workshops
+      .joins("LEFT JOIN action_text_rich_texts ON action_text_rich_texts.record_id = workshops.id " \
+             "AND action_text_rich_texts.record_type = 'Workshop'")
+      .where(conditions, spaced: "%#{spaced}%", spaceless: "%#{spaceless}%")
+      .distinct
+  end
+
+  # --- Search methods ---
+
+  def search_by_author_name(workshops, author_name)
+    return workshops if author_name.blank?
+
+    # Credited-author name match (explicit author + legacy full_name + creator),
+    # shared via AuthorCreditable#by_credited_person_name. Isolated in an id
+    # subquery so its person joins don't collide with the current scope's joins.
+    workshops.where(id: workshops.by_credited_person_name(author_name).select("workshops.id"))
+  end
+
+  def search_by_categories(workshops, categories)
+    ids = categories.to_unsafe_h.values.reject(&:blank?)
+    return workshops if ids.empty?
+    workshops.joins(:categorizable_items)
+             .where(categorizable_items: { categorizable_type: "Workshop", category_id: ids })
+             .distinct
+  end
+
+  def search_by_sectors(workshops, sectors)
+    ids = sectors.to_unsafe_h.values.reject(&:blank?)
+    return workshops if ids.empty?
+    workshops.joins(:sectorable_items)
+             .where(sectorable_items: { sectorable_type: "Workshop", sector_id: ids })
+             .distinct
+  end
+
+  def sector_ids_from_names
+    return [] if params[:sector_names_all].blank?
+
+    names =
+      params[:sector_names_all]
+        .to_s
+        .split("--")
+        .map(&:strip)
+        .reject(&:blank?)
+
+    return [] if names.empty?
+
+    Sector
+      .names(names) # your case-insensitive / partial matching scope
+      .pluck(:id)
+  end
+
+  # --- Sorting ---
+
+  def order_by_params
+    case sort
+    when "created"
+      @workshops = @workshops.order(
+        Arel.sql(<<~SQL.squish)
+        CASE WHEN year IS NOT NULL AND month IS NOT NULL THEN 1 ELSE 2 END ASC,
+        year DESC,
+        month DESC,
+        created_at DESC,
+        title ASC
+      SQL
+      )
+    when "led"
+      @workshops = @workshops.order(led_count: :desc, title: :asc)
+    when "popularity"
+      @workshops = @workshops.order(bookmarks_count: :desc, title: :asc)
+    when "title"
+      @workshops = @workshops.order(Arel.sql(TITLE_SORT_SQL))
+    when "author"
+      @workshops = @workshops.order_by_author("asc")
+    when "keywords"
+      # already ordered
+    else
+      @workshops = @workshops.order(created_at: :asc, title: :asc)
+    end
+  end
+
+
+  # --- Handle distinct + order by FIELD(id, ...) for complex joins ---
+  def resolve_ids_order
+    return if sort.in?(%w[keywords popularity])
+
+    if sort == "author"
+      # order_by_author already ordered @workshops via joined COALESCE columns;
+      # preserve that order through the id round-trip, deduping join fan-out in Ruby.
+      ids = @workshops.pluck(:id).uniq
+      @workshops = ids.empty? ? Workshop.none :
+        Workshop.where(id: ids).order(Arel.sql("FIELD(id, #{ids.join(',')})"))
+      return
+    end
+
+    sort_columns =
+      case sort
+      when "created"    then [ :id, :created_at, :year, :month, :title ]
+      when "led"        then [ :id, :led_count, :title ]
+      when "popularity" then [ :id, :bookmarks_count, :title ]
+      when "title"      then [ :id, :title ]
+      else [ :id, :title ]
+      end
+
+    workshop_ids =
+      @workshops
+        .select(*sort_columns)
+        .order(sort_columns)
+        .map(&:id)
+
+    @workshops =
+      Workshop
+        .where(id: workshop_ids)
+        .order(Arel.sql("FIELD(id, #{workshop_ids.join(',')})"))
+  end
 end

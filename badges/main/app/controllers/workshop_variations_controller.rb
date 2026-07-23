@@ -1,46 +1,88 @@
 class WorkshopVariationsController < ApplicationController
-
+  include AhoyTracking
   def index
-    if current_user.super_user?
-      @workshop_variations = WorkshopVariation.joins(:workshop).
-        where(workshops: { inactive: false }).
-        order('workshops.title, workshop_variations.name').
-        paginate(page: params[:page], per_page: 25)
+    authorize!
+    @author = Person.find_by(id: params[:author_id]) if params[:author_id].present?
+    if turbo_frame_request?
+      per_page = params[:number_of_items_per_page].presence || 25
+      base_scope = WorkshopVariation.includes(:workshop, :author, :windows_type,
+                                              :workshop_variation_idea, created_by: :person)
+                                    .joins(:workshop).where(workshops: { published: true })
+      filtered = base_scope.search_by_params(params)
+      @sort = %w[name author updated_at created_at].include?(params[:sort]) ? params[:sort] : "created_at"
+      @sort_direction = params[:direction] == "asc" ? "asc" : "desc"
+      filtered = case @sort
+      when "author"
+        filtered.order_by_author(@sort_direction)
+      when "name"
+        filtered.reorder(Arel.sql("workshop_variations.name #{@sort_direction}"))
+      when "updated_at"
+        filtered.reorder(updated_at: @sort_direction.to_sym)
+      else
+        filtered.reorder(Arel.sql("workshop_variations.created_at #{@sort_direction}, workshops.title, workshop_variations.name"))
+      end
+      @workshop_variations = filtered.paginate(page: params[:page], per_page: per_page).decorate
+      @count_display = filtered.count == base_scope.count ? base_scope.count : "#{filtered.count}/#{base_scope.count}"
+
+      render :workshop_variations_results
     else
-      redirect_to authenticated_root_path
+      render :index
     end
   end
 
   def new
-    @workshop_variation = WorkshopVariation.new
-    workshops = current_user.super_user? ? Workshop.all : Workshop.published
-    @workshops = workshops.order(:title)
-    @workshop = @workshop_variation.workshop || params[:workshop_id].present? &&
-      Workshop.where(id: params[:workshop_id]).last
+    if params[:workshop_variation_idea_id].present?
+      idea = WorkshopVariationIdea.find(params[:workshop_variation_idea_id])
+      @workshop_variation = WorkshopVariationFromIdeaService.new(idea, user: current_user).call
+    else
+      @workshop_variation = WorkshopVariation.new
+    end
+    authorize! @workshop_variation
     set_form_variables
   end
 
   def create
-    @workshop_variation = WorkshopVariation.new(workshop_variation_params)
-    if @workshop_variation.save
-      flash[:notice] = 'Workshop Variation has been created.'
-      if params[:from] == "workshop_show"
-        redirect_to workshop_path(@workshop_variation.workshop, anchor: "workshop-variations")
-      elsif params[:from] == "index"
-        redirect_to workshop_variations_path
+    @workshop_variation = current_user.workshop_variations_as_creator.build(workshop_variation_params)
+    authorize! @workshop_variation
+
+    success = false
+
+    WorkshopVariation.transaction do
+      if @workshop_variation.save
+        # assign_associations(@workshop_variation)
+        if params[:promote_idea_assets] == "true"
+          @workshop_variation.attach_assets_from_idea!
+        end
+        success = true
+      end
+    rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotSaved, ActiveRecord::RecordNotUnique => e
+      log_workshop_error("creation", e)
+      raise ActiveRecord::Rollback
+    end
+
+    if success
+      flash[:notice] = "Workshop Variation has been created."
+      if params[:from] == "workshop_show" && @workshop_variation.workshop.present?
+        redirect_to workshop_path(@workshop_variation.workshop, anchor: "variation-#{@workshop_variation.id}") and return
+      elsif allowed_to?(:show?, @workshop_variation)
+        redirect_to @workshop_variation and return
       else
-        redirect_to authenticated_root_path
+        redirect_to root_path and return
       end
     else
       set_form_variables
+      flash.now[:alert] = "Unable to save the workshop variation."
       render :new
     end
   end
 
   def show
     @workshop_variation = WorkshopVariation.find(params[:id]).decorate
+    authorize! @workshop_variation
+    track_view(@workshop_variation)
+
     @workshop = @workshop_variation.workshop.decorate
-    @bookmark = current_user.bookmarks.find_by(bookmarkable: @workshop)
+    @bookmark = current_user&.bookmarks&.find_by(bookmarkable: @workshop)
     @new_bookmark = @workshop.bookmarks.build
     @quotes = @workshop.quotes
     @workshop_variations = @workshop.workshop_variations
@@ -49,38 +91,52 @@ class WorkshopVariationsController < ApplicationController
 
   def edit
     @workshop_variation = WorkshopVariation.find(params[:id])
-    @workshops = Workshop.published.order(:title)
+    authorize! @workshop_variation
     set_form_variables
   end
 
   def update
     @workshop_variation = WorkshopVariation.find(params[:id])
+    authorize! @workshop_variation
 
     if @workshop_variation.update(workshop_variation_params)
-      flash[:notice] = 'Workshop Variation updated successfully.'
-      redirect_to workshop_variations_path
+      @workshop_variation.attach_assets_from_idea! if params[:promote_idea_assets] == "true"
+      flash[:notice] = "Workshop Variation updated successfully."
+      redirect_to @workshop_variation
     else
-      flash[:alert] = 'Unable to update Workshop Variation.'
       set_form_variables
+      flash[:alert] = "Unable to update Workshop Variation."
       render :edit
     end
   end
 
   private
+  # def assign_associations(workshop_variation)
+  #   # Convert checkbox values into categorizable_items updates
+  #   selected_category_ids = Array(params[:workshop_variation][:category_ids]).reject(&:blank?).map(&:to_i)
+  #   workshop_variation.categories = Category.where(id: selected_category_ids)
+  #
+  #   # Convert checkbox values into sectorable_items updates
+  #   selected_sector_ids = Array(params[:workshop_variation][:sector_ids]).reject(&:blank?).map(&:to_i)
+  #   workshop_variation.sectors = Sector.where(id: selected_sector_ids)
+  # workshop.save!
+  # end
 
   def set_form_variables
-    @workshop_variation.build_main_image if @workshop_variation.main_image.blank?
-    @workshop_variation.gallery_images.build
+    @workshop = @workshop_variation.workshop || (Workshop.find_by(id: params[:workshop_id]) if params[:workshop_id].present?)
+    @workshop_variation_idea = WorkshopVariationIdea.find_by(id: params[:workshop_variation_idea_id]) if params[:workshop_variation_idea_id].present?
+    @workshop_variation.build_primary_asset if @workshop_variation.primary_asset.blank?
+    @workshop_variation.gallery_assets.build
   end
 
   def workshop_variation_params
     params.require(:workshop_variation).permit(
-      [:name, :code, :inactive, :ordering,
-       :youtube_url, :created_by_id, :workshop_id,
-       main_image_attributes: [:id, :file, :_destroy],
-       gallery_images_attributes: [:id, :file, :_destroy]
+      [ :name, :rhino_body, :published, :publicly_visible, :position, :youtube_url, :author_id,
+        :organization_id, :workshop_id, :workshop_variation_idea_id, :author_credit_preference,
+        :windows_type_id,
+        primary_asset_attributes: [ :id, :file, :_destroy ],
+        gallery_assets_attributes: [ :id, :file, :_destroy ]
       ]
     )
   end
-
 end

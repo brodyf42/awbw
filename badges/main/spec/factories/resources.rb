@@ -1,13 +1,37 @@
 FactoryBot.define do
   factory :resource do
-    association :user
+    association :created_by, factory: :user
     title { Faker::Lorem.sentence }
-    kind { [Resource::PUBLISHED_KINDS.sample] }
+    kind { Resource::PUBLISHED_KINDS.sample }
 
     # Use after(:create) to assign sectors
     after(:create) do |resource|
-      sector = create(:sector, name: "General") # adjust factory as needed
+      sector = Sector.published.first || create(:sector) # adjust factory as needed
       resource.sectors << sector
+    end
+
+    trait :featured do
+      featured { true }
+    end
+
+    trait :published do
+      published { true }
+    end
+
+    trait :unpublished do
+      published { false }
+    end
+
+    trait :publicly_visible do
+      publicly_visible { true }
+    end
+
+    trait :publicly_featured do
+      publicly_featured { true }
+    end
+
+    trait :hidden_from_search do
+      hidden_from_search { true }
     end
   end
 end

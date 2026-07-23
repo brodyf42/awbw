@@ -1,11 +1,16 @@
-class StoryDecorator < Draper::Decorator
-  delegate_all
+class StoryDecorator < ApplicationDecorator
+  include ::Linkable
 
-  def inactive?
-    !published?
+  def detail(length: 50)
+    text = rhino_body&.to_plain_text
+    length ? text&.truncate(length) : text
+  end
+
+  def external_url
+    object.website_url
   end
 
   def workshop_title
-    workshop&.title || external_workshop_title
+    [ workshop&.title, external_workshop_title.presence ].compact_blank.presence&.join(" / ")
   end
 end

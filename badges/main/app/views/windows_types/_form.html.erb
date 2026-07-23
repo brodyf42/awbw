@@ -1,0 +1,62 @@
+<%= simple_form_for @windows_type do |f| %>
+  <%= f.hidden_field :short_name, value: f.object.short_name %>
+
+  <div class="flex flex-wrap gap-3 mb-6">
+    <div class="w-60">
+      <%= f.input :name, as: :text, input_html: { rows: 1 } %>
+    </div>
+    <% if params[:admin] || !f.object.persisted? %>
+      <%= f.input :short_name,
+                  input_html: { readonly: true },
+                  as: :string %>
+    <% else %>
+      <%= f.hidden_field :short_name, value: f.object.short_name %>
+      <div class="ps-6">
+        <label class="block text-md font-medium text-gray-700 mb-3">
+          Short name
+        </label>
+        <div class="flex gap-x-2 items-center">
+          <span class="text-gray-900 font-medium mb-2">
+            <%= f.object.short_name %>
+          </span>
+        </div>
+        <p class="text-sm text-gray-500 mt-1">
+          Only editable by sys admins
+        </p>
+      </div>
+    <% end %>
+  </div>
+
+
+  <div class="form-group space-y-4">
+    <div class="rounded-lg border border-gray-200 bg-gray-50 p-4 mb-4 shadow-sm">
+      <div class="font-semibold text-gray-700">
+        AgeRange Categories
+      </div>
+      <div class="flex flex-wrap gap-3">
+        <% @categories.each do |category| %>
+          <label class="flex items-center gap-2 p-3 cursor-pointer w-auto min-w-[90px]">
+            <%= check_box_tag "windows_type[category_ids][]",
+                              category.id,
+                              @windows_type.category_ids.include?(category.id),
+                              class: "h-4 w-4 text-blue-600 rounded" %>
+
+            <span class="text-sm text-gray-700 whitespace-nowrap">
+              <%= category.name %>
+            </span>
+          </label>
+        <% end %>
+      </div>
+    </div>
+  </div>
+
+  <div class="action-buttons mt-8 flex justify-center gap-3">
+    <% if allowed_to?(:destroy?, f.object) %>
+      <%= link_to "Delete", @windows_type, class: "btn btn-danger-outline",
+                  data: { turbo_method: :delete, turbo_confirm: "Are you sure you want to delete?" } %>
+    <% end %>
+    <%= link_to "Cancel", sectors_path, class: "btn btn-secondary-outline" %>
+    <%= f.button :submit, class: "btn btn-primary" %>
+  </div>
+
+<% end %>

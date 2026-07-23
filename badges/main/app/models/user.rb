@@ -1,170 +1,399 @@
 class User < ApplicationRecord
   # Include default devise modules. Others available are:
-  # :confirmable, :lockable, :timeoutable and :omniauthable
-  devise :database_authenticatable, :recoverable,
-    :rememberable, :trackable, :validatable
+  # :confirmable, :timeoutable and :omniauthable
+  devise :database_authenticatable, :recoverable, :confirmable,
+    :rememberable, :trackable, :validatable, :lockable
 
-  after_create :set_default_values
-  before_destroy :reassign_reports_and_logs_to_orphaned_user
+  attr_accessor :locked_will_change
+
+  before_save :sync_locked_at_from_locked
+
+  after_update :track_welcome_instructions
+  after_update :track_welcome_completion, if: :welcome_token_cleared?
+  after_update :track_login_event
+  after_update :track_email_change
+  after_update :sync_email_to_person
+  after_update :track_lock_change
+  after_update :track_admin_change
+  after_update :track_inactive_change
+  after_update :track_password_reset_sent
+  after_update :track_password_changed
+
+  after_commit :create_email_changed_notification, on: :update
+
+  before_destroy :track_account_deleted
 
   # Associations
-  belongs_to :facilitator, optional: true
+  belongs_to :person, optional: true
+  belongs_to :created_by, class_name: "User", optional: true
+  belongs_to :updated_by, class_name: "User", optional: true
+  belongs_to :favorite_event, class_name: "Event", optional: true
   has_many :bookmarks, dependent: :destroy
-  has_many :event_registrations, foreign_key: :registrant_id, dependent: :destroy
+  has_many :comments, -> { newest_first }, as: :commentable, dependent: :destroy
+  has_many :event_registrations, through: :person
   has_many :notifications, as: :noticeable
-  has_many :project_users, dependent: :destroy
-  has_many :reports
-  has_many :resources
+
+  has_many :reports, foreign_key: :created_by_id, inverse_of: :created_by
+  has_many :resources, foreign_key: :created_by_id, inverse_of: :created_by
   has_many :user_forms, dependent: :destroy
-  has_many :workshops
-  has_many :workshop_logs
+  has_many :workshops, foreign_key: :created_by_id, inverse_of: :created_by
+  has_many :workshop_logs, foreign_key: :created_by_id, inverse_of: :created_by
 
   # created_by associations
   has_many :stories_as_creator, foreign_key: :created_by_id, class_name: "Story"
   has_many :story_ideas_as_creator, foreign_key: :created_by_id, class_name: "StoryIdea"
-  has_many :workshop_variations_as_creator, foreign_key: :created_by_id, class_name: "WorkshopVariation"
-  has_many :workshops_as_creator, foreign_key: :created_by_id, class_name: "Workshop"
   has_many :workshop_ideas_as_creator, foreign_key: :created_by_id, class_name: "WorkshopIdea"
+  has_many :workshop_variations_as_creator, foreign_key: :created_by_id, class_name: "WorkshopVariation"
+  has_many :workshop_variation_ideas_creator, foreign_key: :created_by_id, class_name: "WorkshopVariationIdea"
 
   # has_many through
   has_many :bookmarked_workshops, through: :bookmarks, source: :bookmarkable, source_type: "Workshop"
   has_many :bookmarked_resources, through: :bookmarks, source: :bookmarkable, source_type: "Resource"
   has_many :bookmarked_events, through: :bookmarks, source: :bookmarkable, source_type: "Event"
-  has_many :colleagues, -> { select(:user_id, :position, :project_id).distinct },
-           through: :projects, source: :project_users
-  has_many :communal_reports, through: :projects, source: :reports
-  has_many :events, through: :event_registrations
-  has_many :projects, through: :project_users
-  has_many :user_form_form_fields, through: :user_forms, dependent: :destroy
-  has_many :windows_types, through: :projects
-  # Images
-  has_one_attached :avatar # old paperclip -- TODO convert these to SquareImage belonging to Facilitator
+  has_many :bookmarked_video_recordings, through: :bookmarks, source: :bookmarkable, source_type: "VideoRecording"
 
+  has_many :events, through: :event_registrations
+  has_many :organizations, through: :person
+  has_many :windows_types, through: :organizations
+
+  has_many :user_form_form_fields, through: :user_forms, dependent: :destroy
   # Nested attributes
   accepts_nested_attributes_for :user_forms
-  accepts_nested_attributes_for :project_users, allow_destroy: true,
-    reject_if: proc { |attrs| attrs["organization_id"].blank? }
+  accepts_nested_attributes_for :comments, allow_destroy: true, reject_if: proc { |attrs| attrs["body"].blank? }
+
+
+  before_validation :strip_whitespace
 
   # Validations
-  validates :first_name, :last_name, presence: true
-  validates :email, presence: true, uniqueness: {case_sensitive: false}
+  validates :email, presence: true, uniqueness: { case_sensitive: false }
+  validate :time_zone_must_be_valid, if: :time_zone_changed?
+  validate :person_id_must_be_present_if_previously_set, on: :update
+  validates_associated :person, if: -> { person.present? }
+
+
+  include RemoteSearchable
 
   # Search Cop
   include SearchCop
   search_scope :search do
-    attributes [:email, :first_name, :last_name, :phone]
-    attributes user: "projects.name"
+    attributes [ :email, :first_name, :last_name, :phone ]
+    attributes person_email: "person.email"
+    attributes person_email_2: "person.email_2"
+    attributes user: "organizations.name"
   end
 
-  scope :active, -> { where(inactive: false) }
+  scope :has_access, -> { where(locked_at: nil, inactive: [ false, nil ]).where.not(confirmed_at: nil) }
 
   def self.search_by_params(params)
-    results = User.all
+    results = is_a?(ActiveRecord::Relation) ? self : all
     results = results.search(params[:search]) if params[:search].present?
     results = results.where(super_user: params[:super_user]) if params[:super_user].present?
-    results = results.where(inactive: params[:inactive]) if params[:inactive].present?
+    if params[:access] == "true"
+      results = results.has_access
+    elsif params[:access] == "false"
+      results = results.where("users.inactive = ? OR users.locked_at IS NOT NULL OR users.confirmed_at IS NULL", true)
+    end
+    results = results.where.not(welcome_instructions_sent_at: nil) if params[:invited] == "true"
+    results = results.where.not(confirmed_at: nil) if params[:confirmed] == "true"
+    results = results.where("users.sign_in_count > 0") if params[:authenticated] == "true"
     results
   end
 
-  def has_liasion_position_for?(project_id)
-    !project_users.where(project_id: project_id, position: 1).first.nil?
+  remote_searchable_by :email
+
+  def self.remote_search(query)
+    return none if query.blank?
+
+    pattern = "%#{query}%"
+    has_access
+      .left_joins(:person)
+      .where(
+        "users.email LIKE :pattern OR people.first_name LIKE :pattern OR people.last_name LIKE :pattern",
+        pattern: pattern
+      )
+  end
+
+  def remote_search_label
+    { id: id, label: full_name_with_email }
   end
 
   def active_for_authentication?
     super && !inactive?
   end
 
+  # Instance-level mirror of the `has_access` scope: the account can sign in —
+  # confirmed, not locked, not deactivated.
+  def has_access?
+    locked_at.nil? && !inactive? && confirmed_at.present?
+  end
+
   def bookmark_for(record)
-    bookmarks.find_by(bookmarkable: record)
+    if bookmarks.loaded?
+      bookmarks.detect { |b| b.bookmarkable_type == record.class.name && b.bookmarkable_id == record.id && !b.destroyed? }
+    else
+      bookmarks.find_by(bookmarkable: record)
+    end
   end
 
   def full_name
-    if !first_name || first_name.empty?
-      email
+    if person
+      person.full_name
     else
-      "#{first_name} #{last_name}"
+      if !first_name || first_name.empty?
+        email
+      else
+        "#{first_name} #{last_name}"
+      end
     end
   end
 
-  def submitted_monthly_report(submitted_date = Date.today, windows_type, project_id)
-    Report.where(project_id: project_id, type: "MonthlyReport", date: submitted_date,
+  def full_name_with_email
+    person ? "#{person.full_name} (#{email})" : email
+  end
+
+  def first_name_or_email
+    person&.first_name.presence || email
+  end
+
+  def submitted_monthly_report(submitted_date = Date.today, windows_type, organization_id)
+    Report.where(organization_id: organization_id, type: "MonthlyReport", date: submitted_date,
       windows_type: windows_type).last
   end
 
-  def recent_activity(activity_limit = 10)
-    recent = []
-
-    # recent.concat(events.order(updated_at: :desc).limit(activity_limit))
-    recent.concat(workshops.order(updated_at: :desc).limit(activity_limit))
-    recent.concat(workshop_logs.order(updated_at: :desc).limit(activity_limit))
-    recent.concat(workshop_variations_as_creator.order(updated_at: :desc).limit(activity_limit))
-    # recent.concat(stories.order(updated_at: :desc).limit(activity_limit))
-    # recent.concat(quotes.order(updated_at: :desc).limit(activity_limit))
-    recent.concat(resources.order(updated_at: :desc).limit(activity_limit))
-    recent.concat(reports.where(owner_type: "MonthlyReport").order(updated_at: :desc).limit(activity_limit))
-    recent.concat(reports.where(owner_id: 7).order(updated_at: :desc).limit(activity_limit)) # TODO: remove hard-coded
-
-    # Sort by the most recent timestamp (updated_at preferred, fallback to created_at)
-    recent.sort_by { |item| item.try(:updated_at) || item.created_at }.reverse.first(activity_limit * 8)
-  end
-
-  def project_monthly_workshop_logs(date, *windows_type)
+  def organization_monthly_workshop_logs(date, *windows_type)
     where = windows_type.map { |wt| "windows_type_id = ?" }
 
-    logs = projects.map do |project|
-      project.workshop_logs.where(where.join(" OR "), *windows_type)
+    logs = organizations.map do |organization|
+      organization.workshop_logs.where(where.join(" OR "), *windows_type)
     end.flatten
     logs = logs.select do |log|
-      log.date && log.date.month == date.month.to_i &&
-        log.date.year == date.year.to_i
+      log.workshop_held_on && log.workshop_held_on.month == date.month.to_i &&
+        log.workshop_held_on.year == date.year.to_i
     end.flatten
-    logs.uniq.group_by { |log| log.date }
+    logs.uniq.group_by { |log| log.workshop_held_on }
   end
 
-  def project_workshop_logs(date, windows_type, project_id)
-    if project_id
-      logs = workshop_logs.where(project_id: project_id, windows_type_id: windows_type.id)
+  def organization_workshop_logs(date, windows_type, organization_id)
+    if organization_id
+      logs = workshop_logs.where(organization_id: organization_id, windows_type_id: windows_type.id)
       logs = logs.select do |log|
-        log.date && log.date.month == date.month.to_i &&
-          log.date.year == date.year.to_i
+        log.workshop_held_on && log.workshop_held_on.month == date.month.to_i &&
+          log.workshop_held_on.year == date.year.to_i
       end.flatten
-      logs.uniq.group_by { |log| log.date }
+      logs.uniq.group_by { |log| log.workshop_held_on }
     end
   end
 
+  def deletable?
+    !reports.exists? &&
+      !workshop_logs.exists? &&
+      !resources.exists? &&
+      !workshops.exists? &&
+      !stories_as_creator.exists? &&
+      !story_ideas_as_creator.exists? &&
+      !workshop_ideas_as_creator.exists? &&
+      !workshop_variations_as_creator.exists? &&
+      !workshop_variation_ideas_creator.exists?
+  end
+
   def name
-    return email if !first_name || first_name.empty?
-    "#{first_name} #{last_name}"
+    person ? person.name : email
   end
 
-  def agency_name
-    agency ? agency.name : "No agency."
+  def primary_asset # method needed for idea_submitted_fyi mailer
   end
 
-  def has_bookmarkable?(bookmarkable, type: nil)
-    bookmarkable_ids(bookmarkable_type: type || bookmarkable.object.class.name).include?(bookmarkable.id)
+  def gallery_assets # method needed for idea_submitted_fyi mailer
+    []
   end
 
-  def bookmarkable_ids(bookmarkable_type:)
-    public_send("bookmarked_#{bookmarkable_type.downcase.pluralize}")
-      .pluck(:id)
+  # Override Devise to always send confirmation to the pending email when present.
+  # Devise's default checks `pending_reconfirmation?` but can still route to the
+  # current email in some flows. This ensures the confirmation always targets the
+  # unconfirmed (new) email address.
+  def send_confirmation_instructions
+    generate_confirmation_token! unless @raw_confirmation_token
+    target = unconfirmed_email.presence || email
+    send_devise_notification(:confirmation_instructions, @raw_confirmation_token, to: target)
+  end
+
+  def set_welcome_instructions_token!
+    loop do
+      self.welcome_instructions_token = Devise.friendly_token
+      break unless self.class.exists?(welcome_instructions_token: welcome_instructions_token)
+    end
+
+    self.welcome_instructions_created_at = Time.current
+    save!
+  end
+
+  def clear_welcome_instructions_token!
+    update_columns(
+      welcome_instructions_token: nil,
+      welcome_instructions_created_at: nil,
+      welcome_instructions_sent_at: nil
+    )
+  end
+
+
+  def track_auth_event(name, properties = {})
+    payload = { name: name, properties: properties.merge(
+      record_id: id, record_type: "User", updated_by_id: updated_by_id,
+      resource_type: "User", resource_id: id, resource_title: "#{self.name} (#{email})"
+    ) }
+    Analytics::LifecycleBuffer.push(payload)
+  end
+
+  def locked
+    locked_at.present?
+  end
+
+  def locked=(value)
+    @locked_will_change = true
+    @locked_value = ActiveModel::Type::Boolean.new.cast(value)
   end
 
   private
 
-  def set_default_values
-    self.inactive = false if inactive.nil?
-    self.confirmed = true if confirmed.nil?
+  def strip_whitespace
+    self.first_name = first_name&.strip
+    self.last_name = last_name&.strip
+    self.email = email&.strip
   end
 
-  def reassign_reports_and_logs_to_orphaned_user
-    orphaned_user = User.find_by(email: "orphaned_reports@awbw.org")
-    return unless orphaned_user
+  def time_zone_must_be_valid
+    return if ActiveSupport::TimeZone[time_zone]
 
-    # Reassign reports
-    reports.update_all(user_id: orphaned_user.id)
+    errors.add(:time_zone, "is not a valid time zone")
+  end
 
-    # Reassign workshop_logs
-    workshop_logs.update_all(user_id: orphaned_user.id)
+  def person_id_must_be_present_if_previously_set
+    return unless person_id_was.present?
+    return if person_id.present?
+
+    errors.add(:person_id, "cannot be removed once set")
+  end
+
+
+  def after_confirmation
+    super
+    track_auth_event("auth.email_confirmed", { changes: { email: { after: email } } })
+  end
+
+  def after_lock
+    super
+    track_auth_event("auth.account_locked")
+  end
+
+  def after_unlock
+    super
+    track_auth_event("auth.account_unlocked")
+  end
+
+  def track_welcome_instructions
+    return unless saved_change_to_welcome_instructions_sent_at?
+    track_auth_event("auth.welcome_instructions_sent")
+  end
+
+  def track_account_deleted
+    track_auth_event("auth.account_deleted")
+  end
+
+  def track_email_change
+    if saved_change_to_email?
+      from, to = saved_change_to_email
+      track_auth_event("auth.email_changed", { changes: { email: { before: from, after: to } } })
+    elsif saved_change_to_unconfirmed_email? && unconfirmed_email.present?
+      track_auth_event("auth.email_update_requested", { changes: { email: { before: email, after: unconfirmed_email } } })
+    end
+  end
+
+  def track_lock_change
+    return unless saved_change_to_locked_at?
+
+    if locked_at.present?
+      track_auth_event("auth.account_locked", { locked_at: locked_at })
+    else
+      track_auth_event("auth.account_unlocked")
+    end
+  end
+
+  def track_admin_change
+    return unless saved_change_to_super_user?
+
+    from, to = saved_change_to_super_user
+    if super_user?
+      track_auth_event("auth.admin_granted", { changes: { admin: { before: "revoked", after: "granted" } } })
+    else
+      track_auth_event("auth.admin_revoked", { changes: { admin: { before: "granted", after: "revoked" } } })
+    end
+  end
+
+  def track_login_event
+    return unless saved_change_to_sign_in_count?
+
+    track_auth_event("auth.login", {
+      sign_in_count: sign_in_count
+    })
+  end
+
+  def welcome_token_cleared?
+    saved_change_to_welcome_instructions_token? &&
+      welcome_instructions_token.nil?
+  end
+
+  def track_welcome_completion
+    track_auth_event("auth.account_setup_completed")
+  end
+
+  def track_inactive_change
+    return unless saved_change_to_inactive?
+
+    if inactive?
+      track_auth_event("auth.account_deactivated")
+    else
+      track_auth_event("auth.account_reactivated")
+    end
+  end
+
+  def track_password_reset_sent
+    return unless saved_change_to_reset_password_sent_at? && reset_password_sent_at.present?
+    track_auth_event("auth.password_reset_sent", { sent_at: reset_password_sent_at })
+  end
+
+  def track_password_changed
+    return unless saved_change_to_encrypted_password?
+    track_auth_event("auth.password_changed")
+  end
+
+  def sync_email_to_person
+    return unless saved_change_to_email? && person.present?
+
+    person.update(email: email)
+  end
+
+  def create_email_changed_notification
+    return unless previous_changes.key?("email")
+
+    _from, to = previous_changes["email"]
+    NotificationServices::CreateNotification.call(
+      noticeable: self,
+      recipient_role: :person,
+      recipient_email: to,
+      kind: :account_email_changed,
+      notification_type: 1,
+      deliver: false
+    )
+  end
+
+  def sync_locked_at_from_locked
+    return unless @locked_will_change
+
+    if @locked_value
+      self.locked_at = Time.current unless locked_at.present?
+    else
+      self.locked_at = nil
+      self.failed_attempts = 0
+    end
   end
 end

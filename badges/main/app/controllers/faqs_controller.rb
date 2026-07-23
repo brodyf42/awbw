@@ -1,30 +1,39 @@
 class FaqsController < ApplicationController
-  before_action :set_faq, only: [:show, :edit, :update, :destroy]
+  include AhoyTracking
+  skip_before_action :authenticate_user!, only: [ :index, :show ]
+  before_action :set_faq, only: [ :show, :edit, :update, :destroy ]
 
   def index
-    faqs = current_user.super_user? ? Faq.all : Faq.active
-    @faqs = faqs.search_by_params(params.to_unsafe_h.slice("query", "inactive"))
-                .by_order
-                .page(params[:page])
+    authorize!
+    faqs = authorized_scope(Faq.all)
+    @faqs = faqs.search_by_params(params.to_unsafe_h.slice("query", "published"))
+              .by_position
+              .page(params[:page])
+    track_index_intent(Faq, @faqs, params)
   end
 
   def show
+    authorize! @faq
+    track_view(@faq)
   end
 
   def new
     @faq = Faq.new
+    authorize! @faq
     set_form_variables
   end
 
   def edit
+    authorize! @faq
     set_form_variables
   end
 
   def create
     @faq = Faq.new(faq_params)
+    authorize! @faq
 
     if @faq.save
-      redirect_to faqs_path, notice: "FAQ was successfully created."
+      redirect_to @faq, notice: "FAQ was successfully created."
     else
       set_form_variables
       render :new, status: :unprocessable_content
@@ -32,10 +41,11 @@ class FaqsController < ApplicationController
   end
 
   def update
+    authorize! @faq
     notice = "FAQ was successfully updated."
     flash.now[:notice] = notice
     if @faq.update(faq_params)
-      redirect_to faqs_path, notice: notice, status: :see_other
+      redirect_to @faq, notice: notice, status: :see_other
     else
       set_form_variables
       render :edit, status: :unprocessable_content
@@ -43,6 +53,7 @@ class FaqsController < ApplicationController
   end
 
   def destroy
+    authorize! @faq
     @faq.destroy!
     redirect_to faqs_path, notice: "FAQ was successfully destroyed."
   end
@@ -59,6 +70,6 @@ class FaqsController < ApplicationController
 
   # Strong parameters
   def faq_params
-    params.require(:faq).permit(:question, :answer, :inactive, :ordering)
+    params.require(:faq).permit(:question, :answer, :position, :published, :publicly_visible)
   end
 end

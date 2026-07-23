@@ -1,10 +1,22 @@
 class Resource < ApplicationRecord
+  include AuthorCreditable, Featureable, Publishable, RemoteSearchable, TagFilterable, Trendable, WindowsTypeFilterable, RichTextSearchable
+  remote_searchable_by :title
   include Rails.application.routes.url_helpers
+  include ActionText::Attachable
+  include Mentionable
 
-  PUBLISHED_KINDS = ["Handout", "Scholarship", "Template", "Toolkit", "Form"]
-  KINDS = PUBLISHED_KINDS + ["Resource", "Story"]
+  # Define rich text fields for mentions functionality
+  def self.mentionable_rich_text_fields
+    [ :rhino_body ]
+  end
 
-  belongs_to :user
+  PUBLISHED_KINDS = [ "Handout", "Template", "Toolkit", "Form" ]
+  KINDS = PUBLISHED_KINDS + [ "Resource", "Story", "LeaderSpotlight", "SectorImpact", "Theme", "Scholarship" ]
+
+  has_rich_text :rhino_body
+
+  belongs_to :created_by, class_name: "User"
+  belongs_to :author, class_name: "Person", optional: true
   belongs_to :workshop, optional: true
   belongs_to :windows_type, optional: true
   has_one :form, as: :owner
@@ -19,24 +31,36 @@ class Resource < ApplicationRecord
   has_many :related_workshops, through: :sectors, source: :workshops
   has_many :sectors, through: :sectorable_items, source: :sector
 
-  # Image associations
-  has_many :attachments, as: :owner, dependent: :destroy # TODO - convert to GalleryImages
-  has_many :images, as: :owner, dependent: :destroy
-  has_one :main_image, -> { where(type: "Images::MainImage") },
-          as: :owner, class_name: "Images::MainImage", dependent: :destroy
-  has_many :gallery_images, -> { where(type: "Images::GalleryImage") },
-           as: :owner, class_name: "Images::GalleryImage", dependent: :destroy
+  # Asset associations
+  has_one :primary_asset, -> { where(type: "PrimaryAsset") },
+          as: :owner, class_name: "PrimaryAsset", dependent: :destroy
+  has_many :gallery_assets, -> { where(type: "GalleryAsset") },
+           as: :owner, class_name: "GalleryAsset", dependent: :destroy
+  has_many :rich_text_assets, -> { where(type: "RichTextAsset") },
+         as: :owner, class_name: "RichTextAsset", dependent: :destroy
+  has_one :downloadable_asset, -> { where(type: "DownloadableAsset") },
+         as: :owner, class_name: "DownloadableAsset", dependent: :destroy
+  has_many :assets, as: :owner, dependent: :destroy
+
+  has_many :action_text_mentions,
+           as: :mentionable,
+           dependent: :destroy
+
+  has_many :action_text_rich_texts,
+           through: :action_text_mentions
 
   # Default values
-  attribute :inactive, :boolean, default: false
+  attribute :published, :boolean, default: false
+  attribute :hidden_from_search, :boolean, default: false
 
   # Validations
   validates :title, presence: true, uniqueness: { case_sensitive: false }
   validates :kind, presence: true
 
   # Nested attributes
-  accepts_nested_attributes_for :main_image, reject_if: :all_blank, allow_destroy: true
-  accepts_nested_attributes_for :gallery_images, reject_if: :all_blank, allow_destroy: true
+  accepts_nested_attributes_for :primary_asset, reject_if: :all_blank, allow_destroy: true
+  accepts_nested_attributes_for :downloadable_asset, reject_if: :all_blank, allow_destroy: true
+  accepts_nested_attributes_for :gallery_assets, reject_if: :all_blank, allow_destroy: true
   accepts_nested_attributes_for :form, reject_if: :all_blank, allow_destroy: true
   accepts_nested_attributes_for :categorizable_items,
                                  allow_destroy: true,
@@ -45,69 +69,96 @@ class Resource < ApplicationRecord
                                  allow_destroy: true,
                                  reject_if: proc { |resource| Resource.reject?(resource) }
 
-  # Search Cop
   include SearchCop
   search_scope :search do
-    attributes :title, :author, :text
+    attributes all: [ :title, :legacy_author_name ]
+    options :all, type: :text, default: true, default_operator: :or
+
+    scope { join_rich_texts }
+    attributes action_text_body: "action_text_rich_texts.plain_text_body"
+    options :action_text_body, type: :text, default: true, default_operator: :or
+  end
+
+  # Fold the legacy free-text author into credit display, credited-name search,
+  # and sort.
+  def self.legacy_author_name_columns
+    [ "resources.legacy_author_name" ]
+  end
+
+  def legacy_author_name_text
+    legacy_author_name
+  end
+
+  # Unattributed resources are credited to the organization's staff.
+  def missing_author_label
+    "AWBW Staff"
   end
 
   # Scopes
   scope :by_created, -> { order(created_at: :desc) }
-  scope :featured, -> (featured=nil) { featured.present? ? where(featured: featured) : where(featured: true) }
-  scope :kind, -> (kind) { where("kind like ?", kind ) }
-  scope :leader_spotlights, -> { kind("LeaderSpotlight") }
+  scope :by_featured_first, -> { order(featured: :desc, created_at: :desc) }
+  scope :kinds, ->(kinds) {
+    kinds = Array(kinds).flatten.map(&:to_s)
+    where(kind: kinds) }
+  scope :leader_spotlights, -> { kinds("LeaderSpotlight") }
   scope :published_kinds, -> { where(kind: PUBLISHED_KINDS) }
-  scope :published, -> (published=nil) { published.present? ?
-                                           where(inactive: !published) : where(inactive: false) }
+  scope :published, ->(flag = nil) do
+    value = flag.nil? || flag == "" ? true : ActiveModel::Type::Boolean.new.cast(flag)
+    result = value ? published_kinds.where(published: true) : where(published: false)
+  end
   scope :recent, -> { published.by_created }
+  # Resources flagged hidden_from_search stay publicly accessible by direct link
+  # but are excluded from non-admin portal searches and listings.
+  scope :searchable, -> { where(hidden_from_search: false) }
   scope :sector_impact, -> { where(kind: "SectorImpact") }
   scope :scholarship, -> { where(kind: "Scholarship") }
-  scope :story, -> { where(kind: ["Story", "LeaderSpotlight"]).order(created_at: :desc) }
+  scope :story, -> { where(kind: [ "Story", "LeaderSpotlight" ]).order(created_at: :desc) }
   scope :theme, -> { where(kind: "Theme") }
-  scope :title, -> (title) { where("title like ?", "%#{ title }%") }
+  scope :title, ->(title) { where("title like ?", "%#{ title }%") }
 
-  def description
-    text # TODO - rename field
+  def self.search_by_params(params)
+    resources = is_a?(ActiveRecord::Relation) ? self : all
+    if params[:query].present?
+      # SearchCop covers title + legacy author name + body; OR in the credited
+      # author/creator person name via id subqueries (isolated person joins).
+      by_text = resources.search(params[:query]).select("resources.id")
+      by_person = resources.by_credited_person_name(params[:query]).select("resources.id")
+      resources = resources.where(id: by_text).or(resources.where(id: by_person))
+    end
+    resources = resources.sector_names_all(params[:sector_names_all]) if params[:sector_names_all].present?
+    resources = resources.category_names_all(params[:category_names_all]) if params[:category_names_all].present?
+    resources = resources.windows_type_name(params[:windows_type_name]) if params[:windows_type_name].present?
+    resources = resources.title(params[:title]) if params[:title].present?
+    resources = resources.kinds(params[:kinds]) if params[:kinds].present?
+    resources = resources.authored_by(params[:author_id])
+    if visibility_params_present?(params)
+      resources = apply_visibility_filters(resources, params)
+    elsif params[:published].present?
+      resources = resources.published(params[:published])
+    end
+    resources
   end
+
   def story?
-    ["Story", "LeaderSpotlight"].include? self.kind
+    [ "Story", "LeaderSpotlight" ].include? self.kind
   end
 
   def custom_label_list
     "#{self.title} (#{self.kind.upcase})" unless self.kind.nil?
   end
 
-  # Methods
-  def led_count
-    0
-  end
-
   def name
     title || id
   end
 
-  def main_image_url
-    if main_image&.file&.attached?
-      Rails.application.routes.url_helpers.url_for(main_image.file)
-    elsif gallery_images.first&.file&.attached?
-      Rails.application.routes.url_helpers.url_for(gallery_images.first.file)
-    else
-      ActionController::Base.helpers.asset_path("theme_default.png")
-    end
-  end
-
-  def download_attachment
-    main_image || gallery_images.first || attachments.first
-  end
-
   def type_enum
-    types.map { |title| [title.titleize, title ]}
+    types.map { |title| [ title.titleize, title ] }
   end
 
   def types
-    ['Resource', 'LeaderSpotlight', 'SectorImpact',
-     'Story', 'Theme', 'Scholarship', 'TemplateAndHandout',
-     'ToolkitAndForm'
+    [ "Resource", "LeaderSpotlight", "SectorImpact",
+     "Story", "Theme", "Scholarship", "TemplateAndHandout",
+     "ToolkitAndForm"
     ]
   end
 
@@ -119,18 +170,17 @@ class Resource < ApplicationRecord
     created_at.month
   end
 
-  def self.search_by_params(params)
-    resources = all
-    resources = resources.search(params[:query]) if params[:query].present? # SearchCop incl title, author, text
-    resources = resources.title(params[:title]) if params[:title].present?
-    resources = resources.kind(params[:kind]) if params[:kind].present?
-    resources = resources.published(params[:published]) if params[:published].present?
-    resources = resources.featured(params[:featured]) if params[:featured].present?
-    resources
+  def published? # AR override
+    self[:published] && PUBLISHED_KINDS.include?(kind)
+  end
+
+  ## ActionText:Attachable
+  def attachable_content_type
+    "application/vnd.active_record.resource"
   end
 
   private
   def self.reject?(resource)
-    resource['_create'] == '0'
+    resource["_create"] == "0"
   end
 end

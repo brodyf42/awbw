@@ -13,23 +13,23 @@
 <div
   id="workshop-<%= workshop.id %>"
   class="
-    flex flex-col md:flex-row
-    <%= "admin-only bg-blue-100" if workshop.inactive? %>
+    flex flex-col sm:flex-row
+    <%= "admin-only bg-blue-100" unless workshop.published? %>
     border-b border-gray-200 bg-white py-4 gap-4
-    px-4 md:px-0        <!-- ⭐ Mobile padding -->
-  "
->
+    px-4 sm:px-0">
   <div id="workshop-<%= workshop.id %>-anchor" style="position: relative; top: -200px;"></div>
 
-  <!-- 1️⃣ Image -->
-  <div class="flex-shrink-0 w-full md:w-32 h-32 md:h-24 bg-gray-100 rounded overflow-hidden">
-    <%= link_to workshop_path(workshop) do %>
-      <img class="object-cover w-full h-full" src="<%= workshop.main_image_url %>">
-    <% end %>
-  </div>
+  <!-- 1️⃣ Media -->
+  <%= render "assets/display_image",
+             resource: workshop,
+             width: 32, height: 24,
+             variant: :index,
+             link_to_object: true,
+             file: workshop.display_image %>
+
 
   <!-- Content (bookmark + title+ + description) -->
-  <div class="flex flex-col md:flex-row gap-4 flex-1">
+  <div class="flex flex-col sm:flex-row gap-4 flex-1">
 
     <!-- 2️⃣ Title / author / metadata -->
     <div class="flex flex-1 gap-4">
@@ -45,42 +45,36 @@
         <!-- Title with badges (single column, bookmark stays separate) -->
         <%= link_to link_route,
                     class: "hover:underline block",
-                    data: { turbo: false } do %>
-          <%= title_with_badges(workshop, admin: current_user.super_user?, display_windows_type: true).html_safe %>
+                    data: { turbo_frame: "_top", turbo_prefetch: false } do %>
+          <%= title_with_badges(workshop,
+                                display_windows_type: true).html_safe %>
         <% end %>
 
         <!-- Author + date -->
         <div class="text-sm text-gray-600 leading-tight">
           By:
-          <% if workshop.user %>
-            <%= link_to workshop.author_name,
-                        generate_facilitator_user_path(workshop.user),
-                        class: "hover:underline",
-                        data: { turbo: false } %>
-          <% else %>
-            <%= workshop.full_name.present? ? workshop.full_name : "Facilitator" %>
-          <% end %>
+          <%= credited_author_link(workshop, class: "hover:underline", data: { turbo: false }) %>
           | <%= workshop.date %>
         </div>
 
-        <!-- Bookmarked count -->
-        <%= tag.div id: dom_id(workshop, :bookmark_count),
-                    class: "text-sm text-gray-600 leading-tight" do %>
-          Bookmarked: <%= workshop.led_count %> <%= "time".pluralize(workshop.led_count) %>
-        <% end %>
+        <!-- Bookmarked count + Tags count -->
+        <% tag_list = hide_tags ? [] : collect_all_tags(workshop) %>
+        <div class="text-sm text-gray-600 leading-tight">
+          <span id="<%= dom_id(workshop, :bookmark_count) %>">Bookmarked: <%= workshop.bookmarks_count %> <%= "time".pluralize(workshop.bookmarks_count.to_i) %></span><% if tag_list.any? %>, <span class="group relative inline-block"><span class="cursor-help">Tags: <%= tag_list.count %></span><div class="hidden group-hover:block absolute left-0 top-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg p-3 z-10 min-w-[300px] max-w-[500px]"><div class="text-sm text-gray-800"><%= tag_list.join(", ") %></div></div></span><% end %>
+        </div>
 
-        <!-- Age ranges -->
-        <% if workshop.workshop_age_ranges.any? %>
-          <div class="text-sm text-gray-600 leading-tight">
-            Age ranges: <%= workshop.workshop_age_ranges.to_sentence %>
-          </div>
-        <% end %>
+        <!-- Led count -->
+        <%#= tag.div id: dom_id(workshop, :led_count),
+                    class: "text-sm text-gray-600 leading-tight" do %>
+<!--          Led: <%##= workshop.led_count %> <%#= "time".pluralize(workshop.led_count.to_i) %>-->
+        <%# end %>
+
 
       </div>
     </div>
 
     <!-- 3️⃣ Description -->
-    <div class="flex flex-1 gap-4 pr-4 md:pr-3">
+    <div class="flex flex-1 gap-4 pr-4 sm:pr-3">
 
       <!-- Empty placeholder where the bookmark column would be -->
       <div class="w-6 flex-shrink-0"></div>
@@ -100,16 +94,7 @@
       </span>
         </p>
 
-        <% unless hide_tags %>
-          <% if workshop.categories.any? %>
-            <p class="tags mt-3 italic">
-              Tags:
-              <span title="<%= workshop.categories.map(&:name).to_sentence %>">
-            <%= workshop.categories.map(&:name).to_sentence.truncate(150) %>
-          </span>
-            </p>
-          <% end %>
-        <% end %>
+
 
       </div>
     </div>

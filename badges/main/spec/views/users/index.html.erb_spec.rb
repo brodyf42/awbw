@@ -1,21 +1,36 @@
-require 'rails_helper'
+require "rails_helper"
 
 RSpec.describe "users/index", type: :view do
-  let(:admin_user) { create(:user, :admin) } # or super_user trait
+  let(:admin_user) { create(:user, :admin) }
 
-  before(:each) do
-    allow(view).to receive(:current_user).and_return(admin_user) # Stub current_user for Devise
-    users = create_list(:user, 3, first_name: "Alice")
-    paginated_users = WillPaginate::Collection.create(1, 10, users.size) do |pager|
-      pager.replace(users)
-    end
-    assign(:users, paginated_users)
+  before do
+    allow(view).to receive(:current_user).and_return(admin_user)
+    render
   end
 
-  it "renders a list of users" do
-    render
+  it "renders the page header" do
+    expect(rendered).to have_selector("h1", text: "Users")
+  end
 
-    assert_select "table tbody tr", count: 3
-    assert_select "table tbody tr td", text: /Alice/
+  it "renders the search form" do
+    expect(rendered).to have_field("search")
+    expect(rendered).to have_select("access")
+    expect(rendered).to have_select("super_user")
+  end
+
+  it "renders a turbo frame for results" do
+    expect(rendered).to have_selector("turbo-frame#users_results")
+  end
+
+  it "renders skeleton loader table with correct columns" do
+    expect(rendered).to have_selector("table thead tr th", text: "Email")
+    expect(rendered).to have_selector("table thead tr th", text: "Person")
+    expect(rendered).to have_selector("table thead tr th", text: "Confirmed")
+    expect(rendered).to have_selector("table thead tr th", text: "Access")
+    expect(rendered).to have_selector("table thead tr th", text: "Admin")
+  end
+
+  it "renders skeleton rows" do
+    expect(rendered).to have_selector("table tbody tr", count: 8)
   end
 end

@@ -1,21 +1,41 @@
 class PasswordsController < Devise::PasswordsController
-  
-  def create
-    self.resource = resource_class.send_reset_password_instructions(resource_params)
-    yield resource if block_given?
+  include AhoyTracking
 
-    if successfully_sent?(resource)
-      NotificationMailer.reset_password_notification(resource).deliver_later
-      respond_with({}, location: after_sending_reset_password_instructions_path_for(resource_name))
-    else
-      respond_with(resource)
+  rescue_from(*EmailDeliveryErrorHandler::ERRORS) { |e| EmailDeliveryErrorHandler.handle(e, self) }
+
+  skip_before_action :authenticate_user!, only: [ :new, :create, :edit, :update ]
+
+  def create
+    authorize! :password, to: :create?
+    super do |resource|
+      track_event("auth.password_reset_requested", user_id: resource.id) if resource.persisted?
+    end
+  end
+
+  def update
+    authorize! :password, to: :update?
+    super do |resource|
+      resource.confirm if invite_confirmable?(resource)
+      track_event("auth.password_changed", user_id: resource.id) if resource.errors.empty?
     end
   end
 
   protected
 
   def after_resetting_password_path_for(resource)
-    set_flash_message!(:notice, :password_updated)
-    resource_class.sign_in_after_reset_password ? after_sign_in_path_for(resource) : new_session_path(resource_name)
+    set_flash_message!(:notice, :password_updated) # custom flash message
+
+    # normal after_resetting_password_path_for behavior
+    resource_class.sign_in_after_reset_password ?
+      after_sign_in_path_for(resource) :
+      new_session_path(resource_name)
+  end
+
+  private
+
+  def invite_confirmable?(resource)
+    return false if resource.errors.present? || resource.confirmed_at
+
+    true
   end
 end

@@ -5,7 +5,7 @@ RSpec.describe "/faqs", type: :request do
     {
       question: "What is AWBW?",
       answer: "A Window Between Worlds (AWBW) uses art to heal trauma.",
-      inactive: false
+      published: true
     }
   end
 
@@ -13,14 +13,47 @@ RSpec.describe "/faqs", type: :request do
     {
       question: "",
       answer: "",
-      inactive: nil
+      unpublished: nil
     }
   end
 
-  let(:admin)         { create(:user, :admin) }
-  let(:regular_user)  { create(:user) }
-  let!(:active_faq)   { create(:faq, question: "Public FAQ", answer: "Public FAQ Body", inactive: false) }
-  let!(:inactive_faq) { create(:faq, question: "Hidden FAQ", answer: "Hidden FAQ Body", inactive: true) }
+  let(:admin)            { create(:user, :admin) }
+  let(:regular_user)     { create(:user) }
+  let!(:published_faq)   { create(:faq, :published, question: "Published FAQ", answer: "Published FAQ Body") }
+  let!(:unpublished_faq) { create(:faq, question: "Unpublished FAQ", answer: "Unpublished FAQ Body") }
+  let!(:public_faq) { create(:faq, :published, question: "Public FAQ", answer: "Public FAQ Body", publicly_visible: true) }
+
+  describe "Ahoy tracking" do
+    before { sign_in admin }
+
+    describe "GET /index" do
+      it "tracks a search event when a query param is present" do
+        expect(Analytics::AhoyTracker).to receive(:track_index_intent).with(
+          anything, Faq, params: anything, result_count: anything
+        )
+
+        get faqs_path, params: { query: "Published" }
+      end
+
+      it "calls track_index_intent even without search params" do
+        expect(Analytics::AhoyTracker).to receive(:track_index_intent).with(
+          anything, Faq, params: anything, result_count: anything
+        )
+
+        get faqs_path
+      end
+    end
+
+    describe "GET /show" do
+      it "tracks a view event" do
+        expect(Analytics::AhoyTracker).to receive(:track).with(
+          anything, :view, published_faq
+        )
+
+        get faq_path(published_faq)
+      end
+    end
+  end
 
   describe "GET /index" do
     context "as an admin" do
@@ -33,22 +66,38 @@ RSpec.describe "/faqs", type: :request do
 
       it "shows all FAQs in the body" do
         get faqs_path
-        expect(response.body).to include("Public FAQ")
-        expect(response.body).to include("Hidden FAQ")
+        expect(response.body).to include("Published FAQ")
+        expect(response.body).to include("Unpublished FAQ")
       end
 
-      it "filters by inactive param" do
-        get faqs_path, params: { inactive: true }
-        expect(response.body).to include("Hidden FAQ")
-        expect(response.body).not_to include("Public FAQ")
+      it "shows the New FAQ admin control" do
+        get faqs_path
+        expect(response.body).to include("New FAQ")
       end
 
-      it "filters by query" do
-        get faqs_path, params: { query: "Public" }
-        expect(Faq.search_by_params(query: "Public").pluck(:question))
-          .to include("Public FAQ")
-        expect(Faq.search_by_params(query: "Public").pluck(:question))
-          .not_to include("Hidden FAQ")
+      it "filters by unpublished param" do
+        get faqs_path, params: { published: "false" } # needs to be string param
+        expect(response.body).to include("Unpublished FAQ")
+        expect(response.body).not_to match(/>Published FAQ</)
+      end
+
+      it "filters by published query" do
+        get faqs_path, params: { query: "Published" }
+        expect(Faq.search_by_params(query: "Published").pluck(:question))
+          .to include("Published FAQ")
+        expect(Faq.search_by_params(query: "Unpublished").pluck(:question))
+          .to include("Unpublished FAQ") # it should be case-insensitive
+      end
+
+      it "filters by title query" do
+        get faqs_path, params: { query: "Published FAQ" }
+        expect(Faq.search_by_params(query: "Published").pluck(:question))
+          .to include("Published FAQ")
+        expect(Faq.search_by_params(query: "Published").pluck(:question))
+          .to include("Unpublished FAQ") # it should be case-insensitive, and unpublished FAQ includes Published
+
+        expect(Faq.search_by_params(query: "Unpublished").pluck(:question))
+          .to include("Unpublished FAQ")
       end
     end
 
@@ -60,10 +109,37 @@ RSpec.describe "/faqs", type: :request do
         expect(response).to be_successful
       end
 
-      it "shows only active FAQs" do
+      it "shows only published FAQs" do
         get faqs_path
+        expect(response.body).to include("Published FAQ")
+        expect(response.body).not_to include("Unpublished FAQ")
+      end
+
+      it "hides admin controls" do
+        get faqs_path
+        expect(response.body).not_to include("New FAQ")
+        expect(response.body).not_to include(edit_faq_path(published_faq))
+      end
+    end
+
+    context "as a guest" do
+      it "renders successfully" do
+        get faqs_path
+        expect(response).to be_successful
+      end
+
+      it "shows only publicly_visible FAQs" do
+        get faqs_path
+        expect(response).to be_successful
         expect(response.body).to include("Public FAQ")
-        expect(response.body).not_to include("Hidden FAQ")
+        expect(response.body).not_to include("Published FAQ")
+        expect(response.body).not_to include("Unpublished FAQ")
+      end
+
+      it "hides admin controls" do
+        get faqs_path
+        expect(response.body).not_to include("New FAQ")
+        expect(response.body).not_to include(edit_faq_path(public_faq))
       end
     end
   end
@@ -87,6 +163,15 @@ RSpec.describe "/faqs", type: :request do
       get new_faq_url
       expect(response).to be_successful
     end
+
+    it "renders the admin visibility card with the published and publicly visible flags" do
+      get new_faq_url
+
+      expect(response.body).to include("admin-only bg-blue-100")
+      expect(response.body).to include('name="faq[published]"')
+      expect(response.body).to include('name="faq[publicly_visible]"')
+      expect(response.body).to include(VisibilityFlagsHelper::FLAG_DEFINITIONS[:publicly_visible][:description])
+    end
   end
 
   describe "GET /edit" do
@@ -96,6 +181,14 @@ RSpec.describe "/faqs", type: :request do
       faq = Faq.create!(valid_attributes)
       get edit_faq_url(faq)
       expect(response).to be_successful
+    end
+
+    it "renders the visibility flags for an existing FAQ" do
+      faq = Faq.create!(valid_attributes)
+      get edit_faq_url(faq)
+
+      expect(response.body).to include('name="faq[published]"')
+      expect(response.body).to include('name="faq[publicly_visible]"')
     end
   end
 
@@ -111,9 +204,9 @@ RSpec.describe "/faqs", type: :request do
         }.to change(Faq, :count).by(1)
       end
 
-      it "redirects to the faqs index" do
+      it "redirects to the created faq" do
         post faqs_url, params: { faq: valid_attributes }
-        expect(response).to redirect_to(faqs_url)
+        expect(response).to redirect_to(faq_url(Faq.last))
       end
     end
 
@@ -149,14 +242,13 @@ RSpec.describe "/faqs", type: :request do
         expect(faq.answer).to eq("Updated answer text.")
       end
 
-      it "redirects to the faqs index" do
+      it "redirects to the faq" do
         patch faq_url(faq), params: { faq: new_attributes }
-        expect(response).to redirect_to(faqs_url)
+        expect(response).to redirect_to(faq_url(faq))
       end
     end
 
     context "with invalid parameters" do
-
       it "renders a 422 response" do
         patch faq_url(faq), params: { faq: invalid_attributes }
         expect(response).to have_http_status(:unprocessable_content)

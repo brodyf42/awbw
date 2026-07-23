@@ -7,7 +7,7 @@ Rails.application.configure do
   config.enable_reloading = true
 
   # Do not eager load code on boot.
-  config.eager_load = false
+  config.eager_load = true
 
   # Show full error reports.
   config.consider_all_requests_local = true
@@ -27,10 +27,43 @@ Rails.application.configure do
 
   # Change to :null_store to avoid any caching.
   config.cache_store = :memory_store
+  # config.cache_store = :solid_cache_store
+
+  # Enable for background grounds locally
+  # config.active_job.queue_adapter = :solid_queue
+  # config.solid_queue.connects_to = { database: { writing: :queue } }
 
   # Store uploaded files on the local file system (see config/storage.yml for options).
+  # Active Storage
   config.active_storage.service = :local
-  Rails.application.routes.default_url_options[:host] ||= "http://localhost:3000"
+
+  # URL helpers, *_url helpers, mailers
+  # Moved to config/initializers/default_host.rb for dynamic Conductor port support
+  # Rails.application.routes.default_url_options[:host] ||= "localhost:3000"
+
+  config.after_initialize do
+    Bullet.enable = true
+    Bullet.rails_logger = true
+
+    # Moved to config/initializers/default_host.rb for dynamic Conductor port support
+    # ActiveStorage::Current.url_options = {
+    #   protocol: "http",
+    #   host: "localhost",
+    #   port: 3000
+    # }
+
+    if ActionMailer::Base.delivery_method == :smtp
+      raise "SMTP must not be enabled in development"
+    end
+  end
+
+  config.action_mailer.delivery_method = :file
+  config.action_mailer.perform_deliveries = true
+  config.action_mailer.show_previews = true
+
+  config.action_mailer.file_settings = {
+    location: Rails.root.join("tmp/mail")
+  }
 
   # Don't care if the mailer can't send.
   config.action_mailer.raise_delivery_errors = false
@@ -39,7 +72,8 @@ Rails.application.configure do
   config.action_mailer.perform_caching = false
 
   # Set localhost to be used by links generated in mailer templates.
-  config.action_mailer.default_url_options = { host: "localhost", port: 3000 }
+  # Moved to config/initializers/default_host.rb for dynamic Conductor port support
+  # config.action_mailer.default_url_options = { host: "localhost", port: 3000, protocol: "http" }
 
   # Print deprecation notices to the Rails logger.
   config.active_support.deprecation = :log
@@ -51,7 +85,7 @@ Rails.application.configure do
   config.active_record.verbose_query_logs = true
 
   # Append comments with runtime information tags to SQL queries in logs.
-  config.active_record.query_log_tags_enabled = true
+  config.active_record.query_log_tags_enabled = false
 
   # Highlight code that enqueued background job in logs.
   config.active_job.verbose_enqueue_logs = true
@@ -74,7 +108,7 @@ Rails.application.configure do
 
   # needed for codespaces
   config.hosts << ".app.github.dev"
-
-  feature_flag_variables = File.join(Rails.root, 'config', 'feature_flag_variables.rb')
-  load(feature_flag_variables) if File.exist?(feature_flag_variables)
+  # Allow Conductor workspaces on any port
+  config.hosts << /\Alocalhost(:\d+)?\z/
+  config.hosts << /\Aawbw\.local(:\d+)?\z/
 end

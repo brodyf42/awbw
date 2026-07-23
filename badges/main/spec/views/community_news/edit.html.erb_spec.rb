@@ -6,35 +6,35 @@ RSpec.describe "community_news/edit", type: :view do
   let(:community_news) {
     CommunityNews.create!(
       title: "MyString",
-      body: "MyText",
+      rhino_body: "<p>MyText</p>",
       youtube_url: "MyString",
       published: false,
       featured: false,
-      author: create(:user),
+      author: create(:person),
       reference_url: "MyString",
-      project: nil,
+      organization: nil,
       windows_type: nil,
       created_by: create(:user),
       updated_by: create(:user),
     )
   }
-  let(:windows_types) { create_list(:windows_type, 3) }
 
   before(:each) do
     sign_in admin
     allow(view).to receive(:current_user).and_return(admin)
     assign(:community_news, community_news)
-    assign(:windows_types, windows_types)
+    assign(:sectors, [])
+    assign(:categories_grouped, [])
+    assign(:people, [ community_news.author ])
   end
 
   it "renders the edit community_news form" do
     render
 
     assert_select "form[action=?][method=?]", community_news_path(community_news), "post" do
-
       assert_select "textarea[name=?]", "community_news[title]"
 
-      assert_select "textarea[name=?]", "community_news[body]"
+      assert_select "input[name=?][type=?]", "community_news[rhino_body]", "hidden"
 
       assert_select "textarea[name=?]", "community_news[youtube_url]"
 
@@ -44,11 +44,11 @@ RSpec.describe "community_news/edit", type: :view do
 
       assert_select "select[name=?]", "community_news[author_id]"
 
+      assert_select "select[name=?]", "community_news[author_credit_preference]"
+
       assert_select "textarea[name=?]", "community_news[reference_url]"
 
-      assert_select "select[name=?]", "community_news[project_id]"
-
-      assert_select "select[name=?]", "community_news[windows_type_id]"
+      assert_select "select[name=?]", "community_news[organization_id]"
     end
   end
 end

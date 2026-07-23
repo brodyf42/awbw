@@ -1,0 +1,115 @@
+class TaggingsController < ApplicationController
+  include AhoyTracking
+
+  skip_before_action :authenticate_user!, only: [ :index ]
+
+  def index
+    authorize! :tagging, to: :index?
+    @sector_names_all = params[:sector_names_all]
+    @category_names_all = params[:category_names_all]
+
+    number_of_items_per_page = params[:number_of_items_per_page].present? ? params[:number_of_items_per_page].to_i : 9
+    pages = {
+      workshops: params[:workshops_page],
+      resources: params[:resources_page],
+      stories: params[:stories_page],
+      community_news: params[:community_news_page],
+      events: params[:events_page],
+      people: params[:people_page],
+      organizations: params[:organizations_page],
+      quotes: params[:quotes_page],
+      video_recordings: params[:video_recordings_page]
+    }
+
+    @grouped_tagged_items = TaggingSearchService.new(user: current_user).call(
+      sector_names_all: @sector_names_all,
+      category_names_all: @category_names_all,
+      pages: pages,
+      number_of_items_per_page: number_of_items_per_page
+    )
+
+    @sectors = authorized_scope(Sector.all, as: :taggable).order(:name)
+    @categories = authorized_scope(Category.all, as: :taggable)
+                    .joins(:category_type)
+                    .select("categories.*, category_types.name AS category_type_name")
+                    .distinct
+                    .order("category_type_name ASC, categories.name ASC")
+
+    track_view("taggings")
+    track_tagging_browse(@grouped_tagged_items) if browsing_intentionally?
+  end
+
+  def matrix
+    authorize! :tagging, to: :matrix?
+    @sectors = Sector.includes(:sectorable_items)
+                     .joins(:sectorable_items)
+                     .published
+                     .distinct
+                     .order(:name)
+
+    @categories = Category
+      .includes(:category_type)
+      .joins(:category_type, :categorizable_items)
+      .published
+      .select("categories.*, category_types.name AS category_type_name")
+      .distinct
+      .order(Arel.sql("category_type_name, categories.position, categories.name"))
+
+    # ------------------------------------------------------------------
+    # 1. Build raw counts (SOURCE OF TRUTH)
+    # ------------------------------------------------------------------
+    @model_heatmap_stats = {}
+
+    Tag::TAGGABLE_META.each do |key, data|
+      klass = data[:klass]
+      @model_heatmap_stats[key] = { sector: {}, category: {} }
+
+      klass
+        .published
+        .includes(:sectors)
+        .joins(:sectors)
+        .group("sectors.id")
+        .count
+        .each do |sector_id, count|
+          @model_heatmap_stats[key][:sector][sector_id] = count
+        end
+
+      klass
+        .published
+        .includes(:categories)
+        .joins(:categories)
+        .group("categories.id")
+        .count
+        .each do |category_id, count|
+          @model_heatmap_stats[key][:category][category_id] = count
+        end
+    end
+
+    # ------------------------------------------------------------------
+    # 2. Compute quantiles FROM counts
+    # ------------------------------------------------------------------
+    @model_heatmap_quantiles = {}
+
+    @model_heatmap_stats.each do |key, dimensions|
+      @model_heatmap_quantiles[key] = {}
+
+      dimensions.each do |type, counts|
+        values = counts.values.sort
+        next if values.empty?
+
+        @model_heatmap_quantiles[key][type] = {
+          q20: values[(values.length * 0.2).floor],
+          q40: values[(values.length * 0.4).floor],
+          q60: values[(values.length * 0.6).floor],
+          q80: values[(values.length * 0.8).floor]
+        }
+      end
+    end
+  end
+
+  private
+
+  def browsing_intentionally?
+    params[:sector_names_all].present? || params[:category_names_all].present?
+  end
+end

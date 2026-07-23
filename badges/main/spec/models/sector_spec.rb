@@ -1,15 +1,22 @@
 require 'rails_helper'
 
-RSpec.describe Sector do
-  describe 'associations' do
-    it { should have_many(:sectorable_items).dependent(:destroy) }
-    it { should have_many(:workshops).through(:sectorable_items) }
-    it { should have_many(:quotes).through(:workshops) }
-  end
+RSpec.describe Sector, type: :model do
+  describe ".taggings_presence" do
+    let!(:tagged) { create(:sector) }
+    let!(:untagged) { create(:sector) }
 
-  describe 'validations' do
-    let!(:existing_sector) { create(:sector) }
-    subject { build(:sector, name: existing_sector.name) }
-    it { should validate_presence_of(:name) }
+    before { create(:sectorable_item, sector: tagged) }
+
+    it "returns only sectors with taggings for \"with\"" do
+      expect(Sector.taggings_presence("with")).to contain_exactly(tagged)
+    end
+
+    it "returns only sectors without taggings for \"without\"" do
+      expect(Sector.taggings_presence("without")).to contain_exactly(untagged)
+    end
+
+    it "returns all sectors for a blank value" do
+      expect(Sector.taggings_presence("")).to contain_exactly(tagged, untagged)
+    end
   end
-end 
+end

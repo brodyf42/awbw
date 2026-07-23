@@ -5,26 +5,28 @@ RSpec.describe "community_news/index", type: :view do
 
   let(:community_news1) { CommunityNews.create!(
     title: "Title1",
-    body: "MyText",
+    # body: "MyText",
+    rhino_body: "<p>MyText</p>",
     youtube_url: "Youtube Url",
     published: false,
     featured: false,
-    author: create(:user),
+    author: create(:person),
     reference_url: "Reference Url",
-    project: nil,
+    organization: nil,
     windows_type: nil,
     created_by: create(:user),
     updated_by: create(:user),
     ) }
   let(:community_news2) { CommunityNews.create!(
     title: "Title2",
-    body: "MyText",
+    rhino_body: "<p>MyText</p>",
+    # body: "MyText",
     youtube_url: "Youtube Url",
     published: false,
     featured: false,
-    author: create(:user),
+    author: create(:person),
     reference_url: "Reference Url",
-    project: nil,
+    organization: nil,
     windows_type: nil,
     created_by: create(:user),
     updated_by: create(:user),
@@ -32,17 +34,21 @@ RSpec.describe "community_news/index", type: :view do
 
   before(:each) do
     sign_in admin
-    assign(:community_news, paginated([community_news1, community_news2]))
+    assign(:community_news,
+           CommunityNewsDecorator.decorate_collection(
+             paginated([ community_news1, community_news2 ])))
   end
 
   it "renders a list of community_news" do
-    render
+    allow(view).to receive(:turbo_frame_request?).and_return(true)
+    render template: "community_news/community_news_results"
     expect(rendered).to include(community_news1.title, community_news2.title)
   end
 
-  it "renders a friendly message when no banners exist" do
+  it "renders a friendly message when no community_news exist" do
     assign(:community_news, paginated([]))
-    render
-    expect(rendered).to match(/No community news yet/)
+    allow(view).to receive(:turbo_frame_request?).and_return(true)
+    render template: "community_news/community_news_results"
+    expect(rendered).to include("No community news yet")
   end
 end

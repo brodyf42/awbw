@@ -1,55 +1,19 @@
 class WindowsType < ApplicationRecord
-  TYPES = ["Adult", "Children", "Combined"]
+  TYPES = [ "Adult", "Children", "Combined" ]
 
-  has_many :workshops
-  has_many :age_ranges
-  has_many :reports
+  has_many :categorizable_items, dependent: :destroy, as: :categorizable
   has_many :form_builders
+  has_many :reports
+  has_many :workshops
 
-  # Methods
-  def self.create_defaults
-    WindowsType.defaults.each_with_index do |name, index|
-      WindowsType.find_or_create_by(
-        name: name,
-        legacy_id: index + 1
-      )
-    end
-  end
+  # has_many :through
+  has_many :age_ranges, -> { joins(:category_type).where(category_types: { name: "AgeRange" })
+                                                  .order(Arel.sql("categories.position ASC, categories.name ASC")) },
+           through: :categorizable_items,
+           source: :category # needs to be after has_many :categorizable_items
+  has_many :categories, through: :categorizable_items
+  has_many :category_types, through: :categories
 
-  def self.scopes
-    pluck(:name).map do |name|
-      symbolize(name)
-    end
-  end
-
-  def short_name
-    if name.include?("COMBINED")
-      short_name = "Combined"
-    else
-      short_name = name.gsub("LOG", "").gsub("WORKSHOP", "").strip
-    end
-    short_name.titleize
-  end
-
-  def label
-    label = short_name
-    label = label.downcase.gsub("windows", "")
-    label = label.downcase.gsub("workshop", "")
-    label = label.downcase.gsub("log", "")
-    label = label.gsub("Children", "Children's")
-    label.strip.titleize
-  end
-
-  private
-
-  def self.symbolize(name)
-    name.split(" ")[0]
-        .gsub("'s", "")
-        .downcase.to_sym
-  end
-
-  def self.defaults # TODO - remove these
-    ['Women\'s Windows', 'Children\'s Windows',
-     'Combined Women\'s and Children\'s Windows']
-  end
+  validates :name, presence: true
+  validates :short_name, presence: true
 end

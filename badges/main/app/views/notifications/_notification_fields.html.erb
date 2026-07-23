@@ -1,0 +1,34 @@
+<%# ---- One manual-log communication, editable inline (mirrors the comment
+    edit-mode pattern). A persisted entry renders a read-only view target row
+    plus a hidden edit target form; the shared `edit-toggle` controller flips
+    between them. A new, unsaved entry renders the amber add
+    form directly. Only manually logged communications addressed to this record
+    render through this partial — automated notifications stay read-only in the
+    notifications box. The sender defaults to whoever logs it. ---- %>
+<% channel_default = Notification::MANUAL_CHANNELS.include?(f.object.channel) ? f.object.channel : "email" %>
+<% record = local_assigns[:record] %>
+<div class="nested-fields" data-paginated-fields-target="item">
+  <%# Record this communication against its parent (the "Record" column in the
+      notifications index) — e.g. an event registration or a person. %>
+  <% if record %>
+    <%# `record` may be a Draper decorator, so read the model name via
+        `model_name` (delegated to the underlying class) rather than `class.name`,
+        which would return the decorator (e.g. "PersonDecorator"). %>
+    <%= f.hidden_field :noticeable_type, value: record.model_name.name %>
+    <%= f.hidden_field :noticeable_id, value: record.id %>
+  <% end %>
+
+  <% if f.object.persisted? %>
+    <%= f.hidden_field :id %>
+    <div data-edit-toggle-target="view">
+      <%= render "notifications/notification_row", notification: f.object, admin: true %>
+    </div>
+    <div class="hidden rounded-md border border-amber-200 bg-amber-50 p-3" data-edit-toggle-target="edit">
+      <%= render "notifications/notification_form", f: f, channel_default: channel_default %>
+    </div>
+  <% else %>
+    <div class="rounded-md border border-amber-200 bg-amber-50 p-3">
+      <%= render "notifications/notification_form", f: f, channel_default: channel_default %>
+    </div>
+  <% end %>
+</div>

@@ -1,0 +1,191 @@
+<%
+  field = f.object
+
+  visibility_options = [
+    [ "Always ask", "always_ask" ],
+    [ "Logged out only", "logged_out_only" ],
+    [ "Answers on file", "answers_on_file" ]
+  ]
+
+  visibility_styles = {
+    always_ask: "bg-white text-gray-600 border-gray-300",
+    logged_out_only: "bg-white text-emerald-600 border-emerald-300",
+    answers_on_file: "bg-white text-amber-600 border-amber-300"
+  }
+%>
+<div class="nested-fields flex items-center gap-3 <%= field.group_header? ? 'pl-3 pr-6' : 'px-6' %> py-3 border-b border-gray-100 hover:bg-gray-50"
+     data-sortable-id="<%= field.id %>"
+     <% if field.section.present? %>data-section="<%= field.section %>"<% end %>
+     <% if field.group_header? %>data-group-header<% end %>>
+  <% if field.group_header? %>
+    <div class="cursor-grab rounded bg-purple-50 text-purple-500 hover:bg-purple-100 hover:text-purple-700 px-1.5 py-1"
+         data-sortable-handle
+         title="Drag to move this entire section">
+      <i class="fa-solid fa-up-down-left-right"></i>
+    </div>
+  <% else %>
+    <div class="cursor-grab text-gray-400 hover:text-gray-600" data-sortable-handle title="Drag to reorder this field">
+      <i class="fa-solid fa-grip-vertical"></i>
+    </div>
+  <% end %>
+
+  <%= f.hidden_field :id if field.persisted? %>
+  <%= f.hidden_field :position, value: field.position %>
+
+  <% if field.group_header? %>
+    <%# Section headers never collect an answer, so they're never required. %>
+    <%= f.hidden_field :required, value: false %>
+    <div class="flex-1 min-w-0" data-controller="field-options">
+      <div class="flex items-start gap-3">
+        <div class="flex-1 min-w-0">
+          <%= f.text_area :name, required: true, rows: 1,
+                class: "w-full text-lg font-semibold text-gray-800 rounded border-gray-300 shadow-sm px-2 py-1",
+                placeholder: "Header text" %>
+        </div>
+        <%= f.select :visibility, visibility_options,
+              {},
+              class: "mt-1 w-36 text-xs rounded-full border px-2 py-0.5 shrink-0 cursor-pointer",
+              data: { controller: "chip-select", chip_select_styles_value: visibility_styles, action: "chip-select#update" } %>
+        <button type="button"
+                class="mt-1 shrink-0 text-gray-400 hover:text-gray-600 px-1 cursor-pointer"
+                title="More options"
+                data-action="field-options#toggle">
+          <i class="fa-solid fa-chevron-down transition-transform" data-field-options-target="icon"></i>
+        </button>
+      </div>
+
+      <div class="hidden mt-2 pb-2 flex flex-col gap-2" data-field-options-target="panel">
+        <%= f.text_area :subtitle, rows: 2,
+              class: "w-full text-sm text-gray-600 rounded border-gray-300 shadow-sm px-2 py-1",
+              placeholder: "Subtitle" %>
+        <%= link_to_remove_association "Remove", f,
+              class: "text-sm text-gray-400 hover:text-red-600 underline shrink-0 ml-auto" %>
+      </div>
+    </div>
+  <% else %>
+    <div class="flex-1 min-w-0" data-controller="field-options answer-options">
+      <div class="flex flex-wrap items-center gap-2">
+        <%= f.text_area :name, required: true, rows: 1, class: "min-w-0 flex-[3_1_10rem] rounded border-gray-300 shadow-sm px-2 py-1 text-sm" %>
+        <%
+          type_order = %w[free_form_input_one_line free_form_input_paragraph single_select_radio single_select_dropdown multi_select_checkbox no_user_input group_header]
+          type_options = type_order.map { |t| [ FormField::ANSWER_TYPE_LABELS[t] || t.titleize, t ] }
+        %>
+        <%= f.select :answer_type, type_options,
+              {},
+              class: "flex-[2_1_9rem] rounded border-gray-300 shadow-sm px-2 py-1 text-sm",
+              data: { answer_options_target: "type", action: "answer-options#typeChanged" } %>
+        <label class="flex items-center gap-1 text-sm text-gray-600 shrink-0" data-answer-options-target="requiredLabel">
+          <%= f.check_box :required, class: "rounded border-gray-300 text-purple-600",
+                data: { answer_options_target: "required" } %>
+          Required
+        </label>
+        <label class="flex items-center gap-1 text-sm text-gray-600 shrink-0 ml-auto" title="Ask only the first time — hide if the person already answered it on any form, not just this event">
+          <%= f.check_box :one_time, class: "rounded border-gray-300 text-amber-600" %>
+          Only ask once
+        </label>
+        <%= f.select :visibility, visibility_options,
+              {},
+              class: "w-36 text-xs rounded-full border px-2 py-0.5 shrink-0 cursor-pointer",
+              data: { controller: "chip-select", chip_select_styles_value: visibility_styles, action: "chip-select#update" } %>
+        <button type="button"
+                class="shrink-0 text-gray-400 hover:text-gray-600 px-1 cursor-pointer"
+                title="More options"
+                data-action="field-options#toggle">
+          <i class="fa-solid fa-chevron-down transition-transform" data-field-options-target="icon"></i>
+        </button>
+      </div>
+
+      <%= render "forms/dropdown_other_warning", field: field %>
+
+      <% option_source = form_field_option_source(field) %>
+      <div class="hidden mt-2 pb-2 flex flex-col gap-3" data-field-options-target="panel">
+        <div class="flex flex-wrap items-center gap-2">
+          <%# Fixed-width first column so the Subtitle box lines up under the answer-type dropdown above. %>
+          <div class="min-w-0 flex-[3_1_10rem]">
+            <% if option_source %>
+              <%# These options are managed centrally, not per-field — link admins to that list. %>
+              <span class="inline-flex items-center gap-1.5 text-sm text-gray-500">
+                <i class="fa-solid fa-database text-xs text-gray-400"></i>
+                Options from
+                <%= link_to option_source[:label], option_source[:path],
+                      class: "font-medium text-purple-600 hover:text-purple-800 underline",
+                      target: "_blank", rel: "noopener" %>
+              </span>
+            <% else %>
+              <button type="button"
+                      class="<%= "hidden" unless field.selectable? %> flex items-center gap-1.5 text-sm font-medium text-gray-600 hover:text-gray-800 cursor-pointer"
+                      data-answer-options-target="section"
+                      data-action="answer-options#toggle">
+                <i class="fa-solid fa-chevron-right text-xs transition-transform" data-answer-options-target="icon"></i>
+                Answer options
+                <span class="text-xs text-gray-400">(<%= field.form_field_answer_options.size %>)</span>
+              </button>
+            <% end %>
+          </div>
+          <%
+            width_options = [
+              [ "Full width", "full" ],
+              [ "Half width", "half" ],
+              [ "Third width", "third" ],
+              [ "Quarter width", "quarter" ]
+            ]
+          %>
+          <%= f.text_area :subtitle, rows: 1, placeholder: "Subtitle",
+                class: "min-w-0 flex-[2_1_9rem] rounded border-gray-300 shadow-sm px-2 py-1 text-sm",
+                title: "Optional subtitle shown under the field label" %>
+          <%= f.text_area :hint_text, rows: 1, placeholder: "Hint",
+                class: "min-w-0 flex-[2_1_9rem] rounded border-gray-300 shadow-sm px-2 py-1 text-sm",
+                title: "Optional hint shown below the field input" %>
+          <%= f.select :width, width_options,
+                {},
+                class: "ml-auto shrink-0 rounded border-gray-300 shadow-sm px-2 py-1 text-sm",
+                title: "How wide this field appears on the form" %>
+          <%= f.number_field :min_words, min: 0, placeholder: "Min words",
+                class: "w-24 shrink-0 rounded border-gray-300 shadow-sm px-2 py-1 text-sm",
+                title: "Minimum number of words required (free-form text fields only)" %>
+          <%= f.number_field :max_characters, min: 1, placeholder: "Max chars",
+                class: "w-24 shrink-0 rounded border-gray-300 shadow-sm px-2 py-1 text-sm",
+                title: "Maximum number of characters allowed (free-form text fields only)" %>
+          <%= link_to_remove_association "Remove", f,
+                class: "text-sm text-gray-400 hover:text-red-600 underline shrink-0" %>
+        </div>
+
+        <% if params[:admin] == "true" %>
+          <%# Field identifiers tie a field to backend logic (Stripe, service areas, email, etc.),
+              so they're only editable with ?admin=true on the URL. %>
+          <label class="flex items-center justify-end gap-2 text-xs text-gray-500">
+            <span class="shrink-0 font-medium">Field identifier</span>
+            <%= f.text_field :field_identifier, placeholder: "e.g. payment_method",
+                  class: "w-1/4 min-w-0 rounded border-gray-300 shadow-sm px-2 py-1 font-mono text-xs",
+                  title: "Internal identifier linking this field to system logic — leave blank for an ordinary field" %>
+          </label>
+        <% end %>
+
+        <% unless option_source %>
+          <% options_locked = field.fixed_options? && params[:admin] != "true" %>
+          <div class="hidden space-y-2 pl-1 border-t border-gray-100 pt-3" data-answer-options-target="list">
+            <% if options_locked %>
+              <%# Payment-method options drive Stripe charge logic, so they're shown
+                  read-only here. Append ?admin=true to the URL to edit them. %>
+              <% field.form_field_answer_options.each do |option| %>
+                <div class="flex items-center gap-2 text-sm text-gray-600">
+                  <i class="fa-solid fa-circle text-gray-300 text-[5px] shrink-0"></i>
+                  <span><%= option.option_name %></span>
+                </div>
+              <% end %>
+              <p class="text-xs text-gray-400 italic">
+                These options aren't editable here — they're tied to system logic and must stay in sync with it.
+              </p>
+            <% else %>
+              <%= f.fields_for :form_field_answer_options do |opt| %>
+                <%= render "form_field_answer_option_fields", f: opt %>
+              <% end %>
+              <%= link_to_add_association "+ Add option", f, :form_field_answer_options,
+                    class: "text-sm text-purple-600 hover:text-purple-800 font-medium" %>
+            <% end %>
+          </div>
+        <% end %>
+      </div>
+    </div>
+  <% end %>
+</div>

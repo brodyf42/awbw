@@ -1,0 +1,23 @@
+<div class="<%= DomainTheme.bg_class_for(color) %> border border-gray-200 rounded-lg shadow-sm p-5">
+  <div class="p-6">
+    <h3 class="font-semibold text-gray-900 mb-4">
+      <%= title %>
+    </h3>
+
+    <% if records.any? %>
+      <ul class="space-y-1">
+        <% records.each do |record| %>
+          <li>
+            <%= link_to "#{record.created_at.strftime('%Y-%m-%d')}: #{record.title}",
+                        public_send(path_method, record),
+                        class: "text-gray-800 hover:underline" %>
+          </li>
+        <% end %>
+      </ul>
+    <% else %>
+      <p class="text-sm text-gray-500 italic">
+        All content has engagement 🎉
+      </p>
+    <% end %>
+  </div>
+</div>

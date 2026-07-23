@@ -1,0 +1,48 @@
+require 'rails_helper'
+
+RSpec.describe "categories/index", type: :view do
+  let(:admin) { create(:user, :admin) }
+
+  let!(:type_a) { create(:category_type, name: "Type A") }
+  let!(:type_b) { create(:category_type, name: "Type B") }
+
+  before do
+    assign(:categories, [
+      create(:category, :published, name: "Category One", category_type: type_a),
+      create(:category, name: "Category Two", category_type: type_b)
+    ])
+
+    assign(:category_types, [ type_a, type_b ])
+
+    allow(view).to receive(:current_user).and_return(admin)
+  end
+
+  it "renders each category with name, type, and published label" do
+    render
+
+    # NAME
+    expect(rendered).to include("Category One")
+    expect(rendered).to include("Category Two")
+
+    # CATEGORY TYPE
+    expect(rendered).to include("Type A")
+    expect(rendered).to include("Type B")
+
+    # PUBLISHED?
+    expect(rendered).to include("Yes") # for first category
+    expect(rendered).to include("No")  # for second category
+  end
+
+  it "shows a hoverable info icon only for categories that have a description" do
+    assign(:categories, [
+      create(:category, :published, name: "Described", category_type: type_a,
+             description: "Community mental health, outpatient, etc"),
+      create(:category, name: "Plain", category_type: type_b)
+    ])
+
+    render
+
+    expect(rendered).to have_css("i.fa-circle-info[title='Community mental health, outpatient, etc']")
+    expect(rendered).to have_css("i.fa-circle-info", count: 1)
+  end
+end

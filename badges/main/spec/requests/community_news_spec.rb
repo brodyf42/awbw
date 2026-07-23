@@ -13,35 +13,35 @@ require 'rails_helper'
 # sticking to rails and rspec-rails APIs to keep things simple and stable.
 
 RSpec.describe "/community_news", type: :request do
-  
   # This should return the minimal set of attributes required to create a valid
   # CommunityNews. As you add validations to CommunityNews, be sure to
   # adjust the attributes here as well.
-    let(:admin) { create(:user, super_user: true) }
+  let(:admin) { create(:user, :admin) }
+  let(:author_person) { create(:person) }
 
   let(:valid_attributes) {
     {
       title: "Title2",
-      body: "MyText",
-      youtube_url: "Youtube Url",
+      rhino_body: "MyText",
       published: false,
       featured: false,
-      author_id: admin.id,
-      reference_url: "Reference Url",
-      project: nil,
+      author_id: author_person.id,
+      reference_url: "www.google.com",
+      organization: nil,
       windows_type: nil,
       created_by_id: admin.id,
-      updated_by_id: admin.id,
+      updated_by_id: admin.id
     }
   }
 
   let(:invalid_attributes) {
     {
       title: nil,
-      body: nil,
       author_id: nil,
-      created_by_id: nil,
-      updated_by_id: nil,
+      organization: nil,
+      windows_type: nil,
+      created_by_id: admin.id,
+      updated_by_id: admin.id
     }
   }
 
@@ -55,15 +55,63 @@ RSpec.describe "/community_news", type: :request do
       get community_news_index_url
       expect(response).to be_successful
     end
+
+    it "sorts by the credited person, falling back to the creator when no author" do
+      aaron = create(:person, first_name: "Aaron", last_name: "Adams")
+      late_creator = create(:user, :with_person)
+      late_creator.person.update!(first_name: "Zeke", last_name: "Zimmer")
+
+      CommunityNews.create!(valid_attributes.merge(title: "Has Author", author: aaron))
+      CommunityNews.create!(valid_attributes.merge(title: "No Author", author: nil, created_by: late_creator))
+
+      get community_news_index_url(sort: "author", direction: "asc"), headers: { "Turbo-Frame" => "community_news_results" }
+      # Aaron Adams (explicit author) sorts before Zeke Zimmer (creator fallback).
+      expect(response.body.index("Has Author")).to be < response.body.index("No Author")
+    end
+
+    it "filters by organization_id on lazy turbo-frame request" do
+      org = create(:organization)
+      matching = CommunityNews.create!(valid_attributes.merge(title: "Org Match", organization: org))
+      other    = CommunityNews.create!(valid_attributes.merge(title: "Other Match"))
+
+      get community_news_index_url(organization_id: org.id), headers: { "Turbo-Frame" => "community_news_results" }
+      expect(response).to be_successful
+      expect(response.body).to include(matching.title)
+      expect(response.body).not_to include(other.title)
+    end
   end
 
   describe "GET /show" do
-    it "renders a successful response" do
-      community_news = CommunityNews.create! valid_attributes
-      get community_news_url(community_news)
-      expect(response).to be_successful
+    context "when community_news has NO external link" do
+      let(:community_news) do
+        CommunityNews.create!(
+          valid_attributes.merge(reference_url: nil)
+        )
+      end
+
+      it "renders the show page" do
+        get community_news_url(community_news)
+
+        expect(response).to have_http_status(:ok)
+      end
+    end
+
+    context "when community_news HAS an external link" do
+      let(:community_news) do
+        CommunityNews.create!(
+          valid_attributes.merge(reference_url: "www.google.com")
+        )
+      end
+
+      it "redirects to the external URL" do
+        get community_news_url(community_news)
+
+        expect(response).to have_http_status(:found)
+        expect(response).to redirect_to("https://www.google.com")
+      end
     end
   end
+
 
   describe "GET /new" do
     it "renders a successful response" do
@@ -88,9 +136,22 @@ RSpec.describe "/community_news", type: :request do
         }.to change(CommunityNews, :count).by(1)
       end
 
-      it "redirects to community_news index" do
+      it "redirects to the created community news" do
         post community_news_index_url, params: { community_news: valid_attributes }
-        expect(response).to redirect_to(community_news_index_url)
+        expect(response).to redirect_to(community_news_url(CommunityNews.last))
+      end
+
+      it "records the current user as created_by regardless of submitted value" do
+        someone_else = create(:user)
+        post community_news_index_url, params: { community_news: valid_attributes.merge(created_by_id: someone_else.id) }
+
+        expect(CommunityNews.last.created_by).to eq(admin)
+      end
+
+      it "assigns the chosen person as author" do
+        post community_news_index_url, params: { community_news: valid_attributes }
+
+        expect(CommunityNews.last.author).to eq(author_person)
       end
     end
 
@@ -110,9 +171,11 @@ RSpec.describe "/community_news", type: :request do
 
   describe "PATCH /update" do
     context "with valid parameters" do
-      let(:new_attributes) {
-        skip("Add a hash of attributes valid for your model")
-      }
+      let(:new_attributes) do
+        valid_attributes.merge(
+          title: "Updated Community News Title"
+        )
+      end
 
       it "updates the requested community_news" do
         community_news = CommunityNews.create! valid_attributes
@@ -121,11 +184,11 @@ RSpec.describe "/community_news", type: :request do
         skip("Add assertions for updated state")
       end
 
-      it "redirects to the community_news index" do
+      it "redirects to the updated community news" do
         community_news = CommunityNews.create! valid_attributes
         patch community_news_url(community_news), params: { community_news: new_attributes }
         community_news.reload
-        expect(response).to redirect_to(community_news_index_url)
+        expect(response).to redirect_to(community_news_url(community_news))
       end
     end
 

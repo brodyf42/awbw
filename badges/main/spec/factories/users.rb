@@ -1,9 +1,20 @@
 FactoryBot.define do
   factory :user do
-    first_name { Faker::Name.first_name.gsub("'", " ") }
-    last_name  { Faker::Name.last_name.gsub("'", " ") }
-    email      { Faker::Internet.unique.email(name: "#{first_name} #{last_name}") }
+    email { Faker::Internet.unique.email }
     password { "MyString" }
+
+    # CONFIRMABLE
+    confirmed_at { Time.current } # note that new users in db have confirmed_at set to nil,
+    # but for testing convenience we set it to current time here.
+    # Use the :unconfirmed trait to create unconfirmed users.
+
+    # LOCKABLE
+    locked_at { nil }
+    failed_attempts { 0 }
+
+    # TRACKABLE
+    sign_in_count { 0 }
+
     # address { "MyString" }
     # address2 { "MyString" }
     # city { "MyString" }
@@ -20,12 +31,12 @@ FactoryBot.define do
     # comment { "MyText" }
     # notes { "MyText" }
     # confirmed { false }
-    # inactive { false }
+    # published { true }
     # legacy { false }
     # legacy_id { 1 }
     # super_user { false }
     # agency_id { 1 }
-    # facilitator_id { "" }
+    # person_id { "" }
     # created_by_id { 1 }
     # updated_by_id { 1 }
     # reset_password_token { "MyString" }
@@ -42,8 +53,20 @@ FactoryBot.define do
     # avatar_updated_at { "2025-10-25 22:57:35" }
     # subscribecode { "MyString" }
 
+    trait :unconfirmed do
+      confirmed_at { nil }
+    end
+
+    trait :locked do
+      locked_at { Time.current }
+    end
+
     trait :admin do
       super_user { true }
+    end
+
+    trait :with_person do
+      person { association :person, user: instance }
     end
 
     trait :orphaned_reports do

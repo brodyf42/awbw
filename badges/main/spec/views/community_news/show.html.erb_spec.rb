@@ -10,17 +10,17 @@ RSpec.describe "community_news/show", type: :view do
 
     assign(:community_news, CommunityNews.create!(
       title: "Title",
-      body: "MyText",
+      rhino_body: "<p>MyText</p>",
       youtube_url: "Youtube Url",
       published: false,
       featured: false,
-      author: create(:user),
+      author: create(:person),
       reference_url: "Reference Url",
-      project: nil,
+      organization: nil,
       windows_type: nil,
       created_by: create(:user),
       updated_by: create(:user),
-    ))
+    ).decorate)
   end
 
   it "renders attributes in <p>" do

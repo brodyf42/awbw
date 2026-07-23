@@ -1,5 +1,41 @@
-<%= f.check_box :_create %>
-<%= f.hidden_field :sector_id %>
-<% name = f.object.sector.name %>
-<% name.upcase! if name.downcase == 'lgbtqia' %>
-<%= f.label name, name, class: 'inline-block' %> 
+<% collection ||= @sectors_collection || Sector.published.order(:name).pluck(:name, :id) %>
+<% show_admin_flags = local_assigns.fetch(:show_admin_flags, false) %>
+<% is_primary = f.object&.is_primary? %>
+
+<div class="nested-fields inline-flex items-center gap-2
+            rounded-md border border-lime-300 <%= is_primary ? "bg-lime-200" : "bg-lime-50" %>
+            text-gray-700 px-3 py-1 text-sm font-medium transition"
+     data-primary-tag-target="chip">
+  <% if f.object&.sector_id.present? %>
+    <%= f.hidden_field :sector_id %>
+    <span><%= f.object.sector&.name %></span>
+  <% else %>
+    <%= f.input :sector_id,
+                as: :select,
+                label: false,
+                collection: collection,
+                selected: f.object&.sector_id,
+                include_blank: "Select sector…",
+                wrapper: false,
+                input_html: {
+                  class: "bg-transparent border-none focus:ring-0 text-sm text-gray-500 cursor-pointer py-0"
+                } %>
+  <% end %>
+  <% if show_admin_flags && allowed_to?(:manage?, Person) %>
+    <label class="admin-only cursor-pointer leading-none" title="Mark as primary sector">
+      <%= f.check_box :is_primary,
+                      class: "peer sr-only",
+                      data: { primary_tag_target: "primary", action: "primary-tag#selectPrimary" } %>
+      <i class="fa-solid fa-star text-base text-gray-300 peer-checked:text-amber-400 transition-colors" aria-hidden="true"></i>
+      <span class="sr-only">Primary</span>
+    </label>
+    <label class="admin-only cursor-pointer leading-none" title="Mark as sector leader">
+      <%= f.check_box :is_leader, class: "peer sr-only" %>
+      <i class="fa-solid fa-crown text-base text-gray-300 peer-checked:text-lime-700 transition-colors" aria-hidden="true"></i>
+      <span class="sr-only">Leader</span>
+    </label>
+  <% end %>
+  <%= link_to_remove_association "✖",
+                                 f,
+                                 class: "ml-0.5 text-gray-400 hover:text-gray-600 font-bold text-xs transition" %>
+</div>

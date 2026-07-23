@@ -1,21 +1,22 @@
 require 'rails_helper'
 
 RSpec.describe "stories/show", type: :view do
-  let(:user) { create(:user) }
+  let(:user) { create(:user, :with_person) }
   let(:story) { create(:story, created_by: user, updated_by: user,
-                       body: "MyBody", youtube_url: "Youtube_url") }
+                       rhino_body: "<p>MyBody</p>", youtube_url: "Youtube_url") }
 
   before(:each) do
     sign_in user
     allow(view).to receive(:current_user).and_return(user)
-    assign(:story, story)
+    allow(view).to receive(:allowed_to?).and_return(true)
+    assign(:story, story.decorate)
   end
 
   it "renders attributes in <p>" do
     render
-    expect(rendered).to match(story.project.name)
+    expect(rendered).to match(story.organization.name)
     expect(rendered).to match(story.workshop.name)
     expect(rendered).to match(/MyBody/)
-    expect(rendered).to match(user.full_name)
+    expect(rendered).to match(story.author_credit)
   end
 end

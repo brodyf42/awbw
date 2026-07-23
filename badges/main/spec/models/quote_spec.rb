@@ -17,12 +17,12 @@ RSpec.describe Quote do
   end
 
   describe 'scopes' do
-    let!(:active_quote) { create(:quote, inactive: false) }
-    let!(:inactive_quote) { create(:quote, inactive: true) }
+    let!(:published_quote) { create(:quote, :published) }
+    let!(:unpublished_quote) { create(:quote, :unpublished) }
 
     it '.active returns only active quotes' do
-      expect(Quote.active).to include(active_quote)
-      expect(Quote.active).not_to include(inactive_quote)
+      expect(Quote.published).to include(published_quote)
+      expect(Quote.published).not_to include(unpublished_quote)
     end
   end
 
@@ -46,4 +46,33 @@ RSpec.describe Quote do
   it 'is valid with valid attributes' do
     expect(build(:quote)).to be_valid
   end
-end 
+
+  describe '.search_by_params' do
+    let!(:published_quote) { create(:quote, :published, quote: 'Art heals the soul', speaker_name: 'Jane') }
+    let!(:another_published) { create(:quote, :published, quote: 'Creativity is freedom', speaker_name: 'Bob') }
+    let!(:draft_quote) { create(:quote, quote: 'Unpublished thought', speaker_name: 'Carol') }
+
+    it 'returns all when no params' do
+      results = Quote.search_by_params({})
+      expect(results).to include(published_quote, another_published, draft_quote)
+    end
+
+    it 'filters by query' do
+      results = Quote.search_by_params(query: 'heals')
+      expect(results).to include(published_quote)
+      expect(results).not_to include(another_published, draft_quote)
+    end
+
+    it 'filters by published' do
+      results = Quote.search_by_params(published: 'true')
+      expect(results).to include(published_quote, another_published)
+      expect(results).not_to include(draft_quote)
+    end
+
+    it 'chains query and published filters' do
+      results = Quote.search_by_params(query: 'freedom', published: 'true')
+      expect(results).to include(another_published)
+      expect(results).not_to include(published_quote, draft_quote)
+    end
+  end
+end

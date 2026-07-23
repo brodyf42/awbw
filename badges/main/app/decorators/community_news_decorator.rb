@@ -1,8 +1,11 @@
-class CommunityNewsDecorator < Draper::Decorator
-  delegate_all
+class CommunityNewsDecorator < ApplicationDecorator
+  include ::Linkable
 
-  def inactive?
-    !published?
+  def detail(length: nil)
+    length ? body&.truncate(length) : body
   end
 
+  def external_url
+    object.reference_url
+  end
 end

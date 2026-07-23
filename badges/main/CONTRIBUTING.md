@@ -22,7 +22,8 @@ You won't be yelled at for giving your best effort. The worst that can happen is
 
 ## Local Environment 🛠️
 
-#### Install WSL2 first if Using Windows
+<details>
+<summary><strong>Windows users: Install WSL2 first</strong></summary>
 
 Follow [documentation](https://docs.microsoft.com/en-us/windows/wsl/install-win10) from Microsoft for enabling and installing Windows Subsystem For Linux 2 on your machine.
 
@@ -34,7 +35,14 @@ You might also want to try VSCode with [this WSL extension](https://marketplace.
 
 **Note:** If you run into any issues with a command not running, restart your machine.
 
-### Non-Docker Setup
+</details>
+
+### Choose Your Setup Path
+
+Either option below will get you a working development environment. Pick whichever suits you best.
+
+<details>
+<summary><strong>Option A: Local Setup (without Docker)</strong></summary>
 
 1. Install mise
    - Follow the [mise installation guide](https://mise.jdx.dev/getting-started.html#installing-mise-cli) for your operating system
@@ -43,42 +51,83 @@ You might also want to try VSCode with [this WSL extension](https://marketplace.
 2. Install MySQL
    - **macOS**: [Use Homebrew](https://formulae.brew.sh/formula/mysql@8.0)
    - **Windows**: Use WSL2 with Ubuntu - follow [the MariaDB install guide from digital ocean](https://www.digitalocean.com/community/tutorials/how-to-install-mariadb-on-ubuntu-20-04#step-1-installing-mariadb)
-
    - **Linux/Ubuntu**: Follow [the MariaDB install guide from digital ocean](https://www.digitalocean.com/community/tutorials/how-to-install-mariadb-on-ubuntu-20-04#step-1-installing-mariadb)
-**Note:** If you receive an error when connecting to the database "Access denied for user 'root'@'locahost' you may need to
-[create a root user password](https://phoenixnap.com/kb/access-denied-for-user-root-localhost)(a blank password will work).
+   - Alternative (Docker): with docker installed run `mise docker-db` to start the DB only (after cloning the repo)
 
-   - Alternative (Docker): with docker installed run `mise docker-db` to start
-     the DB only (after cloning the repo)
+   **Note:** If you receive an error when connecting to the database "Access denied for user 'root'@'localhost'" you may need to [create a root user password](https://phoenixnap.com/kb/access-denied-for-user-root-localhost) (a blank password will work).
 
 3. Clone the project and switch to its directory
 4. Run `mise setup`
 5. Run `mise server` and visit <http://localhost:3000/> to see the AWBW portal page.
 6. Log in as a sample user with the default [credentials](#credentials).
 
-### Docker Setup
+</details>
 
-For Docker-based development (recommended):
+<details>
+<summary><strong>Option B: Docker Setup</strong></summary>
 
 1. Ensure Docker is installed and running on your system
-2. Use mise tasks to manage Docker containers. (`mise tasks` for a full list)
+2. Run `cp .env.sample .env` and configure the environment variables (the values in the sample should work though)
+3. Run `mise docker-exec bin/setup --skip-server` to install dependencies, setup the DBs, etc
+4. Use mise tasks to manage Docker containers. (`mise tasks` for a full list)
    - `mise docker-up` - start containers
+5. Visit <http://localhost:3000/> to see the AWBW portal page
+6. Log in as a sample user with the default [credentials](#credentials)
 
-3. Visit <http://localhost:3000/> to see the AWBW portal page
-4. Log in as a sample user with the default [credentials](#credentials)
+**Note:** It's not currently possible to run system tests via Docker, so they are excluded when you run `mise docker-spec`.
+
+</details>
+
+<details>
+<summary><strong>Database encoding</strong></summary>
+
+Different schema encodings on Mac vs Linux (utf8mb4 vs utf8) were causing merge challenges in schema.rb.
+To ensure consistent encoding across environments, we have configured utf8mb4 encoding in multiple places:
+
+- `config/database.yml` - Sets encoding and collation at the Rails level
+- `docker-compose.yml` - Overrides DATABASE_URL with explicit encoding parameters for Docker development
+- `docker/mysql/charset.cnf` - Configures MySQL server defaults
+
+You can override database settings by setting the `DATABASE_URL` environment variable in your `.env` file:
+
+```
+DATABASE_URL=trilogy://user:password@host:port/database?encoding=utf8mb4&collation=utf8mb4_unicode_ci
+```
+
+</details>
+
+## Dev seeds
+
+- Running mise should have run `rake db:seed`
+  - This will populate the basic data needed to use the app
+- To add more sample data for development, run `rake db:seed:dev`
+  - This will add sample workshops, community news, stories, resources, FAQs, payments, and more
+  - For details on how the payment system works, see [docs/payments.md](docs/payments.md)
+- To see your data
+  - The home page will show Workshops, CommunityNews, Resources, Events, and Stories
+  - The [Admin Home](http://localhost:3000/admin) provides CRUD access for most models
 
 ## Credentials
 
-These credentials also work for [staging](https://awbw-staging-xzek4.ondigitalocean.app/):
+These credentials work for local development:
 
-- User
+- Admin
   - email: <umberto.user@example.com>
   - password: password
-- Admin
-  - email: <amy.admin@example.com>
+- User
+  - email: <amy.user@example.com>
   - password: password
+- User
+  - email: <priya.user@example.com>
+  - password: password
+- Orphaned Reports
+  - email: <orphaned_reports@awbw.org>
+  - When users are deleted from the system, their reports are automatically reassigned to this account.
 
-## Codespaces and Dev Container - EXPERIMENTAL 🛠️
+A [staging environment](https://awbw-staging-xzek4.ondigitalocean.app/) is also available — reach out to the repo maintainers if you need access.
+
+<details>
+<summary><strong>Codespaces and Dev Container (experimental)</strong></summary>
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/rubyforgood/awbw/tree/main?quickstart=1)
 
@@ -88,6 +137,31 @@ These credentials also work for [staging](https://awbw-staging-xzek4.ondigitaloc
 2. Wait for the container to start. This will take a few (10-15) minutes since Ruby needs to be installed, the database needs to be created, and the `mise setup` script needs to run
 3. Run `mise server`. On the Ports tab, visit the forwarded port 3000 URL marked as Application to see the AWBW portal page.
 4. Login as a sample user with the default [credentials](#credentials).
+
+</details>
+
+<details>
+<summary><strong>Conductor (parallel AI workspaces)</strong></summary>
+
+[Conductor](https://conductor.build) is an optional macOS platform for running multiple coding agents in parallel, each in its own git worktree. You don't need it to work on this project — it's just one supported way to run isolated workspaces. When used, each workspace gets its own port, database, and session cookie automatically.
+
+The app itself only depends on the generic `WORKSPACE_PORT` environment variable for this isolation. The `bin/conductor-*` scripts derive `WORKSPACE_PORT` from Conductor's `CONDUCTOR_PORT`, but any other system (or a manual setup) can achieve the same result by exporting `WORKSPACE_PORT` itself.
+
+1. Open the project in Conductor — it will run `bin/conductor-setup` to symlink config files and set up a workspace-specific database.
+2. The dev server starts on the port assigned to the workspace.
+3. When a workspace is archived, `bin/conductor-archive` stops the running server.
+
+Configuration lives in `conductor.json` at the project root.
+
+**Logs:** Rails logs go to `log/development.log` (not the Conductor terminal). Tail them with `tail -f log/development.log`.
+
+**Browser passwords:** Conductor workspaces use `awbw.local` as the hostname so your browser retains saved passwords across ports. Add this line to `/etc/hosts` once:
+
+```
+127.0.0.1	awbw.local
+```
+
+</details>
 
 ## Troubleshooting 👷🏼‍♀️
 
@@ -100,18 +174,16 @@ Please let us know by opening up an issue! We have many new contributors come th
 3. **Fork the repo** if you're not a contributor yet. Read about becoming a contributor [here](#becoming-a-repo-contributor).
 4. **Create a new branch** for the issue using the format `XXX-brief-description-of-feature`, where `XXX` is the issue number.
 5. **Commit fixes locally** using descriptive messages that indicate the affected parts of the app. Read debugging tips [here](#debugging).
-6. If you create a new model run `bundle exec annotate` from the root of the app
-7. **Create RSpec tests** to validate that your work fixes the issue (if you need help with this, please reach out!). Read guidelines [here](#writing-browsersystemfeature-testsspecs).
-8. **Run the tests** and make sure all tests pass successfully; if any fail, fix the issues causing the failures. Read guidelines [here](#test-before-submitting-pull-requests).
-9. **Final commit** if tests needed fixing.
+6. **Create RSpec tests** to validate that your work fixes the issue (if you need help with this, please reach out!). Read guidelines [here](#writing-browsersystemfeature-testsspecs).
+7. **Run the tests** and make sure all tests pass successfully; if any fail, fix the issues causing the failures. Read guidelines [here](#test-before-submitting-pull-requests).
+8. Run `rubocop -a` to autocorrect linting issues. Manually fix anything not autocorrected. Read rubocop documentation [here](https://docs.rubocop.org/rubocop/1.82/usage/basic_usage.html).
+9. **Final commit** if tests/linting require changes.
 10. **Squash smaller commits.** Read guidelines [here](#squashing-commits).
 11. **Push** up the branch
 12. **Create a pull request** and indicate the addressed issue (e.g. `Resolves #1`) in the title, which will ensure the issue gets closed automatically when the pull request gets merged. Read PR guidelines [here](#pull-requests).
 13. **Code review**: At this point, someone will work with you on doing a code review. The automated tests will run linting, rspec, and brakeman tests. If the automated tests give :+1: to the PR merging, we can then do any additional (staging) testing as needed.
-
 14. **Merge**: Finally if all looks good the core team will merge your code in; if your feature branch was in this main repository, the branch will be deleted after the PR is merged.
-
-15. Deploys are currently done about once a week! Read the deployment process [here](#deployment-process).
+15. Deploys are currently done about once a week.
 
 ## Issues
 
@@ -130,7 +202,7 @@ Users that are frequent contributors and are involved in discussion (join the sl
 
 ## Debugging
 
-If starting server directly, via `rail s` or `rail console`, or built-in debugger in RubyMine, or running `bundle exec rspec path/to/spec.rb:line_no`, then you can use `binding.pry` to debug. Drop the pry where you want the execution to pause.
+If starting server directly, via `rails s` or `rails console`, or built-in debugger in RubyMine, or running `bundle exec rspec path/to/spec.rb:line_no`, then you can use `binding.pry` to debug. Drop the pry where you want the execution to pause.
 
 If you want to connect via Shopify Ruby LSP VSCode extension or rdbg, start the server with `bundle exec rdbg -O -n -c -- bin/rails server -p 3000`
 
@@ -161,11 +233,9 @@ If you are inexperienced in writing tests or get stuck on one, please reach out 
 #### Guidelines
 
 - Prefer request tests over system tests (which run much slower) unless you need to test Javascript or other interactivity
-- When creating factories, in each RSpec test, hard code all values that you check with a RSpec matcher. Don't check FactoryBot default values. See [#4217](https://github.com/rubyforgood/human-essentials/issues/4217) for why.
-- Keep individual tests tightly scoped, only test the endpoint that you want to test. E.g. create inventory directly using `TestInventory` rather than using an additional endpoint.
+- When creating factories, in each RSpec test, hard code all values that you check with a RSpec matcher. Don't check FactoryBot default values.
+- Keep individual tests tightly scoped, only test the endpoint that you want to test.
 - You probably don't need to write new tests when simple re-stylings are done (ie. the page may look slightly different but the Test suite is unaffected by those changes).
-
-#### Useful Tips
 
 ### Test before submitting pull requests
 
@@ -173,7 +243,7 @@ Before submitting a pull request, run all tests and lints. Fix any broken tests 
 
 #### Continuous Integration
 
-- There are Github Actions workflows which will run all tests in parallel using Knapsack and lints whenever you push a commit to your fork.
+- There are GitHub Actions workflows which will run all tests and lints whenever you push a commit to your fork.
 - Once your first PR has been merged, all commits pushed to an open PR will also run these workflows.
 
 #### Local testing
@@ -188,3 +258,18 @@ Before submitting a pull request, run all tests and lints. Fix any broken tests 
     expect(my_code).to be_valid
   end
 ```
+
+#### Quick command shortcuts
+
+The `ai/` directory contains shortcut scripts for common tasks:
+
+| Command | What it does |
+|---|---|
+| `ai/test [args]` | Run RSpec tests (e.g. `ai/test spec/models/user_spec.rb:42`) |
+| `ai/lint` | Run RuboCop on all files |
+| `ai/lint --fix` | Auto-fix lint issues |
+| `ai/server` | Start all dev services (web + vite) |
+| `ai/console` | Rails console |
+| `ai/routes -g pattern` | Search Rails routes |
+| `ai/migrate` | Run database migrations |
+| `ai/seed` | Load the full dev sample dataset (`db:seed:dev`) into the workspace DB |

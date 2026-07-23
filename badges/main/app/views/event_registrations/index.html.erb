@@ -1,85 +1,107 @@
-<div class="min-h-screen py-8">
-  <div class="max-w-full mx-auto px-4 sm:px-6 lg:px-8">
-    <div
-      class="
-        max-w-7xl mx-auto bg-white border border-gray-200 rounded-xl shadow-lg hover:shadow-xl transition-shadow
-        duration-200 p-6
-      "
-    >
-      <div class="space-y-6">
-        <!-- Header -->
-        <div class="flex items-center justify-between mb-6">
-          <h1 class="text-2xl font-semibold text-gray-900">
-            <%= EventRegistration.model_name.human.pluralize %> (<%= @event_registrations_count %>)
-          </h1>
-          <div class="flex gap-2">
-            <% if current_user.super_user? %>
-              <%= link_to "New #{EventRegistration.model_name.human.downcase}",
-                          new_event_registration_path,
-                          class: "admin-only bg-blue-100 btn btn-primary-outline" %>
-            <% end %>
-          </div>
-        </div>
-
-        <!-- Filter form -->
-        <%= render "search_boxes" %>
-
-        <div class="overflow-x-auto">
-          <table class="w-full border-collapse border border-gray-200">
-            <thead class="bg-gray-100">
-              <tr>
-                <th class="px-4 py-2 text-left text-sm font-semibold text-gray-700 w-1/6">Event</th>
-                <th class="px-4 py-2 text-left text-sm font-semibold text-gray-700 w-1/6">Registrant</th>
-                <th class="px-4 py-2 text-left text-sm font-semibold text-gray-700 w-1/6">Created</th>
-                <th class="px-4 py-2 text-center text-sm font-semibold text-gray-700 w-[80px]">Actions</th>
-              </tr>
-            </thead>
-
-            <tbody class="divide-y divide-gray-200">
-              <% @event_registrations.each do |event_registration| %>
-                <tr id="<%= dom_id(event_registration) %>" class="hover:bg-gray-50 transition-colors duration-150">
-                  <td class="px-4 py-2 text-sm text-gray-800">
-                    <%= link_to event_registration.event.name,
-                              event_path(event_registration.event),
-                              class: "btn btn-secondary-outline" %>
-                  </td>
-                  <td class="px-4 py-2 text-sm text-gray-800">
-                    <%# FIXME not all users have facilitators %>
-                    <% if event_registration.registrant.facilitator %>
-                      <%= link_to event_registration.registrant.full_name,
-                              facilitator_path(event_registration.registrant.facilitator),
-                              class: "btn btn-secondary-outline" %>
-                    <% else %>
-                      <%= event_registration.registrant.full_name %>
-                    <% end %>
-                  </td>
-                  <td class="px-4 py-2 text-sm text-gray-800">
-                    <%= event_registration.created_at.strftime("%B %d, %Y") %>
-                  </td>
-
-                  <!-- Actions -->
-                  <td class="px-4 py-2 text-center justify-center gap-2">
-                    <%= link_to "Edit", edit_event_registration_path(event_registration),
-                              class: "btn btn-secondary-outline" %>
-                  </td>
-                </tr>
+<% content_for(:page_bg_class, "admin-only bg-blue-100") %>
+<div class="<%= DomainTheme.bg_class_for(:event_registrations) %> border border-gray-200 rounded-xl shadow p-6">
+  <div class="space-y-6">
+          <!-- Header -->
+          <div class="flex items-center justify-between mb-6">
+            <h1 class="text-2xl font-semibold text-gray-900">
+              <%= EventRegistration.model_name.human.pluralize %> (<%= @event_registrations_count %>)
+            </h1>
+            <div class="flex gap-2">
+              <%= link_to "Events", events_path,
+                          class: "text-sm text-gray-500 hover:text-gray-700 px-2 py-1" %>
+              <% if params[:admin] == "true" %>
+                <%= link_to "Export CSV",
+                            event_registrations_path(request.query_parameters.merge(format: :csv)),
+                            class: "text-sm text-gray-500 hover:text-gray-700 px-2 py-1" %>
               <% end %>
-            </tbody>
-          </table>
-        </div>
-
-        <!-- Empty state -->
-        <% unless @event_registrations.any? %>
-          <p class="text-gray-500 text-center py-6">No <%= EventRegistration.model_name.human.pluralize %> found.</p>
-        <% end %>
-
-        <!-- Pagination -->
-        <div class="mt-6 flex justify-center">
-          <div class="pagination">
-            <%= tailwind_paginate @event_registrations %>
+              <% if allowed_to?(:new?, EventRegistration) %>
+                <%= link_to "New #{EventRegistration.model_name.human.downcase}",
+                            new_event_registration_path(return_to: "index"),
+                            class: "admin-only bg-blue-100 btn btn-primary-outline" %>
+              <% end %>
+            </div>
           </div>
-        </div>
-      </div>
-    </div>
+
+          <!-- Filter form -->
+          <%= render "search_boxes" %>
+
+          <% if @filtered_event %>
+            <div class="mb-4">
+              <%= event_profile_button(@filtered_event,
+                    subtitle: @filtered_event.decorate.times(display_day: true, display_date: true, inline: true)) %>
+            </div>
+          <% end %>
+
+          <div class="rounded-xl bg-white p-6">
+            <div class="overflow-x-auto">
+              <table class="w-full border-collapse border border-gray-200">
+                <thead class="bg-gray-100">
+                <tr>
+                  <th class="px-4 py-2 text-left text-sm font-semibold text-gray-700">Registrant</th>
+                  <% unless @filtered_event %>
+                    <th class="px-4 py-2 text-left text-sm font-semibold text-gray-700">Event</th>
+                  <% end %>
+                  <th class="px-4 py-2 text-left text-sm font-semibold text-gray-700 whitespace-nowrap">Date registered</th>
+                  <th class="px-4 py-2 text-center text-sm font-semibold text-gray-700 whitespace-nowrap w-px">Actions</th>
+                </tr>
+                </thead>
+
+                <% event_ids = @event_registrations.map(&:event_id).uniq %>
+                <% registrant_ids = @event_registrations.map(&:registrant_id).uniq %>
+                <% submitted_pairs = FormSubmission.where(event_id: event_ids, person_id: registrant_ids).pluck(:person_id, :event_id).to_set %>
+                <% events_with_forms = EventForm.where(event_id: event_ids).distinct.pluck(:event_id).to_set %>
+                <tbody class="divide-y divide-gray-200">
+                  <% @event_registrations.each do |event_registration| %>
+                    <tr id="<%= dom_id(event_registration) %>" class="hover:bg-gray-50 transition-colors duration-150">
+                      <td class="px-4 py-2 text-sm text-gray-800 align-top">
+                        <div class="flex items-center gap-2">
+                          <%= person_profile_button(event_registration.registrant) %>
+                          <% if submitted_pairs.include?([ event_registration.registrant_id, event_registration.event_id ]) %>
+                            <i class="fa-solid fa-file-lines text-green-600 shrink-0" title="Completed registration form"></i>
+                          <% elsif events_with_forms.include?(event_registration.event_id) %>
+                            <i class="fa-regular fa-file-lines text-gray-300 shrink-0" title="No registration form submitted"></i>
+                          <% end %>
+                        </div>
+                      </td>
+                      <% unless @filtered_event %>
+                        <td class="px-4 py-2 text-sm text-gray-800 min-w-[50ch]">
+                          <%= event_profile_button(event_registration.event,
+                                truncate_at: 50,
+                                path: dashboard_event_path(event_registration.event),
+                                subtitle: event_registration.event.decorate.times(display_day: true, display_date: true, inline: true)) %>
+                        </td>
+                      <% end %>
+                      <td class="px-4 pb-2 text-sm text-gray-800 align-top" style="padding-top: 1.25rem;">
+                        <%= event_registration.created_at.strftime("%B %d, %Y") %>
+                      </td>
+
+                      <!-- Actions -->
+                      <td class="px-4 py-2 align-top">
+                        <%= link_to edit_event_registration_path(event_registration, return_to: "index"),
+                                    class: "group relative flex items-center gap-2 w-full px-4 py-2 border #{DomainTheme.border_class_for(:event_registrations)} #{DomainTheme.bg_class_for(:event_registrations, intensity: 100)} #{DomainTheme.bg_class_for(:event_registrations, intensity: 100, hover: true)} rounded-lg transition-colors duration-200 font-medium shadow-sm leading-none overflow-hidden" do %>
+                          <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border #{DomainTheme.border_class_for(:event_registrations)} #{DomainTheme.bg_class_for(:event_registrations, intensity: 200)} #{DomainTheme.text_class_for(:event_registrations, intensity: 700)} shadow-sm">
+                            <i class="fa-solid fa-clipboard-list"></i>
+                          </span>
+                          <span class="truncate font-semibold <%= DomainTheme.text_class_for(:event_registrations) %>">Edit registration</span>
+                        <% end %>
+                      </td>
+                    </tr>
+                  <% end %>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Empty state -->
+            <% unless @event_registrations.any? %>
+              <p class="text-gray-500 text-center py-6">No <%= EventRegistration.model_name.human.pluralize.downcase %> found.</p>
+            <% end %>
+
+            <!-- Pagination -->
+            <div class="mt-6 flex justify-center">
+              <div class="pagination">
+                <%= tailwind_paginate @event_registrations %>
+              </div>
+            </div>
+          </div>
   </div>
 </div>

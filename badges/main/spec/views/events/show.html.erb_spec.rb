@@ -4,15 +4,16 @@ RSpec.describe "events/show", type: :view do
   let(:event) do
     create(:event,
            title: "Test Event",
-           description: "This is a test event description",
+           rhino_description: "This is a test event description",
            start_date: DateTime.new(2024, 1, 15, 10, 0),
            end_date: DateTime.new(2024, 1, 15, 16, 0),
            registration_close_date: DateTime.new(2024, 1, 10, 23, 59))
   end
 
   before do
-    assign(:event, event)
+    assign(:event, event.decorate)
     allow(view).to receive(:current_user).and_return(build_stubbed(:user, super_user: true))
+    allow(view).to receive(:allowed_to?).and_return(true)
   end
 
   it "renders the event title" do
@@ -25,33 +26,90 @@ RSpec.describe "events/show", type: :view do
     render
 
     expect(rendered).to have_content("Test Event")
-    
-    expect(rendered).to have_content("Description:")
     expect(rendered).to have_content("This is a test event description")
-    
-    expect(rendered).to have_content("Start Date:")
-    expect(rendered).to have_content("January 15, 2024 10:00 AM")
-    
-    expect(rendered).to have_content("End Date:")
-    expect(rendered).to have_content("January 15, 2024  4:00 PM")
-    
-    expect(rendered).to have_content("Registration Close Date:")
-    expect(rendered).to have_content("January 10, 2024 11:59 PM")
+
+    expect(rendered).to have_content("January 15")
+    expect(rendered).to have_content("10 am")
+
+    expect(rendered).to have_content("4 pm")
+
+    expect(rendered).to have_content("Event ended") # event end_date is in the past
+  end
+
+  it "shows the date with the year and no weekday" do
+    render
+
+    expect(rendered).to have_content("January 15, 2024")
+    expect(rendered).not_to have_content("Monday") # Jan 15, 2024 is a Monday
+  end
+
+  it "hides the time independently when autoshow_time is off" do
+    event.update!(autoshow_time: false)
+    assign(:event, event.decorate)
+
+    render
+
+    expect(rendered).to have_content("January 15") # date still shows
+    expect(rendered).not_to have_content("10 am")  # time hidden
+  end
+
+  context "when unpublished with future dates" do
+    let(:event) do
+      create(:event,
+             title: "Unpublished Event",
+             rhino_description: "An unpublished event",
+             start_date: 5.days.from_now,
+             end_date: 6.days.from_now,
+             registration_close_date: 4.days.from_now)
+    end
+
+    it "shows not published" do
+      render
+
+      expect(rendered).to have_content("Not published")
+      expect(rendered).not_to have_content("Registration closed")
+    end
+  end
+
+  context "when published with future end_date but past registration date" do
+    let(:event) do
+      create(:event, :published,
+             title: "Published Event",
+             rhino_description: "A published event",
+             start_date: 1.day.ago,
+             end_date: 1.day.from_now,
+             registration_close_date: 2.days.ago)
+    end
+
+    it "shows registration closed" do
+      render
+
+      expect(rendered).to have_content("Registration closed")
+      expect(rendered).not_to have_content("Event ended")
+    end
   end
 
   it "renders action links" do
     render
 
-    expect(rendered).to have_link("Edit", href: edit_event_path(event))
-    expect(rendered).to have_link("Index", href: events_path)
+    expect(rendered).to have_link("Dashboard", href: dashboard_event_path(event))
+    expect(rendered).to have_link("Registrants", href: registrants_event_path(event))
+    expect(rendered).to have_link("Events", href: events_path)
   end
 
   context "when event has minimal data" do
     let(:event) do
       create(:event,
              title: "Minimal Event",
-             description: "Event with minimal data",
+             rhino_description: "Event with minimal data",
              registration_close_date: nil)
+    end
+    let(:formatted_event_start_time) do
+      if event.start_date.min.zero?
+        event.start_date.strftime("%-l %P")     # "1 am"
+      else
+        event.start_date.strftime("%-l:%M %P")  # "5:43 pm"
+      end
     end
 
     it "handles minimal data gracefully" do
@@ -59,8 +117,8 @@ RSpec.describe "events/show", type: :view do
 
       expect(rendered).to have_content("Minimal Event")
       expect(rendered).to have_content("Event with minimal data")
-      expect(rendered).to include(event.start_date.strftime("%B %d, %Y")) # "October 02, 2025"
-      expect(rendered).to include(event.start_date.strftime("%-l:%M %p")) # "5:43 PM"
+      expect(rendered).to include(event.start_date.strftime("%B %-d")) # "March 5" (styled format uses full month)
+      expect(rendered).to include(formatted_event_start_time)
     end
   end
 
@@ -77,7 +135,6 @@ RSpec.describe "events/show", type: :view do
       render
 
       expect(rendered).to have_content(event.title)
-      expect(rendered).to have_content("Description:")
     end
   end
 end

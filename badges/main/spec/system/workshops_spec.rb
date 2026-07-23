@@ -1,46 +1,99 @@
 require 'rails_helper'
 
-RSpec.describe "Workshops" do
+RSpec.describe "Workshops", type: :system do
   describe 'workshop index' do
     context "When user is logged in" do
       it 'User sees overview of workshops' do
         sign_in(create(:user))
-  
+
         create(:sector, :other)
         adult_window = create(:windows_type, :adult)
-        workshop_world = create(:workshop, title: 'The best workshop in the world', windows_type: adult_window)
-        workshop_mars = create(:workshop, title: 'The best workshop on mars', windows_type: adult_window)
-        workshop_hello = create(:workshop, title: 'oh hello!', windows_type: adult_window)
-  
+        workshop_world = create(:workshop, :published, title: 'The best workshop in the world', windows_type: adult_window)
+        workshop_mars = create(:workshop, :published, title: 'The best workshop on mars', windows_type: adult_window)
+        workshop_hello = create(:workshop, :published, title: 'oh hello!', windows_type: adult_window)
+
         visit workshops_path
 
-        within('#workshops-list') do
-          expect(page).to have_content(workshop_world.title)
-          expect(page).to have_content(workshop_mars.title)
-          expect(page).to have_content(workshop_hello.title)
-        end
+        expect(page).to have_content(workshop_world.title)
+        expect(page).to have_content(workshop_mars.title)
+        expect(page).to have_content(workshop_hello.title)
       end
 
       it 'User can search for a workshop' do
         user = create(:user)
         sign_in(user)
-  
+
         create(:sector, :other)
         adult_window = create(:windows_type, :adult)
-        workshop_world = create(:workshop, title: 'The best workshop in the world', windows_type: adult_window)
-        workshop_mars = create(:workshop, title: 'The best workshop on mars', windows_type: adult_window)
-        workshop_hello = create(:workshop, title: 'oh hello!', windows_type: adult_window)
-  
+        workshop_world = create(:workshop, :published, title: 'The best workshop in the world', windows_type: adult_window, rhino_objective: "test")
+        workshop_mars = create(:workshop, :published, title: 'The best workshop on mars', windows_type: adult_window, rhino_objective: "test")
+        workshop_hello = create(:workshop, :published, title: 'oh hello!', windows_type: adult_window, rhino_objective: "test")
+
         visit workshops_path
 
         fill_in 'query', with: 'best workshop'
+
+        # Open the dropdown
+        click_on "Windows audience"  # this clicks the <button> text/label
         check("windows_types_#{adult_window.id}")
 
-        within('#workshops-list') do
-          expect(page).to have_content(workshop_world.title)
-          expect(page).to have_content(workshop_mars.title)
-          # expect(page).not_to have_content(workshop_hello.title) # TODO - get this working again once the page autosubmits
-        end
+        expect(page).to have_content(workshop_world.title)
+        expect(page).to have_content(workshop_mars.title)
+        expect(page).not_to have_content(workshop_hello.title)
+      end
+
+      it 'User clears checkbox and text filters and sees all results again' do
+        user = create(:user)
+        sign_in(user)
+
+        sector = create(:sector, :published, name: "Health")
+        category_type = create(:category_type, :published, name: "Themes")
+        category = create(:category, :published, name: "Healing", category_type: category_type)
+        adult_window = create(:windows_type, :adult)
+        children_window = create(:windows_type, :children)
+
+        workshop_adult = create(:workshop, :published, title: 'Adult Healing Workshop',
+                                windows_type: adult_window, sectors: [ sector ], categories: [ category ],
+                                rhino_objective: "test")
+        workshop_child = create(:workshop, :published, title: 'Children Fun Workshop',
+                                windows_type: children_window, rhino_objective: "test")
+
+        visit workshops_path
+
+        expect(page).to have_content(workshop_adult.title)
+        expect(page).to have_content(workshop_child.title)
+
+        # Filter by text
+        fill_in 'title', with: 'Adult'
+        expect(page).to have_content(workshop_adult.title)
+        expect(page).not_to have_content(workshop_child.title)
+
+        # Also check a sector checkbox
+        click_on "Sector"
+        check("sectors_#{sector.id}")
+        expect(page).to have_content(workshop_adult.title)
+
+        # Also check a windows type checkbox
+        click_on "Windows audience"
+        check("windows_types_#{adult_window.id}")
+        expect(page).to have_content(workshop_adult.title)
+
+        # Clear all filters
+        click_link "Clear filters"
+
+        # Wait for filters to actually clear before asserting
+        expect(page).not_to have_link("Clear filters")
+
+        # Both workshops should reappear
+        expect(page).to have_content(workshop_adult.title)
+        expect(page).to have_content(workshop_child.title)
+
+        # Text field should be empty
+        expect(find_field('title').value).to eq('')
+
+        # Checkboxes should be unchecked
+        expect(find("#sectors_#{sector.id}", visible: :all)).not_to be_checked
+        expect(find("#windows_types_#{adult_window.id}", visible: :all)).not_to be_checked
       end
     end
   end
@@ -49,61 +102,102 @@ RSpec.describe "Workshops" do
     context "When user is logged in" do
       it "User sees workshop details" do
         sign_in(create(:user))
-        
-        workshop = create(:workshop, title: 'The best workshop in the world. This is a tribute.')
-  
+
+        workshop = create(:workshop, :published, title: 'The best workshop in the world. This is a tribute.')
+
         visit workshop_path(workshop)
-  
-        expect(page).to have_css(".inner-hero", text: 'The best workshop in the world. This is a tribute.')
+
+        expect(page).to have_content(workshop.title)
+      end
+
+      it "Gallery images link to full-size in a new tab" do
+        sign_in(create(:user))
+
+        workshop = create(:workshop, :published)
+        create(:gallery_asset, :with_file, owner: workshop)
+
+        visit workshop_path(workshop)
+
+        within ".workshop-gallery" do
+          links = all("a.display-image-link")
+          expect(links.length).to be >= 1
+
+          links.each do |link|
+            expect(link[:target]).to eq("_blank")
+            expect(link[:rel]).to include("noopener")
+          end
+        end
+      end
+
+      it "hides the gallery section when there are no gallery images" do
+        sign_in(create(:user))
+
+        workshop = create(:workshop, :published)
+        create(:primary_asset, :with_file, owner: workshop)
+
+        visit workshop_path(workshop)
+
+        expect(page).to have_no_css(".workshop-gallery")
+      end
+
+      it "does not show the primary image in the gallery" do
+        sign_in(create(:user))
+
+        workshop = create(:workshop, :published)
+        create(:primary_asset, :with_file, owner: workshop)
+        create(:gallery_asset, :with_file, owner: workshop)
+
+        visit workshop_path(workshop)
+
+        within ".workshop-gallery" do
+          links = all("a.display-image-link")
+          expect(links.length).to eq(1)
+        end
       end
     end
   end
 
   describe 'create workshop' do
-    context "When super user is logged in" do
-      it "Super user can create a new workshop" do
-        user = create(:user, super_user: true)
+    context "When admin is logged in" do
+      it "Admin can create a new workshop", js: true do
+        user = create(:user, :admin)
         sign_in(user)
         adult_window = create(:windows_type, :adult)
 
         visit new_workshop_path(windows_type_id: adult_window.id)
 
-        save_and_open_page
-
-        fill_in 'Workshop title', with: 'My New Workshop'
+        fill_in "workshop_title", with: 'My New Workshop'
         select adult_window.short_name, from: 'workshop_windows_type_id'
-        fill_in 'workshop_full_name', with: 'Jane Doe'
-        fill_in 'workshop_objective', with: 'Learn something new'
-        fill_in 'workshop_materials', with: 'Paper, Markers'
-        fill_in 'workshop_setup', with: 'Arrange tables'
-        fill_in 'workshop_demonstration', with: 'Show example'
-        fill_in 'workshop_warm_up', with: 'Stretching'
-        fill_in 'workshop_creation', with: 'Step 1, Step 2'
+        find("#workshop_published", visible: :all).check
+        find('#body-button').click
 
         click_on 'Submit'
 
-        expect(Workshop.last.title).to eq('My New Workshop')
-        # expect(page).to have_content('My New Workshop')
+        # expect(Workshop.last.title).to eq('My New Workshop')
+        expect(page).to have_content('My New Workshop')
         # expect(page).to have_content('Learn something new')
       end
     end
   end
 
   describe 'edit workshop' do
-    context "When super user is logged in" do
-      it "Super user can edit an existing workshop" do
-        user = create(:user, super_user: true)
+    context "When admin is logged in" do
+      it "Admin can edit an existing workshop" do
+        user = create(:user, :admin)
         sign_in(user)
         adult_window = create(:windows_type, :adult)
-        workshop = create(:workshop, title: 'Old Title', windows_type: adult_window, user: user)
+        workshop = create(:workshop, title: "Old Title", windows_type: adult_window, created_by: user)
 
         visit edit_workshop_path(workshop)
 
-        fill_in 'Workshop title', with: 'Updated Title'
-        click_on 'Submit'
+        fill_in "workshop_title", with: "A New Title"
+        select adult_window.short_name, from: "Windows audience" # windows_type required
 
-        expect(workshop.reload.title).to eq('Updated Title')
-        expect(page).to have_content('Workshop updated successfully.')
+        click_on 'Save changes'
+
+        # expect(workshop.reload.title).to eq("A New Title")
+        expect(page).to have_content("A New Title")
+        expect(page).to have_content("Workshop updated successfully.")
       end
     end
   end

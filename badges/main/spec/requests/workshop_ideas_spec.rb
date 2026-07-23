@@ -1,7 +1,8 @@
-require 'rails_helper'
+require "rails_helper"
 
 RSpec.describe "/workshop_ideas", type: :request do
-    let(:user) { create(:user) }
+  let(:regular_user) { create(:user) }
+  let(:admin)        { create(:user, super_user: true) }
   let(:windows_type) { create(:windows_type) }
 
   let(:valid_attributes) do
@@ -11,120 +12,258 @@ RSpec.describe "/workshop_ideas", type: :request do
       objective: "Encourage creativity and emotional awareness.",
       materials: "Paper, markers, glue",
       tips: "Play calming music during creation.",
-      created_by_id: user.id,
-      updated_by_id: user.id,
+      created_by_id: regular_user.id,
+      updated_by_id: regular_user.id,
       windows_type_id: windows_type.id,
-      age_range: "10–14",
+      author_credit_preference: "full_name",
       time_creation: 30
     }
   end
 
   let(:invalid_attributes) do
     {
-      title: "", # invalid because title is required
+      title: "",
       created_by_id: nil,
       windows_type_id: nil
     }
   end
 
-  before { sign_in user } # Devise helper for authenticated routes
-
-  describe "GET /index" do
-    it "renders a successful response" do
-      create(:workshop_idea, valid_attributes)
-      get workshop_ideas_url
-      expect(response).to be_successful
-    end
+  before do
+    allow(NotificationServices::CreateNotification).to receive(:call)
   end
 
-  describe "GET /show" do
-    it "renders a successful response" do
-      workshop_idea = create(:workshop_idea, valid_attributes)
-      get workshop_idea_url(workshop_idea)
-      expect(response).to be_successful
-    end
-  end
+  # ============================================================
+  # ADMIN
+  # ============================================================
 
-  describe "GET /new" do
-    it "renders a successful response" do
-      get new_workshop_idea_url
-      expect(response).to be_successful
-    end
-  end
+  context "as an admin" do
+    before { sign_in admin }
 
-  describe "GET /edit" do
-    it "renders a successful response" do
-      workshop_idea = create(:workshop_idea, valid_attributes)
-      get edit_workshop_idea_url(workshop_idea)
-      expect(response).to be_successful
+    describe "GET /index" do
+      it "renders successfully" do
+        create(:workshop_idea, valid_attributes)
+        get workshop_ideas_path
+        expect(response).to have_http_status(:ok)
+      end
     end
-  end
 
-  describe "POST /create" do
-    context "with valid parameters" do
-      it "creates a new WorkshopIdea" do
+    describe "GET /show" do
+      it "renders successfully" do
+        idea = create(:workshop_idea, valid_attributes)
+        get workshop_idea_path(idea)
+        expect(response).to have_http_status(:ok)
+      end
+    end
+
+    describe "GET /new" do
+      it "renders successfully" do
+        get new_workshop_idea_path
+        expect(response).to have_http_status(:ok)
+      end
+    end
+
+    describe "GET /edit" do
+      it "renders successfully" do
+        idea = create(:workshop_idea, valid_attributes)
+        get edit_workshop_idea_path(idea)
+        expect(response).to have_http_status(:ok)
+      end
+    end
+
+    describe "POST /create" do
+      it "creates a WorkshopIdea" do
         expect {
-          post workshop_ideas_url, params: { workshop_idea: valid_attributes }
+          post workshop_ideas_path, params: { workshop_idea: valid_attributes }
         }.to change(WorkshopIdea, :count).by(1)
+
+        expect(response).to redirect_to(workshop_idea_path(WorkshopIdea.last))
       end
 
-      it "redirects to the created workshop_idea" do
-        post workshop_ideas_url, params: { workshop_idea: valid_attributes }
-        expect(response).to redirect_to(workshop_ideas_url)
+      it "sends admin and submitter notifications" do
+        expect(NotificationServices::CreateNotification).to receive(:call).with(
+          hash_including(
+            kind: :idea_submitted,
+            recipient_role: :person
+          )
+        )
+        expect(NotificationServices::CreateNotification).to receive(:call).with(
+          hash_including(
+            kind: :idea_submitted_fyi,
+            recipient_role: :admin
+          )
+        )
+
+        post workshop_ideas_path, params: { workshop_idea: valid_attributes }
+      end
+
+      it "handles RecordNotUnique gracefully" do
+        allow_any_instance_of(WorkshopIdea).to receive(:save).and_raise(
+          ActiveRecord::RecordNotUnique.new("Duplicate entry")
+        )
+
+        expect {
+          post workshop_ideas_path, params: { workshop_idea: valid_attributes }
+        }.not_to change(WorkshopIdea, :count)
+
+        expect(response).to have_http_status(:unprocessable_content)
       end
     end
 
-    context "with invalid parameters" do
-      it "does not create a new WorkshopIdea" do
+    describe "PATCH /update" do
+      it "updates the workshop idea" do
+        idea = create(:workshop_idea, valid_attributes)
+
+        patch workshop_idea_path(idea),
+              params: { workshop_idea: { title: "Updated Title" } }
+
+        expect(idea.reload.title).to eq("Updated Title")
+        expect(response).to redirect_to(workshop_idea_path(idea))
+      end
+
+      it "handles RecordNotUnique gracefully" do
+        idea = create(:workshop_idea, valid_attributes)
+
+        allow_any_instance_of(WorkshopIdea).to receive(:update).and_raise(
+          ActiveRecord::RecordNotUnique.new("Duplicate entry")
+        )
+
+        patch workshop_idea_path(idea),
+              params: { workshop_idea: { title: "Updated Title" } }
+
+        expect(response).to have_http_status(:unprocessable_content)
+      end
+    end
+
+    describe "DELETE /destroy" do
+      it "destroys the workshop idea" do
+        idea = create(:workshop_idea, valid_attributes)
+
         expect {
-          post workshop_ideas_url, params: { workshop_idea: invalid_attributes }
+          delete workshop_idea_path(idea)
+        }.to change(WorkshopIdea, :count).by(-1)
+
+        expect(response).to redirect_to(workshop_ideas_path)
+      end
+    end
+  end
+
+  # ============================================================
+  # REGULAR USER
+  # ============================================================
+
+  context "as a regular user" do
+    before { sign_in regular_user }
+
+    describe "GET /index" do
+      it "redirects to root" do
+        get workshop_ideas_path
+        expect(response).to redirect_to(root_path)
+      end
+    end
+
+    describe "GET /show" do
+      it "renders owned workshop_idea successfully" do
+        idea = create(:workshop_idea, valid_attributes) # owner == regular_user
+        get workshop_idea_path(idea)
+        expect(response).to have_http_status(:ok)
+      end
+
+      it "redirects from another's workshop_idea to root" do
+        idea = create(:workshop_idea, valid_attributes.merge(created_by_id: admin.id)) # NOT an owner
+        get workshop_idea_path(idea)
+        expect(response).to redirect_to(root_path)
+      end
+    end
+
+    describe "POST /create" do
+      context "with valid params" do
+        it "creates a WorkshopIdea" do
+          expect {
+            post workshop_ideas_path,
+                 params: { workshop_idea: valid_attributes }
+          }.to change(WorkshopIdea, :count).by(1)
+        end
+      end
+
+      context "with invalid params" do
+        it "does not create and returns 422" do
+          expect {
+            post workshop_ideas_path,
+                 params: { workshop_idea: invalid_attributes }
+          }.not_to change(WorkshopIdea, :count)
+
+          expect(response).to have_http_status(:unprocessable_content)
+        end
+      end
+    end
+
+    describe "PATCH /update" do
+      let(:idea) { create(:workshop_idea, valid_attributes) }
+
+      it "does not update with valid params" do
+        original_title = idea.title
+        patch workshop_idea_path(idea),
+              params: { workshop_idea: { title: "Updated Title" } }
+        expect(idea.reload.title).to eq(original_title)
+        expect(response).to redirect_to(root_path)
+      end
+    end
+
+    describe "DELETE /destroy" do
+      it "does not destroy the idea" do
+        idea = create(:workshop_idea, valid_attributes)
+
+        expect {
+          delete workshop_idea_path(idea)
         }.not_to change(WorkshopIdea, :count)
       end
-
-      it "renders a response with 422 status" do
-        post workshop_ideas_url, params: { workshop_idea: invalid_attributes }
-        expect(response).to have_http_status(:unprocessable_content)
-      end
     end
   end
 
-  describe "PATCH /update" do
-    let(:workshop_idea) { create(:workshop_idea, valid_attributes) }
-    let(:new_attributes) { { title: "Updated Workshop Title" } }
+  # ============================================================
+  # GUEST
+  # ============================================================
 
-    context "with valid parameters" do
-      it "updates the requested workshop_idea" do
-        patch workshop_idea_url(workshop_idea), params: { workshop_idea: new_attributes }
-        workshop_idea.reload
-        expect(workshop_idea.title).to eq("Updated Workshop Title")
-      end
-
-      it "redirects to the workshop_idea" do
-        patch workshop_idea_url(workshop_idea), params: { workshop_idea: new_attributes }
-        expect(response).to redirect_to(workshop_ideas_url)
+  context "as a guest" do
+    describe "GET /index" do
+      it "redirects to new user session path" do
+        get workshop_ideas_path
+        expect(response).to redirect_to(new_user_session_path)
       end
     end
 
-    context "with invalid parameters" do
-      it "renders a response with 422 status" do
-        patch workshop_idea_url(workshop_idea), params: { workshop_idea: invalid_attributes }
-        expect(response).to have_http_status(:unprocessable_content)
+    describe "POST /create" do
+      it "does not create and redirects to new user session path" do
+        expect {
+          post workshop_ideas_path,
+               params: { workshop_idea: valid_attributes }
+        }.not_to change(WorkshopIdea, :count)
+
+        expect(response).to redirect_to(new_user_session_path)
       end
     end
-  end
 
-  describe "DELETE /destroy" do
-    it "destroys the requested workshop_idea" do
-      workshop_idea = create(:workshop_idea, valid_attributes)
-      expect {
-        delete workshop_idea_url(workshop_idea)
-      }.to change(WorkshopIdea, :count).by(-1)
+    describe "PATCH /update" do
+      it "redirects to new user session path" do
+        idea = create(:workshop_idea, valid_attributes)
+
+        patch workshop_idea_path(idea),
+              params: { workshop_idea: { title: "Updated" } }
+
+        expect(response).to redirect_to(new_user_session_path)
+      end
     end
 
-    it "redirects to the workshop_ideas list" do
-      workshop_idea = create(:workshop_idea, valid_attributes)
-      delete workshop_idea_url(workshop_idea)
-      expect(response).to redirect_to(workshop_ideas_url)
+    describe "DELETE /destroy" do
+      it "does not delete and redirects to new user session path" do
+        idea = create(:workshop_idea, valid_attributes)
+
+        expect {
+          delete workshop_idea_path(idea)
+        }.not_to change(WorkshopIdea, :count)
+
+        expect(response).to redirect_to(new_user_session_path)
+      end
     end
   end
 end

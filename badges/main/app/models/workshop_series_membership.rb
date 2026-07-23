@@ -3,7 +3,7 @@ class WorkshopSeriesMembership < ApplicationRecord
   belongs_to :workshop_child, class_name: "Workshop"
 
   # Validations
-  validates :series_order, presence: true, numericality: { only_integer: true, greater_than: 0 }
+  validates :position, presence: true, numericality: { only_integer: true, greater_than: 0 }
 
   def series_description_for(spanish: false, length: nil, parent_workshop: false)
     description =
@@ -14,7 +14,7 @@ class WorkshopSeriesMembership < ApplicationRecord
       end
 
     if description.present?
-      length ? description.truncate(length) : description
+      length ? description&.truncate(length) : description
     else
       workshop = parent_workshop ? workshop_parent : workshop_child
       workshop.decorate.formatted_objective(length: length)

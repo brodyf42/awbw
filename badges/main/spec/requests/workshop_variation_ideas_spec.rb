@@ -1,0 +1,339 @@
+require "rails_helper"
+
+RSpec.describe "/workshop_variation_ideas", type: :request do
+  let(:regular_user) { create(:user) }
+  let(:admin)        { create(:user, super_user: true) }
+  let(:workshop)     { create(:workshop) }
+  let(:organization) { create(:organization) }
+  let(:windows_type) { create(:windows_type) }
+
+  let(:valid_attributes) do
+    {
+      name: "Mindful Art Variation",
+      rhino_body: "<p>A variation focusing on mindfulness and relaxation.</p>",
+      youtube_url: "https://www.youtube.com/watch?v=example",
+      permission_given: true,
+      author_credit_preference: "full_name",
+      workshop_id: workshop.id,
+      organization_id: organization.id,
+      windows_type_id: windows_type.id,
+      created_by_id: regular_user.id,
+      updated_by_id: regular_user.id
+    }
+  end
+
+  let(:invalid_attributes) do
+    {
+      name: "",
+      workshop_id: nil,
+      created_by_id: nil
+    }
+  end
+
+  before do
+    allow(NotificationServices::CreateNotification).to receive(:call)
+  end
+
+  # ============================================================
+  # ADMIN
+  # ============================================================
+
+  context "as an admin" do
+    before { sign_in admin }
+
+    describe "GET /index" do
+      it "renders successfully" do
+        create(:workshop_variation_idea, valid_attributes)
+        get workshop_variation_ideas_path
+        expect(response).to have_http_status(:ok)
+      end
+    end
+
+    describe "GET /show" do
+      it "renders successfully" do
+        idea = create(:workshop_variation_idea, valid_attributes)
+        get workshop_variation_idea_path(idea)
+        expect(response).to have_http_status(:ok)
+      end
+
+      it "renders the organization and creator as links" do
+        creator_person = create(:person, user: regular_user)
+        org = create(:organization, name: "Community Arts Project")
+        idea = create(:workshop_variation_idea, valid_attributes.merge(organization_id: org.id))
+
+        get workshop_variation_idea_path(idea)
+
+        page = Capybara.string(response.body)
+        expect(page).to have_link(org.name, href: organization_path(org))
+        expect(page).to have_link(regular_user.name, href: person_path(creator_person))
+      end
+    end
+
+    describe "GET /new" do
+      it "renders successfully" do
+        get new_workshop_variation_idea_path
+        expect(response).to have_http_status(:ok)
+      end
+    end
+
+    describe "GET /edit" do
+      it "renders successfully" do
+        idea = create(:workshop_variation_idea, valid_attributes)
+        get edit_workshop_variation_idea_path(idea)
+        expect(response).to have_http_status(:ok)
+      end
+    end
+
+    describe "POST /create" do
+      context "with valid params" do
+        it "creates a WorkshopVariationIdea" do
+          expect {
+            post workshop_variation_ideas_path, params: { workshop_variation_idea: valid_attributes }
+          }.to change(WorkshopVariationIdea, :count).by(1)
+
+          expect(response).to redirect_to(workshop_variation_idea_path(WorkshopVariationIdea.last))
+        end
+
+        it "sends admin and submitter notifications" do
+          expect(NotificationServices::CreateNotification).to receive(:call).with(
+            hash_including(
+              kind: :idea_submitted_fyi,
+              recipient_role: :admin
+            )
+          )
+          expect(NotificationServices::CreateNotification).to receive(:call).with(
+            hash_including(
+              kind: :idea_submitted,
+              recipient_role: :person
+            )
+          )
+
+          post workshop_variation_ideas_path, params: { workshop_variation_idea: valid_attributes }
+        end
+      end
+
+      context "with invalid params" do
+        it "does not create and returns 422" do
+          expect {
+            post workshop_variation_ideas_path, params: { workshop_variation_idea: invalid_attributes }
+          }.not_to change(WorkshopVariationIdea, :count)
+
+          expect(response).to have_http_status(:unprocessable_content)
+        end
+      end
+
+      context "when RecordNotUnique is raised" do
+        it "handles it gracefully" do
+          allow_any_instance_of(WorkshopVariationIdea).to receive(:save).and_raise(
+            ActiveRecord::RecordNotUnique.new("Duplicate entry")
+          )
+
+          expect {
+            post workshop_variation_ideas_path, params: { workshop_variation_idea: valid_attributes }
+          }.not_to change(WorkshopVariationIdea, :count)
+
+          expect(response).to have_http_status(:unprocessable_content)
+        end
+      end
+    end
+
+    describe "PATCH /update" do
+      it "updates the workshop variation idea" do
+        idea = create(:workshop_variation_idea, valid_attributes)
+
+        patch workshop_variation_idea_path(idea),
+              params: { workshop_variation_idea: { name: "Updated Name" } }
+
+        expect(idea.reload.name).to eq("Updated Name")
+        expect(response).to redirect_to(workshop_variation_idea_path(idea))
+      end
+
+      it "handles RecordNotUnique gracefully" do
+        idea = create(:workshop_variation_idea, valid_attributes)
+
+        allow_any_instance_of(WorkshopVariationIdea).to receive(:update).and_raise(
+          ActiveRecord::RecordNotUnique.new("Duplicate entry")
+        )
+
+        patch workshop_variation_idea_path(idea),
+              params: { workshop_variation_idea: { name: "Updated Name" } }
+
+        expect(response).to have_http_status(:unprocessable_content)
+      end
+    end
+
+    describe "DELETE /destroy" do
+      it "destroys the workshop variation idea" do
+        idea = create(:workshop_variation_idea, valid_attributes)
+
+        expect {
+          delete workshop_variation_idea_path(idea)
+        }.to change(WorkshopVariationIdea, :count).by(-1)
+
+        expect(response).to redirect_to(workshop_variation_ideas_path)
+      end
+    end
+  end
+
+  # ============================================================
+  # REGULAR USER
+  # ============================================================
+
+  context "as a regular user" do
+    before { sign_in regular_user }
+
+    describe "GET /index" do
+      it "redirects to root" do
+        get workshop_variation_ideas_path
+        expect(response).to redirect_to(root_path)
+      end
+    end
+
+    describe "GET /show" do
+      it "renders owned workshop_variation_idea successfully" do
+        idea = create(:workshop_variation_idea, valid_attributes) # owner == regular_user
+        get workshop_variation_idea_path(idea)
+        expect(response).to have_http_status(:ok)
+      end
+
+      it "renders the organization as plain text and the creator as a link" do
+        person = create(:person, user: regular_user)
+        org = create(:organization, name: "Community Arts Project")
+        idea = create(:workshop_variation_idea, valid_attributes.merge(organization_id: org.id))
+
+        get workshop_variation_idea_path(idea)
+
+        page = Capybara.string(response.body)
+        expect(page).to have_text(org.name)
+        expect(page).not_to have_link(org.name)
+        expect(page).to have_link(regular_user.name, href: person_path(person))
+      end
+
+      it "renders the creator as plain text when they have no person record" do
+        idea = create(:workshop_variation_idea, valid_attributes)
+
+        get workshop_variation_idea_path(idea)
+
+        page = Capybara.string(response.body)
+        expect(page).to have_text(regular_user.name)
+        expect(page).not_to have_link(regular_user.name)
+      end
+
+      it "redirects from another's workshop_variation_idea to root" do
+        idea = create(:workshop_variation_idea, valid_attributes.merge(created_by_id: admin.id))
+        get workshop_variation_idea_path(idea)
+        expect(response).to redirect_to(root_path)
+      end
+    end
+
+    describe "GET /new" do
+      it "renders successfully" do
+        get new_workshop_variation_idea_path
+        expect(response).to have_http_status(:ok)
+      end
+    end
+
+    describe "POST /create" do
+      context "with valid params" do
+        it "creates a WorkshopVariationIdea" do
+          expect {
+            post workshop_variation_ideas_path,
+                 params: { workshop_variation_idea: valid_attributes }
+          }.to change(WorkshopVariationIdea, :count).by(1)
+
+          expect(response).to redirect_to(workshop_variation_idea_path(WorkshopVariationIdea.last))
+        end
+      end
+
+      context "with invalid params" do
+        it "does not create and returns 422" do
+          expect {
+            post workshop_variation_ideas_path,
+                 params: { workshop_variation_idea: invalid_attributes }
+          }.not_to change(WorkshopVariationIdea, :count)
+
+          expect(response).to have_http_status(:unprocessable_content)
+        end
+      end
+    end
+
+    describe "PATCH /update" do
+      it "does not update with valid params" do
+        idea = create(:workshop_variation_idea, valid_attributes)
+        original_name = idea.name
+
+        patch workshop_variation_idea_path(idea),
+              params: { workshop_variation_idea: { name: "Updated Name" } }
+
+        expect(idea.reload.name).to eq(original_name)
+        expect(response).to redirect_to(root_path)
+      end
+    end
+
+    describe "DELETE /destroy" do
+      it "does not destroy the idea" do
+        idea = create(:workshop_variation_idea, valid_attributes)
+
+        expect {
+          delete workshop_variation_idea_path(idea)
+        }.not_to change(WorkshopVariationIdea, :count)
+
+        expect(response).to redirect_to(root_path)
+      end
+    end
+  end
+
+  # ============================================================
+  # GUEST
+  # ============================================================
+
+  context "as a guest" do
+    describe "GET /index" do
+      it "redirects to new user session path" do
+        get workshop_variation_ideas_path
+        expect(response).to redirect_to(new_user_session_path)
+      end
+    end
+
+    describe "GET /new" do
+      it "redirects to new user session path" do
+        get new_workshop_variation_idea_path
+        expect(response).to redirect_to(new_user_session_path)
+      end
+    end
+
+    describe "POST /create" do
+      it "does not create and redirects to new user session path" do
+        expect {
+          post workshop_variation_ideas_path,
+               params: { workshop_variation_idea: valid_attributes }
+        }.not_to change(WorkshopVariationIdea, :count)
+
+        expect(response).to redirect_to(new_user_session_path)
+      end
+    end
+
+    describe "PATCH /update" do
+      it "redirects to new user session path" do
+        idea = create(:workshop_variation_idea, valid_attributes)
+
+        patch workshop_variation_idea_path(idea),
+              params: { workshop_variation_idea: { name: "Updated" } }
+
+        expect(response).to redirect_to(new_user_session_path)
+      end
+    end
+
+    describe "DELETE /destroy" do
+      it "does not delete and redirects to new user session path" do
+        idea = create(:workshop_variation_idea, valid_attributes)
+
+        expect {
+          delete workshop_variation_idea_path(idea)
+        }.not_to change(WorkshopVariationIdea, :count)
+
+        expect(response).to redirect_to(new_user_session_path)
+      end
+    end
+  end
+end

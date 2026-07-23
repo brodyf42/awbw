@@ -1,7 +1,7 @@
 require 'rails_helper'
 
 RSpec.describe "banners/new", type: :view do
-    let(:admin) { create(:user, :admin) }
+  let(:admin) { create(:user, :admin) }
 
   before(:each) do
     assign(:banner, Banner.new(
@@ -17,10 +17,9 @@ RSpec.describe "banners/new", type: :view do
     render
 
     assert_select "form[action=?][method=?]", banners_path, "post" do
-
       assert_select "textarea[name=?]", "banner[content]"
 
-      assert_select "input[name=?]", "banner[show]"
+      assert_select "input[name=?]", "banner[published]"
 
       assert_select "input[name=?]", "banner[created_by_id]"
 

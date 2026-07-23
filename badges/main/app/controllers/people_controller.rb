@@ -1,0 +1,593 @@
+class PeopleController < ApplicationController
+  include AhoyTracking, TagAssignable
+  before_action :set_person, only: %i[ show edit update destroy workshop_logs checkout bio ]
+
+  def index
+    authorize!
+
+    if turbo_frame_request?
+      per_page = params[:number_of_items_per_page].presence || 25
+      base_scope = authorized_scope(Person.includes(
+        :avatar_attachment,
+        :user,
+        sectorable_items: :sector,
+        affiliations: :organization,
+        categorizable_items: { category: :category_type }
+      ).references(:user))
+      filtered = base_scope.search_by_params(params.to_unsafe_h)
+                           .order(:first_name, :last_name)
+      @count_display = filtered.count
+      @people = filtered.paginate(page: params[:page], per_page: per_page)
+
+      render :people_results
+    else
+      render :index
+    end
+  end
+
+  def show
+    authorize! @person
+    @person = Person.includes(:avatar_attachment, :contact_methods, :user,
+                              categorizable_items: { category: :category_type }).find(params[:id]).decorate
+    track_view(@person)
+
+    if params[:checkout] == "success"
+      flash[:notice] = "Thank you for your donation!"
+    elsif params[:checkout] == "cancelled"
+      flash[:alert] = "Donation was cancelled."
+    end
+
+    # Handle paginated sections for Turbo Frame requests
+    if turbo_frame_request?
+      per_page = params[:section] == "stories" ? 8 : 9
+      section = params[:section]
+
+      case section
+      when "workshops"
+        # Credit the person for workshops they authored — not ones their user
+        # merely created (created_by is a pure audit trail).
+        @workshops = @person.workshops_as_author.order(created_at: :desc).paginate(page: params[:page], per_page: per_page)
+        render partial: "people/sections/workshops", locals: { person: @person, workshops: @workshops }
+      when "workshop_variations"
+        # Credit the person for variations they authored — not ones their user
+        # merely entered (created_by is a pure audit trail).
+        @workshop_variations = @person.workshop_variations_as_author.order(created_at: :desc).paginate(page: params[:page], per_page: per_page)
+        render partial: "people/sections/workshop_variations", locals: { person: @person, workshop_variations: @workshop_variations }
+      when "stories"
+        # Credit the person for stories they authored or were spotlighted in —
+        # not ones their user merely entered (created_by is a pure audit trail).
+        story_ids = @person.stories_as_author.pluck(:id) +
+          @person.stories_as_spotlighted_facilitator.pluck(:id)
+        @stories = Story.where(id: story_ids).order(created_at: :desc).paginate(page: params[:page], per_page: per_page)
+        render partial: "people/sections/stories", locals: { person: @person, stories: @stories }
+      when "resources"
+        # Credit the person for resources they authored — not ones their user
+        # merely entered (created_by is a pure audit trail).
+        @resources = @person.resources_as_author.order(created_at: :desc).paginate(page: params[:page], per_page: per_page)
+        render partial: "people/sections/resources", locals: { person: @person, resources: @resources }
+      when "events"
+        @event_registrations = @person.event_registrations.active.includes(:event).order("events.start_date DESC").references(:events).paginate(page: params[:page], per_page: per_page)
+        render partial: "people/sections/events", locals: { person: @person, event_registrations: @event_registrations }
+      when "workshop_ideas"
+        @workshop_ideas = @person.user&.workshop_ideas_as_creator&.order(created_at: :desc)&.paginate(page: params[:page], per_page: per_page) || []
+        render partial: "people/sections/workshop_ideas", locals: { person: @person, workshop_ideas: @workshop_ideas }
+      when "story_ideas"
+        @story_ideas = @person.user&.story_ideas_as_creator&.order(created_at: :desc)&.paginate(page: params[:page], per_page: per_page) || []
+        render partial: "people/sections/story_ideas", locals: { person: @person, story_ideas: @story_ideas }
+      when "workshop_logs"
+        @workshop_logs = @person.user&.workshop_logs&.includes(:workshop, :windows_type, :quotable_item_quotes, :gallery_assets)&.order(workshop_held_on: :desc, created_at: :desc) || WorkshopLog.none
+        render partial: "people/sections/workshop_logs", locals: { person: @person, workshop_logs: @workshop_logs }
+      when "workshop_variation_ideas"
+        @workshop_variation_ideas = @person.user&.workshop_variation_ideas_creator&.order(created_at: :desc)&.paginate(page: params[:page], per_page: per_page) || []
+        render partial: "people/sections/workshop_variation_ideas", locals: { person: @person, workshop_variation_ideas: @workshop_variation_ideas }
+      when "affiliations"
+        @affiliations = @person.affiliations.active.includes(organization: :logo_attachment).paginate(page: params[:page], per_page: per_page)
+        render partial: "people/sections/affiliations", locals: { person: @person, affiliations: @affiliations }
+      end
+    end
+  end
+
+  def workshop_logs
+    authorize! @person
+    @person = @person.decorate
+    all_logs = @person.user&.workshop_logs&.includes(:workshop, :windows_type, :quotable_item_quotes, :gallery_assets)&.order(workshop_held_on: :desc, created_at: :desc) || WorkshopLog.none
+    @grouped_logs = all_logs.group_by { |log| log.workshop_id || log.external_workshop_title }.sort_by { |_key, logs|
+      dates = logs.first(10).map { |l| -(l.workshop_held_on || l.created_at.to_date).to_time.to_i }
+      dates.fill(0, dates.size...10)
+    }.to_h
+
+    if params[:workshop_id].present?
+      @filtered_logs = all_logs.select { |log| log.workshop_id == params[:workshop_id].to_i }
+    elsif params[:external_title].present?
+      @filtered_logs = all_logs.select { |log| log.external_workshop_title == params[:external_title] }
+    end
+  end
+
+  # Read-only profile bio for the event-staff editor, fetched when a person is
+  # picked for a new staff row. Returns sanitized HTML so the client can render
+  # it directly. Person search is admin-gated, so show? (admin or owner) is the
+  # right authorization here.
+  def bio
+    authorize! @person, to: :show?
+    has_bio = @person.profile_show_bio? && @person.bio.present?
+    render json: {
+      show_bio: @person.profile_show_bio?,
+      has_bio: has_bio,
+      bio_html: (helpers.sanitize(@person.bio, tags: %w[p br strong em a ul ol li b i], attributes: %w[href]) if has_bio),
+      edit_path: (edit_person_path(@person) if allowed_to?(:edit?, @person))
+    }
+  end
+
+  def checkout
+    authorize! @person, with: PersonPolicy
+
+    amount = params[:amount].to_i
+    amount = (amount * 100).to_i # Convert dollars to cents
+    amount = 1000 if amount < 1000 # Minimum $10.00
+
+    @checkout_session = @person.payment_processor.checkout(
+      mode: "payment",
+      metadata: { person_id: @person.id },
+      payment_intent_data: {
+        metadata: { person_id: @person.id }
+      },
+      line_items: [ {
+        price_data: {
+          currency: "usd",
+          product_data: {
+            name: "Donation to A Window Between Worlds"
+          },
+          unit_amount: amount
+        },
+        quantity: 1
+      } ],
+      success_url: person_url(@person, checkout: "success"),
+      cancel_url: person_url(@person, checkout: "cancelled")
+    )
+
+    redirect_to @checkout_session.url, allow_other_host: true, status: :see_other
+  end
+
+  def new
+    set_user
+    @person = @user ? PersonFromUserService.new(user: @user).call : Person.new
+    @person.user = @user if @user
+    authorize! @person
+    set_form_variables
+  end
+
+  def edit
+    @person = Person.includes(
+      :user,
+      :contact_methods,
+      :addresses,
+      { avatar_attachment: :blob },
+      { comments: [ :created_by, :updated_by ] },
+      { sectorable_items: :sector },
+      affiliations: { organization: [ :logo_attachment, :addresses ] }
+    ).find(params[:id]).decorate
+    authorize! @person
+    set_form_variables
+  end
+
+  def create
+    @person = Person.new(person_params.except(:user_attributes))
+    authorize! @person
+    @person.user ||= User.find_by(id: params[:user_id]) if params[:user_id].present?
+    @person.user ||= User.find_by(id: params.dig(:person, :user_attributes, :id)) if params.dig(:person, :user_attributes, :id).present?
+    if @person.user && person_params[:user_attributes].present?
+      @person.user.assign_attributes(person_params[:user_attributes].except(:id))
+    end
+
+    unless params[:skip_duplicate_check].present?
+      @duplicates = find_duplicate_people(
+        @person.first_name,
+        @person.last_name,
+        @person.email,
+        legal_first_name: @person.legal_first_name,
+        email_2: @person.email_2
+      )
+      if @duplicates.any?
+        @first_name = @person.first_name
+        @last_name = @person.last_name
+        @email = @person.email
+        @legal_first_name = @person.legal_first_name
+        @email_2 = @person.email_2
+        @blocked = @duplicates.any? { |d| d[:blocked] }
+        set_form_variables
+        respond_to do |format|
+          format.html { render :new, status: :unprocessable_content }
+          format.turbo_stream
+        end
+        return
+      end
+    end
+
+    respond_to do |format|
+      if @person.save
+        assign_associations(@person) if params.dig(:person, :category_ids)
+        format.html { redirect_to @person, notice: "Person was successfully created." }
+      else
+        set_form_variables
+        format.html { render :new, status: :unprocessable_content }
+      end
+    end
+  end
+
+  def update
+    authorize! @person
+
+    if params[:person][:_destroy] == "1"
+      @person.avatar.purge
+    end
+
+    attrs = person_params
+    reject_locked_license_changes!(attrs)
+    @person.assign_attributes(attrs)
+    @person.comments.select(&:new_record?).each { |c| c.created_by = current_user; c.updated_by = current_user }
+    @person.comments.select { |c| c.persisted? && c.body_changed? }.each { |c| c.updated_by = current_user }
+
+    # Inline-logged notifications are addressed to the person.
+    recipient_email = @person.preferred_email.presence || "n/a"
+    @person.notifications.select(&:new_record?).each { |n| n.recipient_email = recipient_email }
+
+    if @person.save
+      assign_associations(@person) if params.dig(:person, :category_ids)
+      redirect_to person_update_return_path, notice: "Person was successfully updated."
+    else
+      set_form_variables
+      render :edit, status: :unprocessable_content
+    end
+  end
+
+  def destroy
+    authorize! @person
+    @person.destroy
+
+    respond_to do |format|
+      format.html { redirect_to people_path, status: :see_other, notice: "Person was successfully destroyed." }
+    end
+  end
+
+  def check_duplicates
+    authorize!
+
+    @first_name = params[:first_name]
+    @last_name = params[:last_name]
+    @email = params[:email]
+    @legal_first_name = params[:legal_first_name]
+    @email_2 = params[:email_2]
+    @duplicates = find_duplicate_people(
+      @first_name, @last_name, @email,
+      legal_first_name: @legal_first_name, email_2: @email_2
+    )
+    @blocked = @duplicates.any? { |d| d[:blocked] }
+  end
+
+  private
+  # Use callbacks to share common setup or constraints between actions.
+  def set_person
+    @person = Person.find(params[:id])
+  end
+
+  def set_user
+    if params[:user_id].present?
+      @user ||= User.find_by(id: params[:user_id])
+      if @user
+        @person&.user ||= @user
+        @user.person ||= @person
+      end
+    end
+  end
+
+  def set_form_variables
+    set_user
+    # @person.build_user if @person.user.blank? # Build a fresh one if missing
+    if @person.persisted? && @person.errors.empty?
+      affiliations = @person.affiliations
+      affiliations = affiliations.includes(:organization) unless affiliations.loaded?
+      sorted = affiliations.to_a
+                      .sort_by { |affiliation|
+                        expired = affiliation.inactive? || (affiliation.end_date.present? && affiliation.end_date < Date.current)
+                        [ expired ? 1 : 0,
+                          affiliation.organization&.name.to_s.downcase ]
+                      }
+      @person.affiliations.proxy_association.target.replace(sorted)
+    end
+    @person.affiliations.build if @person.affiliations.empty?
+
+    # "Other" is the free-text catch-all, not a real tag (see Sector), so it's
+    # never offered in the sector picker — a typed "Other" is captured as an
+    # OtherResponse, not saved as the literal "Other" sector.
+    @all_sectors = Sector.published.excluding_other.order(:name)
+    @sectors_collection = @all_sectors.pluck(:name, :id)
+    @current_sector_ids = @person.sectorable_items.map(&:sector_id)
+
+    @person_categories_grouped = Category
+      .includes(:category_type)
+      .published
+      .order(:position, :name)
+      .group_by(&:category_type)
+      .select { |type, _| type&.profile_specific? }
+      .sort_by { |type, _| type&.name.to_s.downcase }
+
+    # Age ranges edit as their own sectors-style cocoon chip picker (AgeRange
+    # isn't a profile_specific type, so it never appears in
+    # @person_categories_grouped). Tagged via age_range_categorizable_items nested
+    # attributes, not category_ids.
+    @age_range_type = CategoryType.find_by(name: AgeGroupTaggable::AGE_RANGE_CATEGORY_TYPE)
+    age_ranges = @age_range_type ? @age_range_type.categories.published.order(:position, :name) : Category.none
+    @age_ranges_collection = age_ranges.pluck(:name, :id)
+    @current_age_range_category_ids = @person.age_range_categorizable_items.map(&:category_id)
+
+    # The category types this form edits via category_ids — the profile-specific
+    # types shown below (workshop settings). assign_associations preserves taggings
+    # of any other type (age ranges included, handled by nested attributes), so
+    # saving the form can't drop a person's other category connections.
+    @managed_category_type_ids = @person_categories_grouped.map { |type, _| type.id }
+  end
+
+  def find_duplicate_people(first_name, last_name, email, legal_first_name: nil, email_2: nil)
+    duplicates = []
+    duplicate_ids = Set.new
+
+    # Entered emails (primary + secondary) drive both email matching and match
+    # classification. example.com addresses are seed/placeholder data, so they're
+    # excluded from the DB lookup.
+    entered_emails = [ email, email_2 ].filter_map { |e| e.presence&.downcase }.uniq
+    query_emails = entered_emails.reject { |e| e.end_with?("@example.com") }
+
+    # Entered first-name forms: the first name and legal first name, normalized.
+    # Normalize removes periods and extra whitespace: "J. R." -> "jr".
+    entered_first_forms = [ first_name, legal_first_name ].filter_map { |n| NicknameMap.normalize(n).presence }.uniq
+    normalized_last = NicknameMap.normalize(last_name)
+
+    # Check for name matches (exact + nickname variants), comparing both the
+    # entered first name and legal first name (and their nickname variants)
+    # against the stored first name and legal first name.
+    if first_name.presence && last_name.presence
+      first_variants = NicknameMap.variants_for(first_name)
+      first_variants += NicknameMap.variants_for(legal_first_name) if legal_first_name.present?
+      first_variants = first_variants.uniq
+
+      name_matches = Person.includes(:user)
+                           .where("REPLACE(REPLACE(LOWER(last_name), '.', ''), ' ', '') = ?", normalized_last)
+                           .where(
+                             "REPLACE(REPLACE(LOWER(first_name), '.', ''), ' ', '') IN (:variants) OR " \
+                             "REPLACE(REPLACE(LOWER(legal_first_name), '.', ''), ' ', '') IN (:variants)",
+                             variants: first_variants
+                           )
+                           .limit(10)
+
+      name_matches.each do |person|
+        next if duplicate_ids.include?(person.id)
+
+        duplicate_ids.add(person.id)
+        exact_name = exact_first_name_match?(entered_first_forms, person)
+        duplicates << format_duplicate(person, exact: exact_name, entered_email: email, entered_emails: entered_emails)
+      end
+    end
+
+    # Check for email matches on the primary or secondary entered email.
+    # Only match person.email when person has no user (otherwise it's a stale copy of user.email)
+    if query_emails.any? && duplicates.size < 10
+      email_query = Person.includes(:user)
+                          .left_joins(:user)
+                          .where(
+                            "(users.id IS NULL AND LOWER(people.email) IN (:emails)) OR " \
+                            "LOWER(people.email_2) IN (:emails) OR LOWER(users.email) IN (:emails)",
+                            emails: query_emails
+                          )
+                          .limit(10)
+
+      email_query.each do |person|
+        next if duplicate_ids.include?(person.id)
+
+        duplicate_ids.add(person.id)
+        exact_name = last_name.present? &&
+          NicknameMap.normalize(person.last_name) == normalized_last &&
+          exact_first_name_match?(entered_first_forms, person)
+        duplicates << format_duplicate(person, exact: exact_name, entered_email: email, entered_emails: entered_emails)
+        break if duplicates.size >= 10
+      end
+    end
+
+    sort_order = { "exact" => 0, "name" => 1, "approximate" => 2, "email" => 3, "nickname" => 4 }
+    duplicates.sort_by { |d| [ d[:blocked] ? -1 : 0, sort_order[d[:match_type]] || 4 ] }
+  end
+
+  # True when any entered first-name form (first or legal, normalized) matches
+  # the stored person's first name or legal first name directly — a real name
+  # match rather than only a nickname bridge.
+  def exact_first_name_match?(entered_first_forms, person)
+    stored_forms = [ person.first_name, person.legal_first_name ].filter_map { |n| NicknameMap.normalize(n).presence }
+    (entered_first_forms & stored_forms).any?
+  end
+
+  def format_duplicate(person, exact: true, entered_email: nil, entered_emails: nil)
+    entered_emails = (Array(entered_emails).presence || [ entered_email ]).filter_map { |e| e.presence&.downcase }.uniq
+
+    labeled_emails = []
+    # Skip person.email when person has a user (it's a stale copy of user.email)
+    labeled_emails << { label: "Email", value: person.email } if person.email.present? && person.user.blank?
+    labeled_emails << { label: "Secondary email", value: person.email_2 } if person.email_2.present?
+    labeled_emails << { label: "User email", value: person.user.email } if person.user&.email.present?
+    emails = labeled_emails.map { |e| e[:value] }.uniq
+    any_email_match = emails.any? { |e| entered_emails.include?(e.downcase) }
+    primary_email_match = exact && entered_email.present? &&
+      person.email.present? && person.email.downcase == entered_email.downcase
+    secondary_email_match = exact && any_email_match && !primary_email_match
+
+    # Exact name + primary email is an "exact" match and blocks creation. Exact
+    # name plus a secondary or user email is "approximate" — the admin is warned
+    # but can still create the person (they may legitimately share an email).
+    match_type = if primary_email_match
+      "exact"
+    elsif secondary_email_match
+      "approximate"
+    elsif !exact && any_email_match
+      "email"
+    elsif exact
+      "name"
+    else
+      "nickname"
+    end
+
+    {
+      id: person.id,
+      name: person.full_name,
+      labeled_emails: labeled_emails,
+      match_type: match_type,
+      name_match: exact,
+      blocked: primary_email_match
+    }
+  end
+
+  # Where to send the admin after a successful update. Defaults to the person's
+  # profile, but returns to the registration org-linking page when the edit was
+  # opened from one of its linked-org cards (preserving that page's own return_to).
+  def person_update_return_path
+    if params[:return_to] == "registration_link" && params[:event_registration_id].present?
+      link_organization_event_registration_path(params[:event_registration_id], return_to: params[:link_org_return_to].presence)
+    else
+      @person
+    end
+  end
+
+  # Only allow a list of trusted parameters through.
+  # Server-side backstop for the per-license edit gating (ProfessionalLicensePolicy):
+  # drop any submitted change to a license the current user isn't allowed to edit or
+  # destroy — i.e. a CE-tied license edited by a non-admin owner. The view already
+  # renders those read-only; this stops a crafted request from slipping past. Admins
+  # are allowed everything, so it's a no-op for them (and thus for the admin-only form
+  # today). New licenses (no id) have no CE registrations yet, so they pass through.
+  def reject_locked_license_changes!(attrs)
+    license_attrs = attrs[:professional_licenses_attributes]
+    return if license_attrs.blank?
+
+    license_attrs.keys.each do |key|
+      license = license_attrs[key]
+      id = license[:id]
+      next if id.blank?
+
+      record = @person.professional_licenses.find_by(id: id)
+      next unless record
+
+      destroying = license[:_destroy].to_s.in?(%w[ 1 true ])
+      rule = destroying ? :destroy? : :update?
+      license_attrs.delete(key) unless allowed_to?(rule, record)
+    end
+  end
+
+  def person_params
+    params.require(:person).permit(
+      :avatar,
+      :first_name, :legal_first_name, :last_name,
+      :email, :email_type,
+      :email_2, :email_2_type,
+      :street_address, :city, :state, :zip, :country, :mailing_address_type,
+      :best_time_to_call,
+      :date_of_birth,
+      :racial_ethnic_identity,
+      :filemaker_code,
+      :mailing_list_consented,
+      :bio, :shoutout_text, :notes,
+      :display_name_preference,
+      :pronouns,
+      :profile_show_name_preference,
+      :profile_is_searchable,
+      :profile_show_pronouns,
+      :profile_show_credentials,
+      :profile_show_bio,
+      :profile_show_email,
+      :profile_show_phone,
+      :profile_show_member_since,
+      :profile_show_sectors,
+      :profile_show_affiliations,
+      :profile_show_social_media,
+      :profile_show_events_registered,
+      :profile_show_stories,
+      :profile_show_story_ideas,
+      :profile_show_workshop_variations,
+      :profile_show_workshop_variation_ideas,
+      :profile_show_workshops,
+      :profile_show_workshop_ideas,
+      :profile_show_workshop_logs,
+      :profile_show_resources,
+      :member_since,
+      :linked_in_url,
+      :facebook_url,
+      :instagram_url,
+      :youtube_url,
+      :twitter_url,
+      :created_by_id, :updated_by_id,
+      sectorable_items_attributes: [ :id, :sector_id, :is_leader, :is_primary, :_destroy ],
+      age_range_categorizable_items_attributes: [ :id, :category_id, :is_primary, :_destroy ],
+      addresses_attributes: [
+        :id,
+        :address_type,
+        :primary,
+        :street_address,
+        :city,
+        :state,
+        :zip_code,
+        :country,
+        :county,
+        :district,
+        :locality,
+        :phone,
+        :inactive,
+        :_destroy
+      ],
+      contact_methods_attributes: [
+        :id,
+        :address_id,
+        :contactable_id,
+        :contactable_type,
+        :contact_type,
+        :kind,
+        :value,
+        :primary,
+        :inactive,
+        :_destroy
+      ],
+      user_attributes: [
+        :id, :person_id,
+        :first_name,
+        :last_name,
+        :email,
+        :birthday,
+        :inactive,
+        :super_user,
+        :phone,
+        :phone2,
+        :phone3,
+        :best_time_to_call,
+        :address,
+        :city,
+        :state,
+        :zip,
+        :address2,
+        :city2,
+        :state2,
+        :zip2,
+        :notes,
+        :time_zone
+      ],
+      affiliations_attributes: [
+        :id,
+        :organization_id,
+        :title,
+        :inactive,
+        :primary_contact,
+        :start_date,
+        :end_date,
+        :organization_address_id,
+        :_destroy
+      ],
+      comments_attributes: [ :id, :topic, :body, :flagged, :_destroy ],
+      notifications_attributes: [ :id, :channel, :sender_id, :email_subject, :email_body_text, :noticeable_type, :noticeable_id, :_destroy ],
+      professional_licenses_attributes: [ :id, :number, :kind, :issuing_state, :expires_on, :_destroy ]
+    )
+  end
+end

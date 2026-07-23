@@ -1,0 +1,145 @@
+<% content_for(:page_bg_class, "admin-only bg-blue-100") %>
+
+<% if @allocatable %>
+  <%# ---- Focused view for a single allocatable — chrome modeled on the edit
+      scholarship page (back link, centered title with event/registrant context). ---- %>
+  <div class="mx-auto max-w-5xl <%= DomainTheme.bg_class_for(:payments) %> border border-gray-200 rounded-xl shadow p-4 sm:p-6">
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-6">
+      <% if @allocatable.is_a?(EventRegistration) && params[:return_to] == "bulk_payments" %>
+        <%# Re-expand the originating submission's row and scroll to it on return. %>
+        <%= link_to bulk_payments_return_path(@allocatable.event), class: "text-sm text-gray-500 hover:text-gray-700" do %>
+          <i class="fa-solid fa-arrow-left text-xs"></i> Bulk payments
+        <% end %>
+      <% elsif @allocatable.is_a?(EventRegistration) && params[:return_to] == "registrants" %>
+        <%= link_to registrants_event_row_path(@allocatable.event, @allocatable.id), class: "text-sm text-gray-500 hover:text-gray-700" do %>
+          <i class="fa-solid fa-arrow-left text-xs"></i> Registrants
+        <% end %>
+      <% elsif @allocatable.is_a?(EventRegistration) && params[:return_to] == "onboarding" %>
+        <%= link_to onboarding_event_row_path(@allocatable.event, @allocatable.id), class: "text-sm text-gray-500 hover:text-gray-700" do %>
+          <i class="fa-solid fa-arrow-left text-xs"></i> Onboarding
+        <% end %>
+      <% elsif @allocatable.is_a?(EventRegistration) %>
+        <%= link_to edit_event_registration_path(@allocatable), class: "text-sm text-gray-500 hover:text-gray-700" do %>
+          <i class="fa-solid fa-arrow-left text-xs"></i> Registration
+        <% end %>
+      <% elsif @allocatable.is_a?(ContinuingEducationRegistration) %>
+        <%= link_to edit_continuing_education_registration_path(@allocatable), class: "text-sm text-gray-500 hover:text-gray-700" do %>
+          <i class="fa-solid fa-arrow-left text-xs"></i> CE registration
+        <% end %>
+      <% elsif @allocatable.respond_to?(:event) %>
+        <%= link_to registrants_event_row_path(@allocatable.event, @allocatable.id), class: "text-sm text-gray-500 hover:text-gray-700" do %>
+          <i class="fa-solid fa-arrow-left text-xs"></i> Registrants
+        <% end %>
+      <% else %>
+        <span></span>
+      <% end %>
+      <div class="flex items-center gap-3">
+        <%= link_to "Home", root_path, class: "text-sm text-gray-500 hover:text-gray-700" %>
+        <%= link_to "All allocations", allocations_path, class: "text-sm text-gray-500 hover:text-gray-700" %>
+      </div>
+    </div>
+
+    <% if @allocatable.is_a?(EventRegistration) %>
+      <%# ---- Scoped header: makes explicit that this lists only the allocations
+          tied to this one registration, with the registrant + event named. ---- %>
+      <div class="mb-8 text-center">
+        <h1 class="flex items-center justify-center gap-3 text-3xl sm:text-4xl font-extrabold text-black">
+          <i class="fa-solid fa-money-bill-transfer <%= DomainTheme.text_class_for(:payments, intensity: 600) %>"></i>
+          Allocations
+        </h1>
+
+        <div class="mx-auto mt-4 inline-flex max-w-xl flex-col items-center gap-0.5 rounded-lg border <%= DomainTheme.border_class_for(:payments, intensity: 200) %> <%= DomainTheme.bg_class_for(:payments, intensity: 100) %> px-5 py-3">
+          <span class="text-xs font-semibold uppercase tracking-wide <%= DomainTheme.text_class_for(:payments, intensity: 700) %>">
+            <i class="fa-solid fa-circle-info"></i> Only this registration&rsquo;s allocations
+          </span>
+          <%= link_to edit_event_registration_path(@allocatable), class: "text-sm font-semibold text-gray-800 hover:underline" do %>
+            <%= @allocatable.registrant.full_name %>
+          <% end %>
+          <span class="text-xs text-gray-500">
+            <%= @allocatable.event.title %> &middot; <%= @allocatable.event.decorate.times(display_day: true, display_date: true) %>
+          </span>
+        </div>
+      </div>
+    <% elsif @allocatable.is_a?(ContinuingEducationRegistration) %>
+      <div class="mb-8 text-center">
+        <h1 class="flex items-center justify-center gap-3 text-3xl sm:text-4xl font-extrabold text-black">
+          <i class="fa-solid fa-money-bill-transfer <%= DomainTheme.text_class_for(:payments, intensity: 600) %>"></i>
+          Allocations
+        </h1>
+
+        <div class="mx-auto mt-4 inline-flex max-w-xl flex-col items-center gap-0.5 rounded-lg border <%= DomainTheme.border_class_for(:payments, intensity: 200) %> <%= DomainTheme.bg_class_for(:payments, intensity: 100) %> px-5 py-3">
+          <span class="text-xs font-semibold uppercase tracking-wide <%= DomainTheme.text_class_for(:payments, intensity: 700) %>">
+            <i class="fa-solid fa-circle-info"></i> Only this CE registration&rsquo;s allocations
+          </span>
+          <%= link_to edit_continuing_education_registration_path(@allocatable), class: "text-sm font-semibold text-gray-800 hover:underline" do %>
+            <%= @allocatable.event_registration.registrant.full_name %>
+          <% end %>
+          <span class="text-xs text-gray-500">
+            <%= @allocatable.event_registration.event.title %> &middot; <%= @allocatable.event_registration.event.decorate.times(display_day: true, display_date: true) %>
+          </span>
+        </div>
+      </div>
+    <% else %>
+      <%= render "shared/event_page_header",
+                 title: "Allocations",
+                 icon: "fa-solid fa-money-bill-transfer",
+                 color: :payments,
+                 event: (@allocatable.event if @allocatable.respond_to?(:event)),
+                 person: (@allocatable.registrant if @allocatable.respond_to?(:registrant)) %>
+    <% end %>
+
+    <% if @allocatable.is_a?(EventRegistration) || @allocatable.is_a?(ContinuingEducationRegistration) %>
+      <div id="payment-form" class="flex flex-wrap justify-center gap-2 mb-4">
+        <%= button_to allocation_form_payments_path(type: "CashPayment", allocatable_sgid: params[:allocatable_sgid]),
+            class: "btn btn-primary-outline inline-flex items-center gap-1.5" do %>
+          <i class="fa-solid fa-plus text-xs"></i>
+          Add cash payment
+        <% end %>
+
+        <%= button_to allocation_form_payments_path(type: "CheckPayment", allocatable_sgid: params[:allocatable_sgid]),
+            class: "btn btn-primary-outline inline-flex items-center gap-1.5" do %>
+          <i class="fa-solid fa-plus text-xs"></i>
+          Add check payment
+        <% end %>
+
+        <%# Credit card payments are not wired up yet — disabled placeholder. %>
+        <button type="button" disabled
+            class="btn btn-primary-outline inline-flex items-center gap-1.5 cursor-not-allowed opacity-50">
+          <i class="fa-solid fa-plus text-xs"></i>
+          Add a credit card payment (TBD)
+        </button>
+
+        <%= button_to allocation_form_discounts_path(allocatable_sgid: params[:allocatable_sgid]),
+            class: "btn btn-secondary-outline inline-flex items-center gap-1.5" do %>
+          <i class="fa-solid fa-plus text-xs"></i>
+          Add discount
+        <% end %>
+      </div>
+      <div id="discount-form" class="mb-6"></div>
+    <% end %>
+
+    <%= render template: "allocations/allocations_results" %>
+  </div>
+<% else %>
+  <%# ---- Searchable list of every allocation — chrome modeled on the manage
+      registrants index (left-aligned title, filter form, results table). ---- %>
+  <div class="max-w-7xl mx-auto <%= DomainTheme.bg_class_for(:payments) %> border border-gray-200 rounded-xl shadow p-6">
+    <div class="flex flex-wrap items-center justify-between gap-2 sm:gap-4 mb-6">
+      <%= link_to "← Home", root_path, class: "text-sm text-gray-500 hover:text-gray-700" %>
+    </div>
+
+    <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
+      <div>
+        <h1 class="text-2xl font-semibold text-gray-900">All allocations</h1>
+        <p class="text-gray-600 mt-1">Payments, discounts, and scholarships applied across registrations</p>
+      </div>
+    </div>
+
+    <%= render "search_boxes" %>
+
+    <% result_src = allocations_path + "?" + request.query_string %>
+    <%= turbo_frame_tag :allocations_results, src: result_src, data: { turbo: "temporary" } do %>
+      <%= render "results_skeleton" %>
+    <% end %>
+  </div>
+<% end %>

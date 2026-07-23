@@ -9,16 +9,24 @@
 <div class="flex items-center gap-1">
   <label class="flex items-center gap-1 cursor-pointer">
     <%= radio_button_tag :sort, "title",
-                         @sort == "title" || !params[:sort].present? %>
+                         @sort == "title" %>
     <span class="text-sm">Title</span>
   </label>
 </div>
 
 <div class="flex items-center gap-1">
   <label class="flex items-center gap-1 cursor-pointer">
-    <%= radio_button_tag :sort, "led",
-                         @sort == "led" %>
+    <%= radio_button_tag :sort, "popularity",
+                         @sort == "popularity" %>
     <span class="text-sm">Most bookmarked</span>
+  </label>
+</div>
+
+<div class="flex items-center gap-1">
+  <label class="flex items-center gap-1 cursor-pointer">
+    <%= radio_button_tag :sort, "author",
+                         @sort == "author" %>
+    <span class="text-sm">Author</span>
   </label>
 </div>
 

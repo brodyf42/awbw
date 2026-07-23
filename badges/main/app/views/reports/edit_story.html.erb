@@ -9,9 +9,9 @@
       <%= render 'shared/errors', resource: @report if @report.errors.any? %>
       <!-- ######### form fields ####### -->
       <div class='form-group'>
-        <%= f.label 'Facilitator' %>
+        <%= f.label "Person" %>
         <%= f.text_field :user, disabled: false, value: current_user.name, class:"form-control" %>
-        <%= f.hidden_field :user_id, value: current_user.id %>
+        <%= f.hidden_field :created_by_id, value: current_user.id %>
         <%= f.hidden_field :type %>
         <%= f.hidden_field :windows_type_id, value: @report.windows_type_id %>
         <%= f.hidden_field :id, value: @report.id %>
@@ -25,10 +25,10 @@
             Please contact AWBW if your agency is not listed.
           </div>
         </div>
-        <% agency = @agencies.find_by(windows_type_id: f.object.windows_type.id) %>
-        <%= f.collection_select :project_id, @agencies, :id, :name,
+        <% agency = @organizations.find_by(windows_type_id: f.object.windows_type.id) %>
+        <%= f.collection_select :organization_id, @organizations, :id, :name,
 { selected: agency ? agency.id : nil,class: 'js-agency-select' },
-  class:"selectpicker form-control form-control-custom", onchange: 'redirectToNewProject()' %>
+  class:"selectpicker form-control form-control-custom", onchange: 'redirectToNewOrganization()' %>
       </div>
 
       <div class="row">
@@ -42,7 +42,7 @@
                   :workshop_id,
                   @workshop_list,
                     :id,
-                    :log_title, { :selected => @report.workshop_id,
+                    :type_name, { :selected => @report.workshop_id,
                     :prompt => "Select a workshop" },
 {
 :class  =>  "form-control form-control-custom",
@@ -52,9 +52,6 @@
           </div>
         </div>
       </div>
-      <script type="text/javascript">
-        $('#select-workshop').select2();
-      </script>
      <br/>
 
      <div class="row">
@@ -75,7 +72,7 @@
   <!-- ######### row 3 ########## -->
   <div class="row">
     <div class="col-md-8 align-right">
-      <%= f.submit 'Submit', class: "btn btn-primary btn-blue btn-filled" %>
+      <%= f.button :submit, class: "btn btn-primary btn-blue btn-filled" %>
     </div>
   </div>
 <% end %>

@@ -10,9 +10,9 @@ namespace :attachment_report do
     models = [
       Address, AgeRange, AnswerOption, Attachment, Banner, Bookmark,
       Category, CategorizableItem, CommunityNews, EventRegistration, Event,
-      Facilitator, Faq, FormBuilder, FormFieldAnswerOption, FormField, Form,
-      Image, Location, MediaFile, Metadatum, MonthlyReport, Notification,
-      ProjectObligation, ProjectStatus, ProjectUser, Project,
+      Person, Faq, FormBuilder, FormFieldAnswerOption, FormField, Form,
+      Image, Location, MediaFile, CategoryType, MonthlyReport, Notification,
+      OrganizationObligation, OrganizationStatus, OrganizationUser, Project,
       QuotableItemQuote, Quote, ReportFormFieldAnswer, Report, Resource,
       SectorableItem, Sector, Story, StoryIdea, UserFormFormField, UserForm,
       User, WindowsType, WorkshopAgeRange, WorkshopIdea, WorkshopLog,
@@ -24,7 +24,7 @@ namespace :attachment_report do
 
     CSV.open(csv_file, "w") do |csv|
       # Header row
-      csv << ["model", "record_id", "column", "attachment_url"]
+      csv << [ "model", "record_id", "column", "attachment_url" ]
 
       models.each do |model|
         text_columns = model.columns.select { |c| c.type == :text }.map(&:name)
@@ -41,7 +41,7 @@ namespace :attachment_report do
 
             # Write each attachment URL to CSV
             urls.each do |url|
-              csv << [model.name, record.id, column, url]
+              csv << [ model.name, record.id, column, url ]
             end
           end
         end

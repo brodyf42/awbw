@@ -4,9 +4,12 @@ RSpec.describe Form do
   # pending "add some examples to (or delete) #{__FILE__}"
 
   describe 'associations' do
-    it { should belong_to(:owner) } # Polymorphic
+    it { should belong_to(:owner).optional } # Polymorphic, optional for standalone forms
+    it { should have_many(:event_forms).dependent(:destroy) }
+    it { should have_many(:events).through(:event_forms) }
     it { should have_many(:form_fields).dependent(:destroy).inverse_of(:form) }
     it { should have_many(:user_forms) }
+    it { should have_many(:form_submissions) }
     it { should have_many(:reports) } # As :owner
 
     it { should accept_nested_attributes_for(:form_fields).allow_destroy(true) }
@@ -25,25 +28,43 @@ RSpec.describe Form do
   #   pending("Requires functional owner factory and association uncommented")
   # end
 
-  describe '#name' do
-    # These tests remain relevant
+  describe ".where(role: 'scholarship')" do
+    it "returns only forms with scholarship role" do
+      regular_form = create(:form)
+      scholarship_form = create(:form, role: "scholarship")
+
+      expect(Form.where(role: "scholarship")).to include(scholarship_form)
+      expect(Form.where(role: "scholarship")).not_to include(regular_form)
+    end
+  end
+
+  describe '#display_name' do
     let(:user_owner) do
       create(:user)
     end
     let(:form) { build(:form, owner: user_owner) }
 
-    context 'when owner is present' do
-      it 'returns owner name Form' do
-        # Need to handle potential nil name from owner.try(:name)
-        owner_name = user_owner.try(:name) || user_owner.email # Or however owner name is derived
-        expect(form.name).to eq("#{owner_name} Form")
+    context 'when name is set' do
+      it 'returns the name' do
+        form.name = "Public Registration"
+        expect(form.display_name).to eq("Public Registration")
       end
     end
-    context 'when owner is nil' do
+
+    context 'when name is blank and owner is present' do
+      it 'returns owner name Form' do
+        form.name = nil
+        owner_name = user_owner.try(:name) || user_owner.email
+        expect(form.display_name).to eq("#{owner_name} Form")
+      end
+    end
+
+    context 'when name is blank and owner is nil' do
       it 'returns New Form' do
+        form.name = nil
         form.owner = nil
-        expect(form.name).to eq('New Form')
+        expect(form.display_name).to eq('New Form')
       end
     end
   end
-end 
+end

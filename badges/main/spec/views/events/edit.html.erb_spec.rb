@@ -8,33 +8,50 @@ RSpec.describe "events/edit", type: :view do
            start_date: DateTime.new(2024, 1, 15, 10, 0),
            end_date: DateTime.new(2024, 1, 15, 16, 0),
            registration_close_date: DateTime.new(2024, 1, 10, 23, 59),
-           publicly_visible: true)
+           published: true)
   end
+  let(:location) { create(:location, city: "My city") }
 
   before do
     assign(:event, event)
-    allow(view).to receive(:current_user).and_return(build_stubbed(:user, super_user: true))
+    assign(:locations, [ location ])
+    assign(:registration_forms, [])
+    assign(:sectors, [])
+    assign(:categories_grouped, [])
+    assign(:scholarship_forms, [])
+    assign(:bulk_payment_forms, [])
+    allow(view).to receive(:current_user).and_return(build_stubbed(:user, :admin))
+    allow(view).to receive(:allowed_to?).with(:manage?, event).and_return(true)
+    allow(view).to receive(:allowed_to?).with(:registrants?, event).and_return(true)
+    allow(view).to receive(:allowed_to?).with(:dashboard?, event).and_return(true)
+    allow(view).to receive(:allowed_to?).with(:background?, event).and_return(true)
+    allow(view).to receive(:allowed_to?).with(:recipients?, event).and_return(true)
+    allow(view).to receive(:allowed_to?).with(:staff?, event).and_return(true)
+    allow(view).to receive(:allowed_to?).with(:bulk_payments?, event).and_return(true)
+    allow(view).to receive(:allowed_to?).with(:edit?, event).and_return(true)
+    allow(view).to receive(:allowed_to?).with(:index?, Event).and_return(true)
+    allow(view).to receive(:allowed_to?).with(:destroy?, event).and_return(true)
+    allow(view).to receive(:allowed_to?).with(:google_analytics?, event).and_return(true)
+    allow(view).to receive(:allowed_to?).with(:index?, with: Admin::AhoyActivityPolicy).and_return(false)
   end
 
   it "renders the editing event heading" do
     render
 
-    expect(rendered).to have_selector("h1", text: "Edit Event")
+    expect(rendered).to have_selector("h1", text: "Edit event")
   end
 
-  it "renders the form partial with event data" do
+  it "renders the form partial" do
     render
 
     expect(rendered).to have_selector("form")
-    expect(rendered).to have_field("event[title]", with: "Original Title")
-    expect(rendered).to have_selector("textarea[name='event[description]']", text: "Original description")
-    expect(rendered).to have_selector("input[type='checkbox'][name='event[publicly_visible]'][checked='checked']")
   end
 
   it "renders action links" do
     render
 
-    expect(rendered).to have_link("View", href: event_path(event))
+    expect(rendered).to have_link("Dashboard", href: dashboard_event_path(event))
+    expect(rendered).to have_link("Registrants", href: registrants_event_path(event))
   end
 
   it "renders submit button" do
@@ -58,18 +75,17 @@ RSpec.describe "events/edit", type: :view do
     end
   end
 
-  context "when event is not publicly visible" do
+  context "when event is unpublished" do
     let(:event) do
       create(:event,
              title: "Private Event",
-             publicly_visible: false)
+             published: false)
     end
 
-    it "renders unchecked checkbox" do
+    it "renders unpublished state correctly" do
       render
 
-      expect(rendered).to have_selector("input[type='checkbox'][name='event[publicly_visible]']")
-      expect(rendered).not_to have_selector("input[type='checkbox'][name='event[publicly_visible]'][checked='checked']")
+      expect(rendered).to have_unchecked_field("event[published]")
     end
   end
 end

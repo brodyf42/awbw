@@ -7,8 +7,13 @@ FactoryBot.define do
       published { true }
     end
 
+    trait :unpublished do
+      published { false }
+    end
+
     trait :other do
-      name { 'Other' }
+      # name { 'Other' }
+      sequence(:name) { |n| "Other #{n}" }
     end
   end
-end 
+end

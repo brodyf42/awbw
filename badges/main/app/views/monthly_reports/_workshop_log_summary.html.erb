@@ -7,14 +7,14 @@
         <%= link_to 'Add Workshop Log', new_workshop_log_path(windows_type_id: @form_builder.windows_type, agency_id: @agency_id, month: @month, year: @year), class: "btn btn--small" %>
       </div>
       <th class='bold small'>Date</th>
-      <th class='bold small'>Facilitator/Workshop</th>
+      <th class='bold small'>Person/Workshop</th>
       <th class='bold small'># on-going</th>
       <th class='bold small'># first-time</th>
 
       <% if workshop_logs && workshop_logs.any? %>
         <% monthly_logs = workshop_logs.values.flatten.select do |log |
-               log.date && log.date.month == @month.to_i && \
-               log.date.year == @year.to_i
+               log.workshop_held_on && log.workshop_held_on.month == @month.to_i && \
+               log.workshop_held_on.year == @year.to_i
            end %>
         <% monthly_logs.each do |log| %>
           <tr>

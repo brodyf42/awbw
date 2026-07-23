@@ -1,7 +1,6 @@
-<div class="min-h-screen py-8">
-  <div class="max-w-full mx-auto px-4 sm:px-6 lg:px-8">
-    <div class="max-w-7xl mx-auto bg-white border border-gray-200 rounded-xl shadow-lg hover:shadow-xl transition-shadow duration-200 p-6">
-      <div class="space-y-6">
+<% content_for(:page_bg_class, "admin-only bg-blue-100") %>
+<div class="<%= DomainTheme.bg_class_for(:workshop_ideas) %> border border-gray-200 rounded-xl shadow p-6">
+  <div class="space-y-6">
         <!-- Header -->
         <div class="flex items-center justify-between mb-6">
           <h1 class="text-2xl font-semibold text-gray-900">
@@ -10,14 +9,15 @@
           <div class="flex gap-2">
             <%= link_to "New #{WorkshopIdea.model_name.human.downcase}",
                         new_workshop_idea_path,
-                        class: "btn btn-primary" %>
+                        class: "btn btn-primary-outline" %>
           </div>
         </div>
 
         <!-- Filter form -->
         <%= render "search_boxes" %>
 
-        <div class="overflow-x-auto">
+        <div class="rounded-xl bg-white p-6">
+          <div class="overflow-x-auto">
           <table class="w-full border-collapse border border-gray-200">
             <thead class="bg-gray-100">
             <tr>
@@ -33,21 +33,19 @@
             <tbody class="divide-y divide-gray-200">
             <% @workshop_ideas.each do |workshop_idea| %>
               <tr class="hover:bg-gray-50 transition-colors duration-150">
-                <td class="px-4 py-2 text-center">
-                  <div class="w-24 h-14 rounded bg-gray-200 flex items-center justify-center mx-auto">
-                    <% if workshop_idea.main_image&.file&.blob&.persisted? %>
-                      <%= image_tag workshop_idea.main_image.file,
-                                    class: "w-full rounded shadow-sm border border-gray-200",
-                                    alt: workshop_idea.title %>
-                    <% else %>
-                      <svg class="w-6 h-6 text-gray-400"
-                           fill="currentColor" viewBox="0 0 20 18"></svg>
-                    <% end %>
+                <td>
+                  <div class="p-3">
+                    <%= render "assets/display_image",
+                               resource: workshop_idea,
+                               width: 18, height: 14,
+                               variant: :index,
+                               link_to_object: true,
+                               file: workshop_idea.display_image %>
                   </div>
                 </td>
                 <td class="px-4 py-2 text-sm text-gray-800"><%= workshop_idea.title %></td>
                 <td class="px-4 py-2 text-sm text-gray-800"><%= workshop_idea.time_frame_total %></td>
-                <td class="px-4 py-2 text-sm text-gray-800"><%= workshop_idea.created_by.full_name %></td>
+                <td class="px-4 py-2 text-sm text-gray-800"><%= workshop_idea.created_by.name %></td>
                 <td class="px-4 py-2 text-sm text-gray-800 text-center">
                   <% if workshop_idea.workshops.any? %>
                     <span class='fa fa-check-circle text-green-500'></span>
@@ -65,11 +63,12 @@
             </tbody>
           </table>
         </div>
+        </div>
 
         <!-- Empty state -->
         <% unless @workshop_ideas.any? %>
           <p class="text-gray-500 text-center py-6">
-            No <%= WorkshopIdea.model_name.human.pluralize %> found.
+            No <%= WorkshopIdea.model_name.human.pluralize.downcase %> found.
           </p>
         <% end %>
 
@@ -79,7 +78,5 @@
             <%= tailwind_paginate @workshop_ideas %>
           </div>
         </div>
-      </div>
-    </div>
   </div>
 </div>

@@ -1,8 +1,8 @@
-<nav class="relative bg-primary print:hidden" data-controller="dropdown">
+<nav class="relative <%= navbar_bg_class %> print:hidden" data-controller="dropdown">
   <div class="px-2 sm:px-6 lg:px-8">
     <div class="relative flex items-center justify-between py-2.5">
       <div class="absolute inset-y-0 left-0 flex items-center md:hidden">
-        <!-- Mobile menu button-->
+        <!-- Mobile menu button -->
         <button
           type="button"
           class="
@@ -15,6 +15,7 @@
         >
           <span class="absolute -inset-0.5"></span>
           <span class="sr-only">Open main menu</span>
+
           <svg
             viewBox="0 0 24 24"
             fill="none"
@@ -24,12 +25,9 @@
             aria-hidden="true"
             class="size-6 in-aria-expanded:hidden"
           >
-            <path
-              d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              />
+            <path d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
+
           <svg
             viewBox="0 0 24 24"
             fill="none"
@@ -39,37 +37,113 @@
             aria-hidden="true"
             class="size-6 not-in-aria-expanded:hidden"
           >
-            <path d="M6 18 18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M6 18 18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
         </button>
       </div>
+
       <div class="flex flex-1 items-center justify-center md:items-stretch md:justify-start">
         <div class="flex shrink-0 items-center">
-          <%= link_to root_link_path, class: "relative group" do %>
-            <%= image_tag("logo.png", class: "h-8 sm:h-10 w-auto block") %>
-            <%= image_tag(
-                  "logo-color.png",
-                  class:
-                    "h-8 sm:h-10 absolute inset-0 w-auto opacity-0 transition-opacity duration-400 ease-out group-hover:opacity-100",
-                  ) %>
+          <%= link_to root_path, class: "relative group" do %>
+            <%= image_tag("logo-name-white.png",
+                          class: "h-8 sm:h-10 w-auto block") %>
+
+            <%= image_tag("logo-name-color-yellow.png",
+                          class: "h-8 sm:h-10 absolute inset-0 w-auto opacity-0 transition-opacity
+                            duration-400 ease-out group-hover:opacity-100") %>
           <% end %>
         </div>
 
+        <div class="hidden grow md:ml-6 md:block content-center">
+          <%= render "shared/navbar_menu" %>
+        </div>
+      </div>
+
+      <% unless user_signed_in? %>
+        <%= link_to "Log In", 
+            new_user_session_path, 
+            class: "justify-self-end btn btn-primary-outline bg-white hover:bg-primary hover:border-white" %>
+      <% end %>
+
+      <div class="absolute inset-y-0 right-0 flex items-center pr-2 md:static md:inset-auto md:ml-6 md:pr-0">
         <% if user_signed_in? %>
-          <div class="hidden grow md:ml-6 md:block content-center">
-            <div class="flex justify-between">
-              <%= render "shared/navbar_text" %>
-              <%= render "shared/navbar_new_button" %>
+          <div class="relative md:hidden mr-2" data-controller="dropdown">
+            <button
+              type="button"
+              class="flex items-center gap-1 rounded-md px-3 py-1 text-sm font-medium cursor-pointer
+                     text-gray-300 hover:bg-white/5 hover:text-white"
+              data-action="dropdown#toggle"
+              data-dropdown-payload-param='[{"mobile-create-menu":"hidden"}]'>
+              <span class="text-base font-bold text-blue-400">+</span>
+              <span>Create</span>
+            </button>
+
+            <div
+              id="mobile-create-menu"
+              class="hidden absolute right-0 mt-2 w-60 rounded-md bg-white py-1 shadow-lg outline outline-black/5"
+              data-dropdown-target="content">
+
+              <%= link_to new_workshop_variation_idea_path,
+                          class: "flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" do %>
+                <i class="fas fa-layer-group"></i>
+                <span class="whitespace-nowrap">New workshop variation idea</span>
+              <% end %>
+
+              <% if allowed_to?(:new?, WorkshopIdea) %>
+                <div class="admin-only bg-blue-100">
+                  <%= link_to new_workshop_idea_path,
+                              class: "flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" do %>
+                    <i class="fas fa-lightbulb"></i>
+                    <span>New workshop idea</span>
+                  <% end %>
+                </div>
+              <% end %>
+
+              <%= link_to new_workshop_log_path,
+                          class: "flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" do %>
+                <i class="fas fa-clipboard-list"></i>
+                <span>New workshop log</span>
+              <% end %>
+
+              <%= link_to new_story_idea_path,
+                          class: "flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" do %>
+                <i class="fas fa-book-open"></i>
+                <span>New story idea</span>
+              <% end %>
+
+              <% if allowed_to?(:new?, Story) %>
+                <div class="admin-only bg-blue-100">
+                  <%= link_to new_story_path,
+                              class: "flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" do %>
+                    <i class="fas fa-book"></i>
+                    <span>New story</span>
+                  <% end %>
+                </div>
+              <% end %>
+
+              <% if allowed_to?(:new?, WorkshopVariation) %>
+                <div class="admin-only bg-blue-100">
+                  <%= link_to new_workshop_variation_path,
+                              class: "flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" do %>
+                    <i class="fas fa-swatchbook"></i>
+                    <span>New workshop variation</span>
+                  <% end %>
+                </div>
+              <% end %>
+
+              <% if allowed_to?(:new?, Workshop) %>
+                <div class="admin-only bg-blue-100">
+                  <%= link_to new_workshop_path,
+                              class: "flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" do %>
+                    <i class="fas fa-chalkboard-teacher"></i>
+                    <span>New workshop</span>
+                  <% end %>
+                </div>
+              <% end %>
             </div>
           </div>
         <% end %>
-      </div>
-      <div
-        class="
-          absolute inset-y-0 right-0 flex items-center pr-2 md:static md:inset-auto
-          md:ml-6 md:pr-0
-        "
-      >
+
         <!-- Profile dropdown -->
         <% if current_user %>
           <%= render "shared/navbar_user" %>
@@ -78,5 +152,5 @@
     </div>
   </div>
 
-  <%= render "shared/navbar_mobile_menu" %>
+  <%= render "shared/navbar_menu_mobile" %>
 </nav>

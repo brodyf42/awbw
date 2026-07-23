@@ -9,11 +9,13 @@ RSpec.describe CategorizableItem do
   end
 
   describe 'validations' do
-    # Add validation tests if any (e.g., presence of associations)
-    # subject { build(:categorizable_item) } # Requires category and categorizable
-    # it { should validate_presence_of(:category_id) }
-    # it { should validate_presence_of(:categorizable_id) }
-    # it { should validate_presence_of(:categorizable_type) }
+    # Now that validations are enabled, test them
+    subject { build(:categorizable_item) }
+    it { should validate_presence_of(:category_id) }
+    it { should validate_presence_of(:categorizable_id) }
+    it { should validate_presence_of(:categorizable_type) }
+    # Uniqueness requires create and proper scoping:
+    it { should validate_uniqueness_of(:category_id).scoped_to([ :categorizable_type, :categorizable_id ]) }
   end
 
   # it 'is valid with valid attributes' do
@@ -24,4 +26,4 @@ RSpec.describe CategorizableItem do
   #   # expect(build(:categorizable_item, categorizable: workshop, category: category)).to be_valid
   #   pending("Requires functional category/workshop factories and associations uncommented")
   # end
-end 
+end

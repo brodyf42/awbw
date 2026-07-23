@@ -1,16 +1,34 @@
-<div class="min-h-screen py-8">
-  <div class="max-w-full mx-auto px-4 sm:px-6 lg:px-8">
-    <div class="max-w-7xl mx-auto bg-white border border-gray-200 rounded-xl shadow-lg hover:shadow-xl
-    transition-shadow duration-200 p-6">
+<% workshop_logs ||= @workshop_logs %>
+<% workshop_logs_unpaginated ||= @workshop_logs_unpaginated %>
+<% workshop_logs_count ||= @workshop_logs_count %>
+<% grand_totals = @grand_totals || workshop_logs_unpaginated.pick(
+     Arel.sql("COALESCE(SUM(children_ongoing),0)"),
+     Arel.sql("COALESCE(SUM(teens_ongoing),0)"),
+     Arel.sql("COALESCE(SUM(adults_ongoing),0)"),
+     Arel.sql("COALESCE(SUM(children_first_time),0)"),
+     Arel.sql("COALESCE(SUM(teens_first_time),0)"),
+     Arel.sql("COALESCE(SUM(adults_first_time),0)")
+   ) || [0, 0, 0, 0, 0, 0] %>
+
       <div class="space-y-6">
         <!-- Header -->
         <div class="flex items-center justify-between mb-6">
           <h1 class="text-2xl font-semibold text-gray-900">
-            <%= WorkshopLog.model_name.human.pluralize %> (<%= number_with_delimiter(@workshop_logs_count) %>)
+            <%= WorkshopLog.model_name.human.pluralize %> (<%= number_with_delimiter(workshop_logs_count) %>)
           </h1>
-          <div class="flex gap-2">
+          <div class="flex gap-2 items-center">
+            <%= link_to "Home", root_path, class: "text-sm text-gray-500 hover:text-gray-700 px-2 py-1" %>
+            <% if allowed_to?(:manage?, WorkshopLog) %>
+              <% if params[:created_by_id].present? %>
+                <%= link_to "All workshop logs", workshop_logs_path, class: "text-sm text-gray-500 hover:text-gray-700 px-2 py-1" %>
+              <% else %>
+                <%= link_to "My workshop logs", workshop_logs_path(created_by_id: current_user.id), class: "text-sm text-gray-500 hover:text-gray-700 px-2 py-1" %>
+              <% end %>
+            <% end %>
             <%= link_to "New #{WorkshopLog.model_name.human.downcase}",
-                        new_workshop_log_path,
+                        new_workshop_log_path(organization_id: params[:organization_id],
+                                              workshop_id: params[:workshop_id],
+                                              created_by_id: current_user.id),
                         class: "btn btn-primary" %>
           </div>
         </div>
@@ -32,7 +50,7 @@
             <tr class="bg-gray-100">
               <th class="px-4 py-2 text-left text-sm font-semibold text-gray-700">Date</th>
               <th class="px-4 py-2 text-left text-sm font-semibold text-gray-700">Workshop</th>
-              <th class="px-4 py-2 text-left text-sm font-semibold text-gray-700">Facilitator</th>
+              <th class="px-4 py-2 text-left text-sm font-semibold text-gray-700">Person</th>
               <th class="px-4 py-2 text-left text-sm font-semibold text-gray-700 bg-purple-200">Participants</th>
 
               <!-- Ongoing -->
@@ -50,63 +68,73 @@
             </thead>
 
             <tbody class="divide-y divide-gray-200">
-            <% page_totals = {
-              children_ongoing: 0,
-              teens_ongoing: 0,
-              adults_ongoing: 0,
-              children_first_time: 0,
-              teens_first_time: 0,
-              adults_first_time: 0
-            } %>
+              <% page_totals = {
+                children_ongoing: 0,
+                teens_ongoing: 0,
+                adults_ongoing: 0,
+                children_first_time: 0,
+                teens_first_time: 0,
+                adults_first_time: 0
+              } %>
 
-            <% @workshop_logs.each do |log| %>
-              <% page_totals[:children_ongoing]  += log.children_ongoing.to_i %>
-              <% page_totals[:teens_ongoing]     += log.teens_ongoing.to_i %>
-              <% page_totals[:adults_ongoing]    += log.adults_ongoing.to_i %>
-              <% page_totals[:children_first_time] += log.children_first_time.to_i %>
-              <% page_totals[:teens_first_time]    += log.teens_first_time.to_i %>
-              <% page_totals[:adults_first_time]   += log.adults_first_time.to_i %>
+              <% workshop_logs.each do |log| %>
+                <% page_totals[:children_ongoing]  += log.children_ongoing.to_i %>
+                <% page_totals[:teens_ongoing]     += log.teens_ongoing.to_i %>
+                <% page_totals[:adults_ongoing]    += log.adults_ongoing.to_i %>
+                <% page_totals[:children_first_time] += log.children_first_time.to_i %>
+                <% page_totals[:teens_first_time]    += log.teens_first_time.to_i %>
+                <% page_totals[:adults_first_time]   += log.adults_first_time.to_i %>
 
-              <tr class="hover:bg-gray-50 transition-colors duration-150">
-                <td class="px-2 text-left text-xs whitespace-nowrap">
-                  <%= link_to (log.date || log.created_at)&.strftime("%b %d, %Y"), workshop_log_path(log) %>
-                </td>
-                <td class="px-2 text-left text-sm font-bold">
-                  <%= log.workshop ? link_to(log.workshop.title, workshop_path(log.workshop)) : "-" %>
-                </td>
-                <td class="px-2 text-left text-xs">
-                  <%= log.user ? link_to(log.user.name, generate_facilitator_user_path(log.user)) : "—" %>
-                </td>
+                <tr id="workshop_log_<%= log.id %>" class="hover:bg-gray-50 transition-colors duration-150">
+                  <td class="px-2 text-left text-xs whitespace-nowrap">
+                    <%= link_to (log.workshop_held_on || log.created_at)&.strftime("%b %d, %Y"), workshop_log_path(log) %>
+                    <%= render "workshop_logs/content_icons", workshop_log: log %>
+                  </td>
+                  <td class="px-2 text-left text-sm font-bold">
+                    <% if log.workshop %>
+                      <%= link_to(log.workshop.title, workshop_path(log.workshop)) %>
+                    <% elsif log.external_workshop_title.present? %>
+                      <%= log.external_workshop_title %>
+                    <% else %>
+                      -
+                    <% end %>
+                  </td>
+                  <td class="px-2 text-left text-xs">
+                    <%= log.created_by ? link_to(log.created_by.name, log.created_by.person ? person_path(log.created_by.person) : user_path(log.created_by)) : "—" %>
+                  </td>
 
-                <td class="text-center font-bold text-lg bg-purple-100"><%= display_count(log.total_attendance) %></td>
+                  <td class="text-center font-bold text-lg bg-purple-100"><%= display_count(log.total_attendance) %></td>
 
-                <!-- Ongoing -->
-                <td class="text-center bg-blue-100"><%= display_count(log.children_ongoing) %></td>
-                <td class="text-center bg-blue-100"><%= display_count(log.teens_ongoing) %></td>
-                <td class="text-center bg-blue-100"><%= display_count(log.adults_ongoing) %></td>
+                  <!-- Ongoing -->
+                  <td class="text-center bg-blue-100"><%= display_count(log.children_ongoing) %></td>
+                  <td class="text-center bg-blue-100"><%= display_count(log.teens_ongoing) %></td>
+                  <td class="text-center bg-blue-100"><%= display_count(log.adults_ongoing) %></td>
 
-                <!-- First-time -->
-                <td class="text-center bg-green-100"><%= display_count(log.children_first_time) %></td>
-                <td class="text-center bg-green-100"><%= display_count(log.teens_first_time) %></td>
-                <td class="text-center bg-green-100"><%= display_count(log.adults_first_time) %></td>
+                  <!-- First-time -->
+                  <td class="text-center bg-green-100"><%= display_count(log.children_first_time) %></td>
+                  <td class="text-center bg-green-100"><%= display_count(log.teens_first_time) %></td>
+                  <td class="text-center bg-green-100"><%= display_count(log.adults_first_time) %></td>
 
-                <td class="text-center whitespace-nowrap">
-                  <% if current_user.super_user? || log.user == current_user %>
-                    <%= link_to "Edit",
-                                edit_workshop_log_path(log),
-                                class: "btn btn-secondary-outline text-xs px-2 py-1" %>
-                  <% end %>
-                  <%= link_to "View",
-                              workshop_log_path(log),
-                              class: "btn btn-secondary-outline text-xs px-2 py-1" %>
-                </td>
-              </tr>
-            <% end %>
+                  <td class="text-center whitespace-nowrap">
+                    <% if allowed_to?(:edit?, log) %>
+                      <%= link_to "Edit",
+                                  edit_workshop_log_path(log),
+                                  class: "btn btn-secondary-outline text-xs px-2 py-1" %>
+                    <% end %>
+                    <% if allowed_to?(:show?, log) %>
+                      <%= link_to "View",
+                                  workshop_log_path(log),
+                                  class: "btn btn-secondary-outline text-xs px-2 py-1" %>
+                    <% end %>
+                    <%= render "bookmarks/editable_bookmark_icon", resource: log %>
+                  </td>
+                </tr>
+              <% end %>
 
             </tbody>
 
             <tfoot>
-            <% if @workshop_logs_count > @per_page.to_i %>
+            <% if workshop_logs_count > @per_page.to_i %>
               <!-- Subtotal for this page -->
               <tr class="font-semibold text-sm bg-gray-50 border-t border-gray-300">
                 <td colspan="3" class="text-right pr-2 text-sm font-semibold text-gray-700">Subtotal (this page):</td>
@@ -125,33 +153,28 @@
             <% end %>
             <!-- Grant total -->
             <tr class="bold small">
-              <% grand_total_text = "Grand Total#{ " (all pages)" if @workshop_logs_count > @per_page.to_i }" %>
+              <% grand_total_text = "Grand Total#{ " (all pages)" if workshop_logs_count > @per_page.to_i }" %>
               <td colspan="3" class="text-right pr-2 text-sm font-semibold"><%= grand_total_text %>:</td>
               <td class="text-center font-bold text-xl text-white bg-purple-500">
-                <%= @workshop_logs_unpaginated.sum(:children_ongoing) +
-                      @workshop_logs_unpaginated.sum(:teens_ongoing) +
-                      @workshop_logs_unpaginated.sum(:adults_ongoing) +
-                      @workshop_logs_unpaginated.sum(:children_first_time) +
-                      @workshop_logs_unpaginated.sum(:teens_first_time) +
-                      @workshop_logs_unpaginated.sum(:adults_first_time) %>
+                <%= grand_totals.sum %>
               </td>
               <td class="text-center font-bold text-xl text-white bg-blue-500">
-                <%= @workshop_logs_unpaginated.sum(:children_ongoing) %>
+                <%= grand_totals[0] %>
               </td>
               <td class="text-center font-bold text-xl text-white bg-blue-500">
-                <%= @workshop_logs_unpaginated.sum(:teens_ongoing) %>
+                <%= grand_totals[1] %>
               </td>
               <td class="text-center font-bold text-xl text-white bg-blue-500">
-                <%= @workshop_logs_unpaginated.sum(:adults_ongoing) %>
+                <%= grand_totals[2] %>
               </td>
               <td class="text-center font-bold text-xl text-white bg-green-500">
-                <%= @workshop_logs_unpaginated.sum(:children_first_time) %>
+                <%= grand_totals[3] %>
               </td>
               <td class="text-center font-bold text-xl text-white bg-green-500">
-                <%= @workshop_logs_unpaginated.sum(:teens_first_time) %>
+                <%= grand_totals[4] %>
               </td>
               <td class="text-center font-bold text-xl text-white bg-green-500">
-                <%= @workshop_logs_unpaginated.sum(:adults_first_time) %>
+                <%= grand_totals[5] %>
               </td>
             </tr>
             </tfoot>
@@ -159,16 +182,16 @@
         </div>
 
         <!-- Empty state -->
-        <% unless @workshop_logs.any? %>
+        <% unless workshop_logs.any? %>
           <p class="text-gray-500 text-center py-6">
-            No <%= WorkshopLog.model_name.human.pluralize %> found.
+            No <%= WorkshopLog.model_name.human.pluralize.downcase %> found.
           </p>
         <% end %>
 
         <!-- Pagination -->
         <div class="mt-6 flex justify-center">
           <div class="pagination">
-            <%= tailwind_paginate @workshop_logs %>
+            <%= tailwind_paginate workshop_logs %>
           </div>
         </div>
 
@@ -176,6 +199,3 @@
           <%= render "workshop_logs/index_per_page" %>
         </div>
       </div>
-    </div>
-  </div>
-</div>

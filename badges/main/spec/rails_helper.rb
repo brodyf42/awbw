@@ -1,11 +1,15 @@
-require 'shoulda/matchers'
-require 'spec_helper'
-ENV['RAILS_ENV'] ||= 'test'
+ENV['RAILS_ENV'] = 'test'
+
 require File.expand_path('../config/environment', __dir__)
 # Prevent database truncation if the environment is production
 abort("The Rails environment is running in production mode!") if Rails.env.production?
+
+require 'shoulda/matchers'
+require 'spec_helper'
 require 'rspec/rails'
 require 'factory_bot_rails'
+require "action_policy/rspec"
+
 # Add additional requires below this line. Rails is not loaded until this point!
 
 # Setup Shoulda Matchers
@@ -38,19 +42,30 @@ rescue ActiveRecord::PendingMigrationError => e
   puts e.to_s.strip
   exit 1
 end
+
+ActiveJob::Base.queue_adapter = :test
+
 RSpec.configure do |config|
+  # Gives travel method for time helpers
+  config.include ActiveSupport::Testing::TimeHelpers
+
   # Include pagination helper globally
   config.include PaginationHelpers
 
   # Remove this line if you're not using ActiveRecord or ActiveRecord fixtures
-  config.fixture_paths = ["#{::Rails.root}/spec/fixtures"]
+  config.fixture_paths = [ "#{::Rails.root}/spec/fixtures" ]
 
   # If you're not using ActiveRecord, or you'd prefer not to run each of your
   # examples within a transaction, remove the following line or assign false
   # instead of true.
   config.use_transactional_fixtures = true
   config.include Devise::Test::IntegrationHelpers, type: :request
+  config.include Devise::Test::IntegrationHelpers, type: :system
   config.include Devise::Test::ControllerHelpers, type: :view
+  config.include Devise::Test::ControllerHelpers, type: :controller
+
+  config.include AssetUploadHelpers, type: :system
+
   # You can uncomment this line to turn off ActiveRecord support entirely.
   # config.use_active_record = false
 
@@ -75,8 +90,11 @@ RSpec.configure do |config|
   # config.filter_gems_from_backtrace("gem name")
 
   # ensure that warden is configured for running in test mode.
+
   config.before(:suite) { Warden.test_mode! }
   config.after { Warden.test_reset! }
+
+  config.include ActiveJob::TestHelper
 
   # ==> Mailer Prevention (add this block)
   config.before(:each) do
@@ -84,4 +102,12 @@ RSpec.configure do |config|
     ActionMailer::Base.deliveries.clear
   end
   # <== End Mailer Prevention
+
+  # Clear jobs
+  config.before(:each) do
+    clear_enqueued_jobs
+    clear_performed_jobs
+  end
+
+  config.include ActiveStorageValidations::Matchers
 end

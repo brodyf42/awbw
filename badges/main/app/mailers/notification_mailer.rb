@@ -1,50 +1,159 @@
 class NotificationMailer < ApplicationMailer
-  def reset_password_notification(resource)
-    @resource = resource
+  default to: ENV.fetch("REPLY_TO_EMAIL", "programs@awbw.org")
+
+  SUBJECT_PREFIX = "AWBW Portal:".freeze
+  FYI_PREFIX = "#{SUBJECT_PREFIX} [FYI]".freeze
+
+  def event_registration_confirmation_fyi(notification)
+    @event_registration = notification.noticeable
+    @event = @event_registration.event.decorate
+    @person = @event_registration.registrant
+    @notification_type = "Event registration"
+
+    # Send email to the admin
     mail(
-      to: "programs@awbw.org",
-      subject: "Reset Password Request"
+      subject: "#{FYI_PREFIX} New #{@event_registration.registration_subject_noun} by #{@person.full_name} to #{@event.title}"
     )
   end
 
-  def report_notification(notification)
+  def event_registration_cancelled_fyi(notification)
+    @event_registration = notification.noticeable
+    @event = @event_registration.event.decorate
+    @person = @event_registration.registrant
+    @notification_type = "Event registration cancellation"
+
+    mail(
+      subject: "#{FYI_PREFIX} #{@event_registration.registration_subject_noun.capitalize} cancelled by #{@person.full_name} for #{@event.title}"
+    )
+  end
+
+  def bulk_payment_confirmation_fyi(notification)
+    @submission = notification.noticeable
+    @person = @submission.person
+    @event = @submission.event&.decorate
+    @answers = @submission.answers_by_identifier
+    @attendees = @submission.bulk_payment_attendees
+    @notification_type = "Bulk payment"
+
+    mail(
+      subject: "#{FYI_PREFIX} New bulk payment by #{@person.full_name} for #{@event&.title}"
+    )
+  end
+
+  def idea_submitted(notification)
+    @notification = notification
+    @noticeable = notification.noticeable.decorate
+    @noticeable_klass = @noticeable.object.class
+
+    if @noticeable_klass == User
+      @user = @noticeable.object
+    else
+      @user = @noticeable.try(:user) || @noticeable.try(:created_by)
+    end
+
+    mail(
+      to: notification.recipient_email,
+      subject: "#{SUBJECT_PREFIX} Your #{@noticeable_klass.model_name.human.downcase} has been received"
+    )
+  end
+
+  def idea_submitted_fyi(notification)
+    @notification = notification
+
+    @noticeable   = notification.noticeable.decorate
+    @noticeable_klass = @noticeable.object.class
+
+    if @noticeable_klass == User
+      @user        = @noticeable.object
+    else
+      @user        = @noticeable.try(:user) || @noticeable.try(:created_by)
+    end
+
+    @attachments = extract_attachments(@noticeable)
+    @quotes      = @noticeable.quotes if @noticeable.respond_to?(:quotes)
+    @answers     = @noticeable.report_form_field_answers if @noticeable.respond_to?(:report_form_field_answers)
+
+    mail(
+      subject: "#{FYI_PREFIX} New #{@noticeable_klass} submission by #{@user.full_name}"
+    )
+  end
+
+  def report_submitted_fyi(notification)
     @notification = notification
     @noticeable   = notification.noticeable
-    @type = 'Report'
-    if @noticeable.respond_to? :windows_type
-      target = @noticeable.windows_type.name
-    else
-      target = ""
-    end
+    @type = "Report"
 
     if @noticeable.class == User
       @user        = @noticeable
     else
       @report      = @noticeable
-      @attachments = @report.media_files
-      @quotes      = @report.quotes
-      @user        = @noticeable.user
-      @answers     = @report.report_form_field_answers
-    end
-
-    if @report.type == "WorkshopLog"
-    end
-
-    if @report.story?
-      @type = 'Story'
-      @mail_to = "eaeevans@awbw.org, cturekrials@awbw.org, rhernandez@awbw.org"
-    else
-      case target
-      when "ADULT WORKSHOP LOG"
-        @mail_to = "cturek@awbw.org"
-      else
-        @mail_to = "rhernandez@awbw.org"
-      end
+      @attachments = extract_attachments(@noticeable)
+      @quotes      = @report.quotes if @report.respond_to?(:quotes)
+      @user        = @noticeable.respond_to?(:created_by) ? @noticeable.created_by : nil
+      @answers     = @report.report_form_field_answers if @report.respond_to?(:report_form_field_answers)
     end
 
     mail(
-      to: @mail_to,
-      subject: "New #{@type} Submission by #{@user.name}"
+      subject: "#{FYI_PREFIX} New #{@type} submission by #{@user.full_name}"
     )
+  end
+
+  def reset_password_fyi(notification)
+    @user = notification.noticeable
+    @person = @user.person
+    @notification_type = "Password reset"
+
+    # Send email to the admin
+    mail(
+      subject: "#{FYI_PREFIX} New password reset by #{@user.full_name}"
+    )
+  end
+
+  def workshop_log_submitted(notification)
+    @notification = notification
+    @noticeable = notification.noticeable
+
+    if @noticeable.is_a?(User)
+      @user = @noticeable
+    else
+      @user = @noticeable.respond_to?(:created_by) ? @noticeable.created_by : nil
+      @report = @noticeable
+    end
+
+    mail(
+      to: notification.recipient_email,
+      subject: "#{SUBJECT_PREFIX} Your workshop log has been received"
+    )
+  end
+
+  def workshop_log_submitted_fyi(notification)
+    @notification = notification
+    @noticeable   = notification.noticeable
+    @type = "WorkshopLog"
+
+    if @noticeable.class == User
+      @user        = @noticeable
+    else
+      @report      = @noticeable
+      @attachments = extract_attachments(@noticeable)
+      @quotes      = @report.quotes if @report.respond_to?(:quotes)
+      @user        = @noticeable.respond_to?(:created_by) ? @noticeable.created_by : nil
+      @answers     = @report.report_form_field_answers if @report.respond_to?(:report_form_field_answers)
+    end
+
+    mail(
+      subject: "#{FYI_PREFIX} New WorkshopLog submission by #{@user.full_name}"
+    )
+  end
+
+  private
+
+  def extract_attachments(noticeable)
+    return [] unless noticeable.respond_to?(:primary_asset)
+
+    assets = []
+    assets << noticeable.primary_asset if noticeable.primary_asset
+    assets.concat(noticeable.gallery_assets) if noticeable.respond_to?(:gallery_assets)
+    assets
   end
 end

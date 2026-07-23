@@ -1,0 +1,114 @@
+<% content_for(:page_bg_class, "admin-only bg-blue-100") %>
+<div class="max-w-2xl mx-auto py-8 px-4">
+  <div class="flex flex-wrap items-center justify-end gap-2 mb-4">
+    <% if @dashboard_event %>
+      <%= link_to "Edit event", edit_event_path(@dashboard_event), class: "text-sm text-gray-500 hover:text-gray-700 px-2 py-1" %>
+    <% end %>
+    <%= link_to "Events", events_path(form_id: @form.id), class: "text-sm text-gray-500 hover:text-gray-700 px-2 py-1" %>
+    <%= link_to "Forms", forms_path, class: "text-sm text-gray-500 hover:text-gray-700 px-2 py-1" %>
+    <%= link_to "Edit", edit_form_path(@form), class: "text-sm text-gray-500 hover:text-gray-700 px-2 py-1" %>
+    <% if allowed_to?(:destroy?, @form) && @form.event_forms.none? %>
+      <%= link_to "Delete", form_path(@form), class: "text-sm text-red-600 hover:text-red-800 px-2 py-1",
+                  data: { turbo_method: :delete, turbo_confirm: "Delete \"#{@form.display_name}\"?" } %>
+    <% end %>
+  </div>
+
+  <div class="bg-white rounded-xl shadow-lg overflow-hidden border border-gray-200">
+    <%# Admin chrome wrapping the form preview below. The amber "Preview" badge
+        signals this is not the live page (echoing the amber token note inside). %>
+    <div class="bg-gradient-to-r from-purple-950 to-purple-700 text-white px-6 py-5">
+      <div class="flex flex-wrap items-center justify-between gap-4">
+        <div class="flex items-center gap-4">
+          <%= image_tag("logo.png", alt: "Organization logo", class: "h-8 w-auto shrink-0") %>
+          <div class="h-8 w-px bg-white/20"></div>
+          <div>
+            <h2 class="text-xl font-semibold tracking-wide leading-tight"><%= @form.display_name %></h2>
+            <p class="mt-0.5 text-xs text-purple-200"><%= form_role_label(@form) %> form</p>
+          </div>
+        </div>
+        <span class="inline-flex items-center gap-1.5 rounded-full bg-amber-400 px-3 py-1 text-xs font-bold uppercase tracking-[0.15em] text-purple-950 shadow-sm">
+          <i class="fa-solid fa-eye"></i>Preview
+        </span>
+      </div>
+    </div>
+
+    <div class="px-6 py-6">
+      <% if form_header_uses_tokens?(@form) %>
+        <p class="flex items-start gap-2 mb-4 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+          <i class="fa-solid fa-circle-info mt-0.5 text-amber-500"></i>
+          <span>This is a preview — header placeholders show example text. On the live registration page they fill from the event (date, time, fee, location, etc.).</span>
+        </p>
+      <% end %>
+      <%= render "forms/header", form: @form %>
+
+      <%
+        fields_by_identifier = @form_fields.select(&:field_identifier).index_by(&:field_identifier)
+        has_secondary_email = fields_by_identifier["secondary_email"].present?
+        email_label_overrides = if has_secondary_email
+          { "primary_email" => "Primary Email", "confirm_email" => "Confirm Primary Email", "primary_email_type" => "Primary Email Type" }
+        else
+          {}
+        end
+
+        # Mirror the editor's visibility chip colors so the same field reads
+        # the same in both places.
+        visibility_badge_styles = {
+          "scholarship_only" => "bg-purple-100 text-purple-700 border-purple-200",
+          "logged_out_only" => "bg-emerald-100 text-emerald-700 border-emerald-200",
+          "answers_on_file" => "bg-amber-100 text-amber-700 border-amber-200"
+        }
+        visibility_marker_styles = {
+          "scholarship_only" => "border-purple-300",
+          "logged_out_only" => "border-emerald-300",
+          "answers_on_file" => "border-amber-300"
+        }
+
+        has_conditional = @form_fields.any?(&:conditional_visibility?)
+      %>
+
+      <div class="mb-6 rounded-lg bg-gray-50 border border-gray-200 p-3">
+        <% if has_conditional %>
+          <p class="text-xs text-gray-600">This preview shows every field. Highlighted fields are only asked under certain conditions — the conditional logic runs on the live registration form.</p>
+        <% else %>
+          <p class="text-xs text-gray-600">This preview shows every field. All fields are always asked.</p>
+        <% end %>
+      </div>
+
+      <fieldset disabled>
+        <div class="grid grid-cols-1 md:grid-cols-12 gap-x-4">
+          <% @form_fields.each do |field| %>
+            <% conditional = field.conditional_visibility? %>
+            <% if field.group_header? %>
+              <div class="md:col-span-12 pt-6 pb-2 border-b border-gray-200 mb-4">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="<%= form_section_bar_class %>"></span>
+                  <h3 class="rich-label text-lg font-semibold text-gray-800"><%= form_label_html(field.name) %></h3>
+                  <% if conditional %>
+                    <span class="text-xs rounded-full border px-2 py-0.5 <%= visibility_badge_styles[field.visibility] %>"><%= field.visibility_label %></span>
+                  <% end %>
+                </div>
+                <% if field.subtitle.present? %>
+                  <p class="rich-label mt-1.5 text-sm text-gray-500"><%= form_label_html(field.subtitle) %></p>
+                <% end %>
+              </div>
+            <% else %>
+              <div class="<%= field.grid_span_class %>">
+                <% if conditional %>
+                  <div class="border-l-4 <%= visibility_marker_styles[field.visibility] %> pl-3">
+                    <div class="mb-1.5 flex flex-wrap items-center gap-1.5">
+                      <span class="text-xs rounded-full border px-2 py-0.5 <%= visibility_badge_styles[field.visibility] %>"><%= field.visibility_label %></span>
+                      <%= render "forms/option_source_link", field: field %>
+                    </div>
+                    <%= render "events/public_registrations/form_field", field: field, value: nil, label: email_label_overrides[field.field_identifier], show_dropdown_warning: true %>
+                  </div>
+                <% else %>
+                  <%= render "events/public_registrations/form_field", field: field, value: nil, label: email_label_overrides[field.field_identifier], show_option_source: true, show_dropdown_warning: true %>
+                <% end %>
+              </div>
+            <% end %>
+          <% end %>
+        </div>
+      </fieldset>
+    </div>
+  </div>
+</div>

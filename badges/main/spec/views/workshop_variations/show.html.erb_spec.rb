@@ -1,0 +1,45 @@
+require "rails_helper"
+
+RSpec.describe "workshop_variations/show", type: :view do
+  let(:user) { create(:user) }
+  let(:workshop) { create(:workshop, created_by: user) }
+  let(:published) { true }
+  let(:youtube_url) { nil }
+  let(:workshop_variation) { create(:workshop_variation,
+                                    workshop: workshop,
+                                    created_by: user,
+                                    name: "MyName", rhino_body: "<p>MyDescription</p>",
+                                    youtube_url: youtube_url,
+                                    published: published) }
+
+  before(:each) do
+    assign(:workshop_variation, workshop_variation)
+    allow(view).to receive(:current_user).and_return(user)
+  end
+
+  it "renders attributes" do
+    render
+    expect(rendered).to include(workshop_variation.name)
+    expect(rendered).to include(workshop_variation.rhino_body.body.to_s)
+    expect(rendered).to include(workshop.title)
+    expect(rendered).to include(workshop_variation.author_credit)
+  end
+
+  context "when the workshop_variation has a youtube_url" do
+    let(:youtube_url) { "http://www.example.com/watch?v=somevideo" }
+
+    it "does renders the youtube_url as a link" do
+      render
+      expect(rendered).to have_link(youtube_url, href: youtube_url)
+    end
+  end
+
+  context "when the workshop_variation is unpublished" do
+    let(:published) { false }
+
+    it "displays an unpublished indicator" do
+      render
+      expect(rendered).to include("Unpublished")
+    end
+  end
+end

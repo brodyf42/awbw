@@ -1,63 +1,28 @@
-<div class='width search-curriculum-page'>
-  <!-- %br -->
-  <div class="col-md-12">
-    <div class="entry-content d-flex align-items-start justify-content-between mb-3">
-      <div class="me-3">
-        <div class="pull-left">
-          <h2 class="normal">Workshop Variations</h2>
-        </div>
-        <div class="pull-right">
-          <% if current_user.super_user? %>
-            <%= link_to "New workshop variation",
-                        new_workshop_variation_path(from: "index"),
-                        class: "admin-only bg-blue-100 btn btn-primary-outline" %>
-         <% end %>
-        </div>
+<% content_for(:page_bg_class, "public") %>
+<div class="<%= DomainTheme.bg_class_for(:workshop_variations) %> border border-gray-200 rounded-xl shadow p-6">
+  <div class="space-y-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-6">
+      <h1 class="text-2xl font-semibold text-gray-900">
+        <%= WorkshopVariation.model_name.human.pluralize %>
+      </h1>
+      <div class="flex gap-2">
+        <%= link_to "New #{WorkshopVariation.model_name.human.downcase}",
+                    new_workshop_variation_path,
+                    class: "btn btn-primary-outline" %>
       </div>
-
     </div>
-  </div>
-  <div class="col-md-12">
-    <hr>
-    <table class="table table-responsive table-bordered table-curved">
-      <thead>
-      <tr id="table-thead-tr">
-        <th class="text-start text-nowrap">Workshop</th>
-        <th class="text-center">Name</th>
-        <th class="text-left">Description</th>
-        <th class="text-center">Updated</th>
-        <th class="text-center">Edit</th>
-      </tr>
-      </thead>
 
-      <tbody>
-        <% @workshop_variations.each do |workshop_variation| %>
-          <tr>
-            <td class="text-start">
-              <span title="<%= strip_tags(workshop_variation.workshop&.name) %>">
-                <%= truncate(strip_tags(workshop_variation.workshop.name), length: 50) if workshop_variation.workshop %>
-              </span>
-            </td>
+    <%= render "search_boxes" %>
 
-            <td class="text-start"><%= workshop_variation.name %></td>
-            <td class="text-start">
-              <span title="<%= strip_tags(workshop_variation.code) %>">
-                <%= truncate(strip_tags(workshop_variation.code), length: 150) %>
-              </span>
-            </td>
-            <td class="user-updated-at text-center"><%= workshop_variation.updated_at&.strftime('%m/%d/%y') %></td>
-            <td class="text-center"><%= link_to "<span class='glyphicon glyphicon-pencil'></span>".html_safe, edit_workshop_variation_path(workshop_variation) %></td>
-          </tr>
-        <% end %>
-      </tbody>
-    </table>
+    <%= render "shared/filtered_to", record: @author, clear_path: workshop_variations_path %>
 
-    <div class="pagination flex justify-center mt-6">
-      <!-- ##### Will Paginate #### -->
-      <%= tailwind_paginate @workshop_variations %>
-    </div>
+    <%= render "workshop_variations_count" %>
+
+    <% result_src = workshop_variations_path + "?" + request.query_string %>
+
+    <%= turbo_frame_tag "workshop_variations_results", src: result_src do %>
+      <%= render "results_skeleton" %>
+    <% end %>
   </div>
 </div>
-
-</div>
-

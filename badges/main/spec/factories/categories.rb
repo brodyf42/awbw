@@ -1,10 +1,20 @@
 FactoryBot.define do
   factory :category do
-    # Needs a unique name
     sequence(:name) { |n| "Category Name #{n}" }
-    published { true }
+    published { false }
+    # position is managed by positioned gem
+    association :category_type #  belongs_to :metadatum
 
-    # Association: belongs_to :metadatum
-    association :metadatum
+    trait :published do
+      published { true }
+    end
+
+    trait :unpublished do
+      published { false }
+    end
+
+    trait :category_age_range do
+      association :category_type, factory: :age_range
+    end
   end
-end 
+end

@@ -1,14 +1,20 @@
 require 'rails_helper'
 
 RSpec.describe "workshop_ideas/edit", type: :view do
-    let(:user) { create(:user) }
+  let(:user) { create(:user) }
   let(:admin) { create(:user, :admin) }
   let(:workshop_idea) { create(:workshop_idea, created_by: user, updated_by: user) }
 
   before(:each) do
     assign(:workshop_idea, workshop_idea)
     allow(view).to receive(:current_user).and_return(user)
+    allow(view).to receive(:allowed_to?).and_return(false)
+
     assign(:windows_types, [])
+    assign(:sectors, [])
+    assign(:categories_grouped, [])
+    assign(:potential_series_workshops, [])
+    assign(:users, User.none)
   end
 
 
@@ -16,45 +22,43 @@ RSpec.describe "workshop_ideas/edit", type: :view do
     render
 
     assert_select "form[action=?][method=?]", workshop_idea_path(workshop_idea), "post" do
-
       assert_select "textarea[name=?]", "workshop_idea[title]"
-
-      assert_select "textarea[name=?]", "workshop_idea[description]"
 
       assert_select "select[name=?]", "workshop_idea[windows_type_id]"
 
-      assert_select "textarea[name=?]", "workshop_idea[tips]"
+      assert_select "input[type=hidden][name=?]", "workshop_idea[rhino_tips]"
 
-      assert_select "textarea[name=?]", "workshop_idea[objective]"
+      assert_select "input[type=hidden][name=?]", "workshop_idea[rhino_objective]"
 
-      assert_select "textarea[name=?]", "workshop_idea[materials]"
+      assert_select "input[type=hidden][name=?]", "workshop_idea[rhino_materials]"
 
-      assert_select "textarea[name=?]", "workshop_idea[introduction]"
+      assert_select "input[type=hidden][name=?]", "workshop_idea[rhino_introduction]"
 
-      assert_select "textarea[name=?]", "workshop_idea[creation]"
+      assert_select "input[type=hidden][name=?]", "workshop_idea[rhino_creation]"
 
-      assert_select "textarea[name=?]", "workshop_idea[closing]"
+      assert_select "input[type=hidden][name=?]", "workshop_idea[rhino_closing]"
 
-      # assert_select "textarea[name=?]", "workshop_idea[visualization]"
+      assert_select "input[type=hidden][name=?]", "workshop_idea[rhino_visualization]"
 
-      assert_select "textarea[name=?]", "workshop_idea[warm_up]"
+      assert_select "input[type=hidden][name=?]", "workshop_idea[rhino_warm_up]"
 
-      assert_select "textarea[name=?]", "workshop_idea[opening_circle]"
+      assert_select "input[type=hidden][name=?]", "workshop_idea[rhino_opening_circle]"
 
-      assert_select "textarea[name=?]", "workshop_idea[demonstration]"
+      assert_select "input[type=hidden][name=?]", "workshop_idea[rhino_demonstration]"
 
-      assert_select "textarea[name=?]", "workshop_idea[setup]"
+      assert_select "input[type=hidden][name=?]", "workshop_idea[rhino_setup]"
 
-      # assert_select "textarea[name=?]", "workshop_idea[instructions]"
+      assert_select "input[type=hidden][name=?]", "workshop_idea[rhino_optional_materials]"
 
-      assert_select "textarea[name=?]", "workshop_idea[optional_materials]"
-
-      assert_select "textarea[name=?]", "workshop_idea[notes]"
+      assert_select "input[type=hidden][name=?]", "workshop_idea[rhino_notes]"
     end
   end
 
   context "when viewed by a regular user" do
-    before { allow(view).to receive(:current_user).and_return(user) }
+    before do
+      allow(view).to receive(:current_user).and_return(user)
+      allow(view).to receive(:allowed_to?).and_return(false)
+    end
 
     it "does not show the staff_notes field" do
       render
@@ -63,7 +67,10 @@ RSpec.describe "workshop_ideas/edit", type: :view do
   end
 
   context "when viewed by an admin user" do
-    before { allow(view).to receive(:current_user).and_return(admin) }
+    before do
+      allow(view).to receive(:current_user).and_return(admin)
+      allow(view).to receive(:allowed_to?).and_return(true)
+    end
 
     it "shows the staff_notes field" do
       render

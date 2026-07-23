@@ -1,17 +1,22 @@
 require 'rails_helper'
 
 RSpec.describe "story_ideas/edit", type: :view do
-    let(:user) { create(:user) }
+  let(:user) { create(:user) }
   let(:admin) { create(:user, :admin) }
-  let(:story_idea) { create(:story_idea, created_by: user, updated_by: user, body: "MyBody", youtube_url: "Youtube_url") }
+  let(:story_idea) { create(:story_idea, created_by: user, updated_by: user, rhino_body: "<p>MyBody</p>", youtube_url: "Youtube_url") }
 
   before(:each) do
     assign(:story_idea, story_idea)
     assign(:windows_types, [])
     assign(:workshops, [])
-    assign(:projects, [])
+    assign(:organizations, [])
     assign(:users, [])
+    assign(:sectors, [])
+    assign(:story_population_categories, [])
+    assign(:story_population_type, nil)
+    assign(:categories_grouped, [])
     allow(view).to receive(:current_user).and_return(user)
+    allow(view).to receive(:allowed_to?).and_return(false)
     render
   end
 
@@ -19,11 +24,11 @@ RSpec.describe "story_ideas/edit", type: :view do
     it "renders the edit story_idea form without created_by_id field" do
       assert_select "form[action=?][method=?]", story_idea_path(story_idea), "post" do
         assert_select "select[name=?]", "story_idea[windows_type_id]"
-        assert_select "select[name=?]", "story_idea[project_id]"
+        assert_select "select[name=?]", "story_idea[organization_id]"
         assert_select "select[name=?]", "story_idea[workshop_id]"
-        assert_select "textarea[name=?]", "story_idea[body]"
+        assert_select "input[name=?][type=?]", "story_idea[rhino_body]", "hidden"
         assert_select "textarea[name=?]", "story_idea[youtube_url]"
-        assert_select "select[name=?]", "story_idea[publish_preferences]"
+        assert_select "select[name=?]", "story_idea[author_credit_preference]"
       end
     end
 
@@ -35,6 +40,7 @@ RSpec.describe "story_ideas/edit", type: :view do
   context "when current_user is an admin" do
     before do
       allow(view).to receive(:current_user).and_return(admin)
+      allow(view).to receive(:allowed_to?).and_return(true)
       render
     end
 
