@@ -176,7 +176,7 @@
         <div class="flex flex-col items-center gap-1.5">
           <% registration_form = event_registration.event.registration_form %>
 
-          <% if registration_form && registration_form.form_submissions.exists?(person: event_registration.registrant) %>
+          <% if registration_form && event_registration.event.form_submissions.exists?(person: event_registration.registrant, form: registration_form) %>
             <%= link_to "View your form responses",
                           event_public_registration_path(event_registration.event, reg: event_registration.slug),
                           class: "text-sm text-gray-500 hover:text-blue-600 underline" %>
@@ -206,7 +206,7 @@
             <%= render "events/videoconference_calendar_notice", event: event_registration.event, registration: event_registration %>
           </div>
 
-          <div class="flex flex-wrap gap-1 items-center justify-center w-full text-sm text-blue-600 font-medium"><%= event_registration.event.decorate.calendar_links(show_videoconference_details: event_registration.videoconference_details_visible?) %></div>
+          <div class="flex flex-wrap gap-1 items-center justify-center w-full text-sm text-blue-600 font-medium"><%= event_registration.event.decorate.calendar_links(show_videoconference_details: event_registration.videoconference_details_visible?, re_add_url: registration_videoconference_url(event_registration.slug), payment_pending: !event_registration.payment_access_granted?) %></div>
         </div>
       <% end %>
     </div>

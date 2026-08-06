@@ -8,6 +8,9 @@ class User < ApplicationRecord
 
   before_save :sync_locked_at_from_locked
 
+  after_commit :start_dues_subscription, on: [ :create, :update ],
+    if: :saved_change_to_welcome_instructions_sent_at?
+
   after_update :track_welcome_instructions
   after_update :track_welcome_completion, if: :welcome_token_cleared?
   after_update :track_login_event
@@ -27,6 +30,7 @@ class User < ApplicationRecord
   belongs_to :person, optional: true
   belongs_to :created_by, class_name: "User", optional: true
   belongs_to :updated_by, class_name: "User", optional: true
+  belongs_to :welcome_instructions_sent_by, class_name: "User", optional: true
   belongs_to :favorite_event, class_name: "Event", optional: true
   has_many :bookmarks, dependent: :destroy
   has_many :comments, -> { newest_first }, as: :commentable, dependent: :destroy
@@ -293,6 +297,10 @@ class User < ApplicationRecord
   def track_welcome_instructions
     return unless saved_change_to_welcome_instructions_sent_at?
     track_auth_event("auth.welcome_instructions_sent")
+  end
+
+  def start_dues_subscription
+    Dues::StartSubscription.call(person: person)
   end
 
   def track_account_deleted

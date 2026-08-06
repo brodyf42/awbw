@@ -19,6 +19,18 @@ class EventPolicy < ApplicationPolicy
     admin?
   end
 
+  # The cross-event participation report aggregates attendance across every
+  # event, so it's admin-only like the revenue report.
+  def participation?
+    admin?
+  end
+
+  # The events statistics hub gathers the cross-event report summaries, so it's
+  # admin-only like the reports it links to.
+  def statistics?
+    admin?
+  end
+
   def show?
     return true if admin?
 
@@ -127,7 +139,8 @@ class EventPolicy < ApplicationPolicy
                   :ce_hours_offered,
                   :ce_hours_cost,
                   :ce_hours_request_deadline,
-                  :ce_payment_due_deadline,
+                  :ce_payment_due_deadline_date,
+                  :ce_payment_due_deadline_time,
                   :autoshow_cost,
                   :autoshow_date,
                   :autoshow_location,

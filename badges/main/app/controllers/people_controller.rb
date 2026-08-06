@@ -8,7 +8,7 @@ class PeopleController < ApplicationController
     if turbo_frame_request?
       per_page = params[:number_of_items_per_page].presence || 25
       base_scope = authorized_scope(Person.includes(
-        :avatar_attachment,
+        { avatar_attachment: :blob },
         :user,
         sectorable_items: :sector,
         affiliations: :organization,
@@ -30,6 +30,7 @@ class PeopleController < ApplicationController
     @person = Person.includes(:avatar_attachment, :contact_methods, :user,
                               categorizable_items: { category: :category_type }).find(params[:id]).decorate
     track_view(@person)
+    @dues_subscription = dues_subscription_for(@person)
 
     if params[:checkout] == "success"
       flash[:notice] = "Thank you for your donation!"
@@ -265,7 +266,8 @@ class PeopleController < ApplicationController
   end
 
   private
-  # Use callbacks to share common setup or constraints between actions.
+
+
   def set_person
     @person = Person.find(params[:id])
   end
@@ -503,6 +505,7 @@ class PeopleController < ApplicationController
       :profile_show_phone,
       :profile_show_member_since,
       :profile_show_sectors,
+      :profile_show_age_ranges,
       :profile_show_affiliations,
       :profile_show_social_media,
       :profile_show_events_registered,
@@ -589,5 +592,11 @@ class PeopleController < ApplicationController
       notifications_attributes: [ :id, :channel, :sender_id, :email_subject, :email_body_text, :noticeable_type, :noticeable_id, :_destroy ],
       professional_licenses_attributes: [ :id, :number, :kind, :issuing_state, :expires_on, :_destroy ]
     )
+  end
+
+  def dues_subscription_for(person)
+    return unless allowed_to?(:index?, DuesRegistration)
+
+    person.dues_subscriptions.includes(:dues_registrations).order(created_at: :desc).first&.decorate
   end
 end

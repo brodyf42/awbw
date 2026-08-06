@@ -28,6 +28,64 @@ class EventDashboard
     @registrants ||= people_sorted(registrant_ids)
   end
 
+  # --- Attendance ------------------------------------------------------------
+  # Attendance outcomes are recorded per registration (see
+  # EventRegistration#status). Before the event happens everyone is still
+  # "registered", so there's nothing meaningful to show until an outcome lands.
+
+  # Every registration status for this event, counted in one query.
+  def registration_status_counts
+    @registration_status_counts ||= event.event_registrations.group(:status).count
+  end
+
+  # Count of registrations in a single status.
+  def attendance_count_for(status)
+    registration_status_counts.fetch(status.to_s, 0)
+  end
+
+  def attended_count
+    attendance_count_for("attended")
+  end
+
+  def no_show_count
+    attendance_count_for("no_show")
+  end
+
+  # Registrations with an attendance outcome on record (attended / incomplete /
+  # no-show).
+  def attendance_outcome_count
+    attended_count + attendance_count_for("incomplete_attendance") + no_show_count
+  end
+
+  # Everyone expected at the event: active registrants (see #registrant_count)
+  # plus recorded no-shows. Cancellations and transfers out withdrew, so they're
+  # excluded. This is the denominator for the attendance rate.
+  def expected_attendee_count
+    registrant_count + no_show_count
+  end
+
+  # True once any attendance outcome has been recorded.
+  def attendance_recorded?
+    attendance_outcome_count.positive?
+  end
+
+  # Fraction (0.0–1.0) of everyone expected who fully attended, or nil when no
+  # outcome has been recorded yet. Only a full attendance counts in the
+  # numerator; the denominator is every registrant (#expected_attendee_count),
+  # so no-shows and not-yet-recorded registrants both pull the rate down.
+  def attendance_rate
+    return nil unless attendance_recorded?
+    return nil if expected_attendee_count.zero?
+    attended_count.fdiv(expected_attendee_count)
+  end
+
+  # Registrants (Person records, name-sorted) with the given attendance
+  # status(es), for drilling into an attendance row's list.
+  def attendance_registrants(*statuses)
+    ids = statuses.flat_map { |status| registrant_ids_by_status.fetch(status, []) }
+    people_sorted(ids)
+  end
+
   def scholarship_total_cents
     scholarships.sum(:amount_cents)
   end
@@ -45,14 +103,20 @@ class EventDashboard
     scholarships.where(grant_id: nil).sum(:amount_cents)
   end
 
-  # Registration cost waived via discounts — money the org gives up from its own
-  # pocket (like an unfunded scholarship).
-  def discount_cents
-    registration_allocations.where(source_type: "Discount").sum(:amount)
-  end
-
   def scholarship_recipient_count
     scholarships.distinct.count(:recipient_id)
+  end
+
+  # This event's registrants grouped by the city of the organization linked on
+  # their registration, with the scholarship-recipient count per city — the
+  # shared "Registrants by city" breakdown on the background and recipients
+  # pages. Fed already-plucked data so the rollup runs in memory.
+  def registrant_city_breakdown
+    @registrant_city_breakdown ||= RegistrantCityBreakdown.new(
+      org_registrant_pairs: registration_org_registrant_pairs,
+      city_by_org: city_by_organization,
+      scholarship_recipient_ids: scholarships.distinct.pluck(:recipient_id)
+    )
   end
 
   # Field identifiers for the scholarship-application questions, wherever they
@@ -256,18 +320,57 @@ class EventDashboard
     @unpaid_registrants ||= people_sorted(registrants_for(active_registration_ids - paid_registration_ids))
   end
 
-  # Continuing-education fee: a flat per-registrant add-on. Not yet implemented —
-  # the fee amount and per-registration paid/outstanding tracking will arrive
-  # with a future migration. Stubbed to zero so the dashboard renders the
-  # section without depending on columns that don't exist yet.
-  def cont_ed_fee_cents = 0
-  def cont_ed_total_cents = 0
-  def cont_ed_paid_count = 0
-  def cont_ed_unpaid_count = 0
-  def cont_ed_paid_cents = 0
-  def cont_ed_outstanding_cents = 0
-  def cont_ed_paid_registrants = []
-  def cont_ed_unpaid_registrants = []
+  # --- Continuing-education fees ---------------------------------------------
+  # CE is billed per ContinuingEducationRegistration (its own cost_cents),
+  # separate from the registration fee. These mirror the registration-fee
+  # methods above: paid is CE cash collected, outstanding is CE cost still owed
+  # after every allocation, and the total (paid + outstanding) is the CE addend
+  # in the grand total. Scoped to CE registrations tied to an active event
+  # registration, so cancelled registrants' CE is ignored like their fees.
+
+  # CE cash collected across this event's active CE registrations.
+  def cont_ed_paid_cents
+    ce_payment_allocated_by_ce_registration.values.sum
+  end
+
+  # CE cost still owed after every allocation (payments and discounts), floored
+  # per registration at zero.
+  def cont_ed_outstanding_cents
+    ce_registrations.sum { |ce_registration| ce_due_cents(ce_registration) }
+  end
+
+  # CE fee revenue: collected plus outstanding. Mirrors registration_subtotal_cents,
+  # so the CE card's Paid + Due sub-rows reconcile with this headline.
+  def cont_ed_total_cents
+    cont_ed_paid_cents + cont_ed_outstanding_cents
+  end
+
+  # Registrants whose CE balance is fully covered vs those still owing.
+  def cont_ed_paid_count
+    ce_paid_registrant_ids.size
+  end
+
+  def cont_ed_unpaid_count
+    ce_unpaid_registrant_ids.size
+  end
+
+  def cont_ed_paid_registrants
+    @cont_ed_paid_registrants ||= people_sorted(ce_paid_registrant_ids)
+  end
+
+  def cont_ed_unpaid_registrants
+    @cont_ed_unpaid_registrants ||= people_sorted(ce_unpaid_registrant_ids)
+  end
+
+  # Per-registrant CE cash collected / still owed, keyed by Person id — the
+  # per-person figures on the CE card's Paid / Due rows. Each sums to its total.
+  def cont_ed_paid_by_registrant
+    @cont_ed_paid_by_registrant ||= ce_cents_by_registrant { |ce_registration| ce_paid_cents(ce_registration) }
+  end
+
+  def cont_ed_due_by_registrant
+    @cont_ed_due_by_registrant ||= ce_cents_by_registrant { |ce_registration| ce_due_cents(ce_registration) }
+  end
 
   def free?
     event.cost_cents.to_i <= 0
@@ -300,6 +403,19 @@ class EventDashboard
   # keyed by organization id — the same classification as program_status_counts.
   def program_status_by_organization
     @program_status_by_organization ||= organizations.to_h { |organization| [ organization.id, program_status_for(organization) ] }
+  end
+
+  # Registrant ids grouped by their organization's program status
+  # (:new / :ongoing / :reinstated) — the people behind each program-status
+  # slice, for drilling into the matching registrant list. A registrant lands in
+  # a status if any of their represented orgs has it, so the buckets can overlap
+  # (a registrant with a new and an ongoing org appears under both).
+  def program_status_registrant_ids
+    @program_status_registrant_ids ||= program_status_by_organization
+      .each_with_object({ new: [], ongoing: [], reinstated: [] }) do |(organization_id, status), map|
+        map[status].concat(organization_registrant_ids_by_org.fetch(organization_id, []).to_a)
+      end
+      .transform_values(&:uniq)
   end
 
   # Distinct program statuses for each registrant's organization(s), keyed by
@@ -342,6 +458,20 @@ class EventDashboard
     @organization_counts ||= organization_registrant_ids_by_org.transform_values(&:size)
   end
 
+  # Scholarship-recipient count per organization (registrants awarded a
+  # scholarship this event), keyed by organization id — flags which orgs are
+  # "scholarship organizations" on the background Organizations breakdown. Only
+  # orgs with at least one recipient appear.
+  def scholarship_recipient_count_by_org
+    @scholarship_recipient_count_by_org ||= begin
+      recipient_ids = scholarships.distinct.pluck(:recipient_id).to_set
+      organization_registrant_ids_by_org.each_with_object({}) do |(organization_id, person_ids), map|
+        count = person_ids.count { |person_id| recipient_ids.include?(person_id) }
+        map[organization_id] = count if count.positive?
+      end
+    end
+  end
+
   # Registrant ids tied to at least one organization — the people behind the
   # organizations count.
   def organization_registrant_ids
@@ -377,6 +507,38 @@ class EventDashboard
         label = location_label(state, country)
         map[person_id] = label if label.present?
       end
+  end
+
+  # Primary sector name(s) per registrant (Person id) — the inverse of
+  # primary_sector_registrant_ids_by_sector, for the roster's Primary sector
+  # column. Reuses the already-computed primary-sector data (no extra queries).
+  def primary_sector_names_by_registrant
+    @primary_sector_names_by_registrant ||= names_by_registrant(primary_sectors, primary_sector_registrant_ids_by_sector)
+  end
+
+  # Primary age group name(s) per registrant (Person id) — the inverse of
+  # age_group_registrant_ids_by_category, for the roster's Primary age group column.
+  def primary_age_group_names_by_registrant
+    @primary_age_group_names_by_registrant ||= names_by_registrant(age_groups, age_group_registrant_ids_by_category)
+  end
+
+  # Registrant (Person) ids with a continuing-education registration this event.
+  def ce_registrant_ids
+    @ce_registrant_ids ||= ce_registration_by_registrant.keys
+  end
+
+  # Distinct registrants with continuing education — the CE subtotal + pie share.
+  def ce_registrant_count
+    ce_registrant_ids.size
+  end
+
+  # First continuing-education registration per registrant (Person id), for the
+  # roster's CE column: its icon links to editing this record when present.
+  def ce_registration_by_registrant
+    @ce_registration_by_registrant ||= ce_registrations.each_with_object({}) do |ce_registration, map|
+      registrant_id = registrant_id_by_registration[ce_registration.event_registration_id]
+      map[registrant_id] ||= ce_registration if registrant_id
+    end
   end
 
   # Every sector tagged on registrants (primary + additional), backing the
@@ -432,6 +594,19 @@ class EventDashboard
 
   def additional_sector_count
     additional_sector_ids.size
+  end
+
+  # Registrant (Person) ids who named a primary sector, and those who tagged a
+  # sector without naming it primary — drill targets for the sectors subtitle.
+  # A registrant can appear in both when their additional sectors differ from
+  # their primary one.
+  def primary_sector_registrant_ids
+    primary_sector_rows.map(&:first).uniq
+  end
+
+  def additional_sector_registrant_ids
+    primary_pairs = primary_sector_rows.to_set
+    registrant_sector_pairs.reject { |pair| primary_pairs.include?(pair) }.map(&:first).uniq
   end
 
   # Free-text "Other" sectors registrants typed, kept as OtherResponse records
@@ -492,6 +667,35 @@ class EventDashboard
   # behind each age-group row, for drilling into the matching registrant list.
   def age_group_registrant_ids_by_category
     @age_group_registrant_ids_by_category ||= age_group_answer_rows
+      .group_by(&:last)
+      .transform_values { |rows| rows.map(&:first).uniq }
+  end
+
+  # Every age group (primary + additional) served, read from registrants'
+  # answers to BOTH the "primary_age_group" and "additional_age_group"
+  # registration questions, backing the "All age groups" chart. The
+  # "Primary age group" chart instead uses #age_groups / #age_group_counts,
+  # which read only the primary question.
+  def all_age_groups
+    @all_age_groups ||= Category.age_ranges
+      .where(id: all_age_group_counts.keys)
+      .ordered_by_position_and_name
+  end
+
+  # Distinct registrant count per age-group category across both age group
+  # questions, deduped per [ registrant, category ]. Keyed by Category id, so it
+  # pairs with all_age_groups for the view.
+  def all_age_group_counts
+    @all_age_group_counts ||= all_age_group_answer_rows
+      .group_by(&:last)
+      .transform_values { |rows| rows.map(&:first).uniq.size }
+  end
+
+  # Registrant ids per age-group category across both questions, keyed by
+  # Category id — the people behind each "All age groups" row, for drilling into
+  # the matching registrant list.
+  def all_age_group_registrant_ids_by_category
+    @all_age_group_registrant_ids_by_category ||= all_age_group_answer_rows
       .group_by(&:last)
       .transform_values { |rows| rows.map(&:first).uniq }
   end
@@ -694,6 +898,16 @@ class EventDashboard
     @registrant_ids ||= active_registrations.pluck(:registrant_id)
   end
 
+  # Registrant (Person) ids grouped by registration status, for the attendance
+  # breakdown drill-downs.
+  def registrant_ids_by_status
+    @registrant_ids_by_status ||= event.event_registrations
+      .pluck(:status, :registrant_id)
+      .each_with_object(Hash.new { |hash, key| hash[key] = [] }) do |(status, registrant_id), map|
+        map[status] << registrant_id
+      end
+  end
+
   # Facilitator status for one represented organization, used by the
   # program-status breakdown. Prefers a registrant's own active affiliation to
   # the org as the reference point, falling back to the org's earliest
@@ -806,6 +1020,67 @@ class EventDashboard
     @allocated_by_registration ||= registration_allocations.group(:allocatable_id).sum(:amount)
   end
 
+  # Active continuing-education registrations for this event: those tied to an
+  # active event registration. The basis for every CE money figure and for the
+  # CE registrant counts / pie.
+  def ce_registrations
+    @ce_registrations ||= ContinuingEducationRegistration
+      .where(event_registration_id: active_registration_ids)
+      .to_a
+  end
+
+  def ce_allocations
+    Allocation.where(allocatable_type: "ContinuingEducationRegistration", allocatable_id: ce_registrations.map(&:id))
+  end
+
+  # Allocations against this event's CE registrations, grouped by CE registration
+  # id: all sources (for outstanding) and payments only (for collected).
+  def ce_allocated_by_ce_registration
+    @ce_allocated_by_ce_registration ||= ce_allocations.group(:allocatable_id).sum(:amount)
+  end
+
+  def ce_payment_allocated_by_ce_registration
+    @ce_payment_allocated_by_ce_registration ||= ce_allocations
+      .where(source_type: "Payment")
+      .group(:allocatable_id)
+      .sum(:amount)
+  end
+
+  # CE cash collected on one CE registration (payment allocations only).
+  def ce_paid_cents(ce_registration)
+    ce_payment_allocated_by_ce_registration.fetch(ce_registration.id, 0)
+  end
+
+  # CE cost still owed on one CE registration after every allocation, floored at zero.
+  def ce_due_cents(ce_registration)
+    [ ce_registration.cost_cents.to_i - ce_allocated_by_ce_registration.fetch(ce_registration.id, 0), 0 ].max
+  end
+
+  # Registrant (Person) ids with at least one CE registration still owing.
+  def ce_unpaid_registrant_ids
+    @ce_unpaid_registrant_ids ||= ce_registrations
+      .select { |ce_registration| ce_due_cents(ce_registration).positive? }
+      .filter_map { |ce_registration| registrant_id_by_registration[ce_registration.event_registration_id] }
+      .uniq
+  end
+
+  # Registrants with CE whose whole CE balance is covered — everyone with CE
+  # minus those with any unpaid CE registration.
+  def ce_paid_registrant_ids
+    @ce_paid_registrant_ids ||= ce_registrant_ids - ce_unpaid_registrant_ids
+  end
+
+  # Roll a per-CE-registration cents figure (from the block) up to a
+  # { Person id => cents } hash, dropping zeros.
+  def ce_cents_by_registrant
+    ce_registrations.each_with_object(Hash.new(0)) do |ce_registration, map|
+      registrant_id = registrant_id_by_registration[ce_registration.event_registration_id]
+      next unless registrant_id
+      cents = yield(ce_registration)
+      map[registrant_id] += cents if cents.positive?
+    end
+  end
+
   # Payments tied to this event's bulk payment form submissions. Scoped by the
   # submission's own event_id (matching the bulk payments page) rather than the
   # shared form's event_forms, so a form reused across events doesn't pull in
@@ -820,6 +1095,32 @@ class EventDashboard
     @scholarships ||= Scholarship
       .joins(:allocation)
       .where(allocations: { allocatable_type: "EventRegistration", allocatable_id: active_registration_ids })
+  end
+
+  # [ [ organization_id, registrant_id ], ... ] from the organizations linked on
+  # each active registration (the registration-time snapshot only, not later
+  # affiliations) — the basis for grouping registrants by their org's city.
+  def registration_org_registrant_pairs
+    @registration_org_registrant_pairs ||= EventRegistrationOrganization
+      .joins(:event_registration)
+      .where(event_registration_id: active_registration_ids)
+      .pluck(:organization_id, "event_registrations.registrant_id")
+  end
+
+  # "City, State" per linked organization, from its first active address (mirrors
+  # Organization#program_location). Orgs with no active address are absent, so
+  # their registrants fall into the breakdown's Unknown bucket.
+  def city_by_organization
+    org_ids = registration_org_registrant_pairs.map(&:first).uniq
+    Address.active
+      .where(addressable_type: "Organization", addressable_id: org_ids)
+      .order(:id)
+      .pluck(:addressable_id, :city, :state)
+      .each_with_object({}) do |(org_id, city, state), map|
+        next if map.key?(org_id)
+        label = [ city, state ].compact_blank.join(", ").presence
+        map[org_id] = label if label
+      end
   end
 
   def paid_registration_ids
@@ -886,19 +1187,29 @@ class EventDashboard
   end
 
   # [ person_id, age_group_category_id ] for every AgeRange selection in active
-  # registrants' "primary_age_group" registration answers. The answer text is a
-  # ", "-joined list of category ids (the checkbox values); non-numeric tokens
-  # (legacy free text) are ignored. Deduped per [ person, category ].
+  # registrants' "primary_age_group" registration answers. Deduped per
+  # [ person, category ].
   def age_group_answer_rows
-    @age_group_answer_rows ||= compute_age_group_answer_rows
+    @age_group_answer_rows ||= age_group_rows_for(%w[primary_age_group])
   end
 
-  def compute_age_group_answer_rows
-    field = registration_form_field("primary_age_group")
-    return [] unless field
+  # Same, but across BOTH the primary and additional age group questions —
+  # the union backing the "All age groups" breakdown.
+  def all_age_group_answer_rows
+    @all_age_group_answer_rows ||= age_group_rows_for(FormField::AGE_GROUP_FIELD_IDENTIFIERS)
+  end
+
+  # [ person_id, age_group_category_id ] rows for the registration fields with
+  # the given identifier(s). Each answer text is a ", "-joined list of category
+  # ids (the checkbox values); non-numeric tokens (legacy free text) are ignored.
+  # Deduped per [ person, category ], so a category chosen in more than one field
+  # counts once.
+  def age_group_rows_for(identifiers)
+    field_ids = registration_form_field_ids(identifiers)
+    return [] if field_ids.empty?
 
     FormAnswer
-      .where(form_field_id: field.id)
+      .where(form_field_id: field_ids)
       .joins(:form_submission)
       .where(form_submissions: { person_id: registrant_ids })
       .pluck(Arel.sql("form_submissions.person_id"), :submitted_answer)
@@ -974,11 +1285,26 @@ class EventDashboard
     @registration_form_fields[identifier] = event.registration_form&.form_fields&.find_by(field_identifier: identifier)
   end
 
+  # Ids of the registration form fields matching any of the given identifier(s) —
+  # for questions that can span more than one field (e.g. the primary + additional
+  # age group fields). Returns [] when the event has no registration form.
+  def registration_form_field_ids(identifiers)
+    event.registration_form&.form_fields&.where(field_identifier: identifiers)&.ids || []
+  end
+
   # State abbreviation for a US address, otherwise the country's ISO 3-letter
   # code; falls back to the (uppercased) state when the country can't be resolved.
   def location_label(state, country)
     return state.to_s.strip.upcase.presence if domestic_country?(country)
     country_alpha3(country) || state.to_s.strip.upcase.presence
+  end
+
+  # Invert a { record_id => [ person_id ] } map into { person_id => [ record.name ] },
+  # iterating the ordered records so each registrant's names keep that order.
+  def names_by_registrant(records, registrant_ids_by_id)
+    records.each_with_object(Hash.new { |hash, key| hash[key] = [] }) do |record, map|
+      registrant_ids_by_id.fetch(record.id, []).each { |person_id| map[person_id] << record.name }
+    end
   end
 
   # Treat a blank country as domestic (US addresses often omit it).

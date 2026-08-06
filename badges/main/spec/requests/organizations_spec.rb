@@ -78,6 +78,22 @@ RSpec.describe "/organizations", type: :request do
       expect(response).to be_successful
     end
 
+    it "shows age groups on the profile, gated by profile_show_age_ranges" do
+      organization = Organization.create!(valid_attributes)
+      age_type = create(:category_type, name: "AgeRange", published: true)
+      teen = create(:category, :published, category_type: age_type, name: "13-17")
+      person = create(:person)
+      create(:affiliation, organization: organization, person: person)
+      person.tag_age_groups(primary_ids: [ teen.id ], additional_ids: [])
+
+      get organization_url(organization)
+      expect(response.body).to include("13-17")
+
+      organization.update!(profile_show_age_ranges: false)
+      get organization_url(organization)
+      expect(response.body).not_to include("13-17")
+    end
+
     it "renders successfully with workshop logs" do
       organization = Organization.create!(valid_attributes)
       workshop_log = create(:workshop_log, organization: organization, created_by: admin)
@@ -238,6 +254,12 @@ RSpec.describe "/organizations", type: :request do
         organization = Organization.create!(valid_attributes)
         patch organization_url(organization), params: { organization: new_attributes }
         expect(response).to redirect_to(organization_url(organization))
+      end
+
+      it "updates the high_profile flag" do
+        organization = Organization.create!(valid_attributes)
+        patch organization_url(organization), params: { organization: { high_profile: "1" } }
+        expect(organization.reload.high_profile).to be(true)
       end
     end
 

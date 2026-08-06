@@ -7,12 +7,6 @@ class Event < ApplicationRecord
   # link is available to paid registrants.
   VIDEOCONFERENCE_JOIN_BUFFER = 30.minutes
 
-  # How far ahead of the start the videoconference connection details (join link,
-  # meeting ID, passcode) may be shared. Kept hidden until then so the link isn't
-  # exposed — on the ticket, the videoconference page, or in calendar entries —
-  # more than a week in advance.
-  VIDEOCONFERENCE_DETAILS_LEAD = 7.days
-
   has_rich_text :rhino_header
   has_rich_text :rhino_description
 
@@ -20,6 +14,7 @@ class Event < ApplicationRecord
   belongs_to :location, optional: true
   has_many :bookmarks, as: :bookmarkable, dependent: :destroy
   has_many :event_registrations, dependent: :destroy
+  has_many :topic_subscriptions, foreign_key: :interested_event_id, inverse_of: :interested_event, dependent: :nullify
   has_many :event_staffs, dependent: :destroy
   has_many :event_forms, dependent: :destroy
   has_many :registration_ticket_callouts, -> { ordered }, dependent: :destroy, inverse_of: :event
@@ -95,8 +90,15 @@ class Event < ApplicationRecord
   # Events flagged as facilitator trainings (the "TAC" a scholarship recipient
   # attends). Drives the scholarship index's training column.
   scope :facilitator_trainings, -> { where(facilitator_training: true) }
+  # start_date is a date column, so compare against a date — a Time would be cast
+  # to midnight and drop events starting today.
+  scope :upcoming, -> { where("start_date >= ?", Date.current) }
   # Events that charge a registration fee (cost_cents may be nil for free ones).
   scope :paid, -> { where("cost_cents > 0") }
+  # Events whose start date falls in the given calendar year. Keyed off the year
+  # of start_date directly — a date range would miss same-day times on Dec 31,
+  # since start_date is a datetime and the range's upper bound is midnight.
+  scope :in_year, ->(year) { where("YEAR(start_date) = ?", year.to_i) }
 
   def self.search_by_params(params)
     stories = is_a?(ActiveRecord::Relation) ? self : all
@@ -155,20 +157,12 @@ class Event < ApplicationRecord
     now >= start_date - VIDEOCONFERENCE_JOIN_BUFFER && now <= end_date + VIDEOCONFERENCE_JOIN_BUFFER
   end
 
-  # When the videoconference connection details unlock. Driven by the drip date on
-  # the materialized videoconference callout (admin-editable), falling back to
-  # VIDEOCONFERENCE_DETAILS_LEAD before the start for events that haven't
-  # materialized the built-in callouts. nil when there's no date to gate on — a
-  # materialized callout whose drip date was cleared, or an event with no start
-  # date — in which case the details are available immediately (see below).
+  # The drip date on the materialized videoconference callout — nil when there's no
+  # callout or its date was cleared, in which case the details unlock immediately.
   def videoconference_details_available_from
     return @videoconference_details_available_from if defined?(@videoconference_details_available_from)
     @videoconference_details_available_from =
-      if (callout = registration_ticket_callouts.builtin.find_by(builtin_key: "videoconference"))
-        callout.display_from
-      elsif start_date
-        start_date - VIDEOCONFERENCE_DETAILS_LEAD
-      end
+      registration_ticket_callouts.builtin.find_by(builtin_key: "videoconference")&.display_from
   end
 
   # Whether the videoconference connection details may be revealed yet. A drip
@@ -198,6 +192,11 @@ class Event < ApplicationRecord
     "(#{ start_text }) #{ name }"
   end
 
+  # Like time_title but date only — no time or parens — for filter dropdowns.
+  def date_title
+    start_date ? "#{start_date.to_date.iso8601} — #{name}" : name
+  end
+
   def full_name
     "#{ name } (#{ start_text })"
   end
@@ -220,7 +219,8 @@ class Event < ApplicationRecord
   # Virtual attributes for date/time inputs (Firefox datetime-local compat)
   attr_writer :start_date_date, :start_date_time,
               :end_date_date, :end_date_time,
-              :registration_close_date_date, :registration_close_date_time
+              :registration_close_date_date, :registration_close_date_time,
+              :ce_payment_due_deadline_date, :ce_payment_due_deadline_time
 
   def start_date_date
     @start_date_date || start_date&.strftime("%Y-%m-%d")
@@ -244,6 +244,14 @@ class Event < ApplicationRecord
 
   def registration_close_date_time
     @registration_close_date_time || registration_close_date&.strftime("%H:%M")
+  end
+
+  def ce_payment_due_deadline_date
+    @ce_payment_due_deadline_date || ce_payment_due_deadline&.strftime("%Y-%m-%d")
+  end
+
+  def ce_payment_due_deadline_time
+    @ce_payment_due_deadline_time || ce_payment_due_deadline&.strftime("%H:%M")
   end
 
   # Virtual attribute for cost in dollars (converts to/from cost_cents)
@@ -310,6 +318,7 @@ class Event < ApplicationRecord
     merge_date_time(:start_date)
     merge_date_time(:end_date)
     merge_date_time(:registration_close_date)
+    merge_date_time(:ce_payment_due_deadline)
   end
 
   def merge_date_time(field)

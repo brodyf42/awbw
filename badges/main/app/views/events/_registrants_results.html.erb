@@ -21,7 +21,7 @@
         <%# On by default — Organization shows unless the admin hides it. %>
         <label class="inline-flex items-center gap-2 cursor-pointer select-none"
                data-controller="column-toggle" data-column-toggle-group-value="organization">
-          <span class="text-sm text-gray-500">Organization</span>
+          <span class="text-sm text-gray-500">Linked organization</span>
 
           <input
             type="checkbox"
@@ -134,16 +134,17 @@
     </div>
 
     <% event_form_ids = @event.registration_form_ids %>
-    <% form_submissions = event_form_ids.any? ? FormSubmission.joins(:form).where(form_id: event_form_ids, person_id: @event_registrations.map(&:registrant_id)).pluck(:person_id, :created_at, Arel.sql("forms.name")).group_by(&:first).transform_values { |rows| rows.map { |_, ts, name| [ name, ts ] } } : {} %>
+    <% form_submissions = event_form_ids.any? ? FormSubmission.where(event_id: @event.id, person_id: @event_registrations.map(&:registrant_id)).joins(:form).where(form_id: event_form_ids).pluck(:person_id, :created_at, Arel.sql("forms.name")).group_by(&:first).transform_values { |rows| rows.map { |_, ts, name| [ name, ts ] } } : {} %>
     <% scholarship_form = @event.scholarship_form %>
-    <% scholarship_submitter_ids = scholarship_form ? FormSubmission.joins(:form_answers).where(form_id: scholarship_form.id, role: "scholarship", person_id: @event_registrations.map(&:registrant_id)).distinct.pluck(:person_id).to_set : Set.new %>
+    <% scholarship_submitter_ids = scholarship_form ? FormSubmission.where(event_id: @event.id, form_id: scholarship_form.id, role: "scholarship", person_id: @event_registrations.map(&:registrant_id)).joins(:form_answers).distinct.pluck(:person_id).to_set : Set.new %>
     <% if @event_registrations.any? %>
       <div class="overflow-x-auto">
         <% payment_col = @event.cost_cents.to_i > 0 %>
         <% ce_col = @ce_eligible %>
         <% extra_cols = (payment_col ? 1 : 0) + (ce_col ? 1 : 0) %>
         <%# Column order: Name, Organization, [CE status], Scholarship, [Payment],
-            Confirmed (hidden), Attendance, Date registered, Status, Edit (far right). %>
+            Confirmed (hidden), Attendance, Date registered, Status, Edit (far right).
+            The Name button also links to editing the registration. %>
         <% ce_index = 2 %>
         <% scholarship_index = ce_col ? 3 : 2 %>
         <% payment_index = scholarship_index + 1 %>
@@ -160,8 +161,10 @@
                   <%= render "shared/sortable_header", label: "Last", index: 0, key: "last" %>
                 </span>
               </th>
-              <th class="px-4 py-2 text-left text-sm font-semibold text-gray-700 w-full" aria-sort="none" data-column-toggle-col="organization">
-                <%= render "shared/sortable_header", label: "Organization", index: 1 %>
+              <%# Extra left padding lines the header up with the org pill's text (the
+                  pill is inset from the cell edge by its own px-3), not the cell edge. %>
+              <th class="pl-7 pr-4 py-2 text-left text-sm font-semibold text-gray-700 w-full" aria-sort="none" data-column-toggle-col="organization">
+                <%= render "shared/sortable_header", label: "Linked organization", index: 1 %>
               </th>
 
               <% if ce_col %>
@@ -204,8 +207,29 @@
                   <% show_email = person.profile_show_email? || allowed_to?(:manage?, Person) %>
 
                   <div class="flex items-center gap-1">
+                    <% reg_edit_classes = "group flex items-center gap-2 w-full px-2 py-1 border #{DomainTheme.border_class_for(:event_registrations)} #{DomainTheme.bg_class_for(:event_registrations, intensity: 100)} #{DomainTheme.bg_class_for(:event_registrations, intensity: 100, hover: true)} rounded-lg transition-colors duration-200 shadow-sm leading-tight overflow-hidden" %>
+                    <% display_email = person.preferred_email if show_email %>
+                    <%# Mirror person_profile_button: warn admins/the person of a pending email change. %>
+                    <% unconfirmed_email = person.user&.unconfirmed_email if allowed_to?(:show_email_change?, person) %>
                     <div class="w-60 min-w-0">
-                      <%= person_profile_button(person, truncate_at: 30, subtitle: (person.preferred_email if show_email), data: { turbo_frame: "_top" }, path_params: { return_to: "registrants", event_id: @event.id }, compact: true) %>
+                      <%= link_to edit_event_registration_path(registration, return_to: "registrants"),
+                                  title: [ person.name, display_email ].compact_blank.join(" — "),
+                                  class: reg_edit_classes,
+                                  data: { turbo_frame: "_top", turbo_prefetch: false } do %>
+                        <i class="fa-solid fa-user-pen flex-shrink-0 <%= DomainTheme.text_class_for(:event_registrations) %>"></i>
+                        <div class="flex flex-col justify-center min-w-0">
+                          <span class="font-semibold text-xs <%= DomainTheme.text_class_for(:event_registrations) %> truncate"><%= truncate(person.name.to_s, length: 30) %></span>
+                          <% if display_email.present? %>
+                            <!--email_off--><span class="text-xs text-gray-500 font-normal truncate"><%= display_email %></span><!--email_on-->
+                          <% end %>
+                        </div>
+                        <% if unconfirmed_email.present? %>
+                          <span class="flex-shrink-0 ml-auto text-yellow-500"
+                                title="Email change to <%= unconfirmed_email %> awaiting confirmation. Only the person and admins can see this; it is hidden from other profile visitors.">
+                            <i class="fa-solid fa-triangle-exclamation"></i>
+                          </span>
+                        <% end %>
+                      <% end %>
                     </div>
 
                     <% form_show_params = registration.slug.present? ? { reg: registration.slug } : { person_id: person.id } %>
@@ -262,14 +286,32 @@
                   <% editor_path = link_organization_event_registration_path(registration, return_to: "registrants") %>
                   <% pill_classes = "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full text-xs font-medium border px-3 py-0.5 transition hover:opacity-80 hover:shadow-sm" %>
                   <div class="flex flex-wrap gap-1.5">
+                    <%# Same grey style as the "None" chip below, but a rectangle
+                        (rounded-md) instead of a pill, and with the organization
+                        (emerald) hover color. %>
+                    <% org_btn_classes = "inline-flex items-center whitespace-nowrap rounded-md text-xs font-medium border px-3 py-0.5 transition bg-gray-50 text-gray-500 border-gray-200 hover:shadow-sm #{DomainTheme.bg_class_for(:organizations, intensity: 100, hover: true)} hover:text-emerald-800 hover:border-emerald-300" %>
                     <% linked_orgs.each do |org| %>
-                      <%= link_to editor_path,
-                                  title: org.name,
-                                  class: "#{pill_classes} bg-gray-50 text-gray-500 border-gray-200",
-                                  data: { turbo_frame: "_top" } do %>
-                        <span><%= truncate(org.name, length: 31) %></span>
-                        <i class="fa-solid fa-arrow-up-right-from-square text-[0.6rem] opacity-70"></i>
-                      <% end %>
+                      <span class="inline-flex items-center gap-1">
+                        <%= link_to truncate(org.name, length: 31),
+                                    organization_path(org),
+                                    title: org.name,
+                                    class: org_btn_classes,
+                                    data: { turbo_frame: "_top" } %>
+                        <%# Same chip as "None" below, but for a linked org only the icon
+                            shows. A zero-width invisible copy of the word carries the
+                            text-xs line height so the chip keeps the same height (vertical
+                            padding around the icon) without reserving the word's width.
+                            gap-1.5 is dropped from pill_classes so the collapsed span adds
+                            no horizontal gap. %>
+                        <% icon_only_pill = pill_classes.sub("gap-1.5 ", "") %>
+                        <%= link_to editor_path,
+                                    title: "Edit linked organizations",
+                                    class: "#{icon_only_pill} bg-gray-50 text-gray-500 border-gray-200",
+                                    data: { turbo_frame: "_top" } do %>
+                          <span class="invisible w-0 min-w-0 overflow-hidden">None</span>
+                          <i class="fa-solid fa-arrow-up-right-from-square text-[0.6rem] opacity-70"></i>
+                        <% end %>
+                      </span>
                     <% end %>
                     <% if needs_linking %>
                       <%= link_to editor_path,

@@ -2,7 +2,8 @@ class EventsController < ApplicationController
   include AhoyTracking, TagAssignable
   skip_before_action :authenticate_user!, only: [ :index, :show, :staff ]
   skip_before_action :verify_authenticity_token, only: [ :preview ]
-  before_action :set_event, only: %i[ show edit update destroy preview dashboard sample_ticket background registrants onboarding staff edit_staff update_staff recipients bulk_payments preview_reminder confirm_reminder send_reminder copy_registration_form allocate_bulk_payment create_bulk_payment ]
+  before_action :set_event, only: %i[ show edit update destroy preview dashboard sample_ticket background registrants onboarding staff edit_staff update_staff recipients preview_reminder confirm_reminder send_reminder copy_registration_form ]
+  before_action :set_report_filters, only: %i[ revenue participation statistics ]
 
   def index
     authorize!
@@ -17,14 +18,32 @@ class EventsController < ApplicationController
     track_view(@event)
   end
 
-  # Cross-event revenue report across every paid event (those that charge a
-  # registration fee). The KPI strip leads with the year of the event the CEO
-  # navigated from (when arriving from a dashboard), otherwise the current year.
+  # Cross-event revenue report over paid events, grouped by year. Shares the
+  # event-type + time-period filters with the participation report, and leads the
+  # KPI strip with the year of the event navigated from (when arriving from a
+  # dashboard), otherwise the current year.
   def revenue
     authorize!
-    @events = Event.paid.order(start_date: :desc).map(&:decorate)
-    origin_event = Event.find_by(id: params[:event_id]) if params[:event_id].present?
-    @report = EventRevenueReport.new(@events, featured_year: origin_event&.start_date&.year)
+    events, selected_year = filtered_report_events(Event.paid)
+    @report = EventRevenueReport.new(events, featured_year: selected_year || @filter_event&.start_date&.year)
+  end
+
+  # Cross-event participation report: how many people completed each training,
+  # grouped by year. Scopes to all events by default, narrowable to facilitator
+  # trainings, and to a single year via the ahoy-style time-period select.
+  def participation
+    authorize!
+    events, selected_year = filtered_report_events(Event.all)
+    @report = EventParticipationReport.new(events, featured_year: selected_year)
+  end
+
+  # Events statistics hub: the revenue and participation report summaries side by
+  # side, each linking to its full report.
+  def statistics
+    authorize!
+    @period = params[:period].presence_in(%w[ this_year last_year all_time ]) || "this_year"
+    @revenue_report = EventRevenueReport.new(report_events(Event.paid))
+    @participation_report = EventParticipationReport.new(report_events(Event.all))
   end
 
   def new
@@ -90,8 +109,13 @@ class EventsController < ApplicationController
   def registrants
     authorize! @event, to: :registrants?
     @event = @event.decorate
+    # contact_methods (phone) and affiliations (org names) are read only by the
+    # CSV export, so skip them on the HTML roster to avoid eager-loading data the
+    # page never uses (Bullet: AVOID eager loading).
+    registrant_includes = [ :user, { avatar_attachment: :blob } ]
+    registrant_includes += [ :contact_methods, { affiliations: :organization } ] if request.format.csv?
     scope = @event.event_registrations
-      .includes(:comments, :organizations, :allocations, :scholarships, { continuing_education_registrations: [ :professional_license, :allocations ] }, registrant: [ :user, :contact_methods, { avatar_attachment: :blob }, { affiliations: :organization } ])
+      .includes(:comments, :organizations, :allocations, :scholarships, { continuing_education_registrations: [ :professional_license, :allocations ] }, registrant: registrant_includes)
       .joins(:registrant)
     scope = scope.keyword(params[:keyword]) if params[:keyword].present?
     scope = scope.payment_status(params[:payment_status]) if params[:payment_status].present?
@@ -149,7 +173,7 @@ class EventsController < ApplicationController
     authorize! @event, to: :registrants?
     @event = @event.decorate
     scope = @event.event_registrations
-      .includes(:checklist_completions, :organizations, :allocations, :scholarships, :comments, { continuing_education_registrations: :professional_license }, registrant: [ :user, { affiliations: :organization } ])
+      .includes(:checklist_completions, :organizations, :allocations, :scholarships, :comments, { continuing_education_registrations: [ :professional_license, :allocations ] }, registrant: [ :user, { affiliations: :organization } ])
       .joins(:registrant)
     scope = scope.keyword(params[:keyword]) if params[:keyword].present?
 
@@ -188,7 +212,7 @@ class EventsController < ApplicationController
     authorize! @event, to: :staff?
     @event = @event.decorate
     @event_staffs = @event.event_staffs
-      .includes(person: [ :sectors, { avatar_attachment: :blob }, { affiliations: :organization } ])
+      .includes(person: [ :sectors, { categorizable_items: { category: :category_type } }, { avatar_attachment: :blob }, { affiliations: :organization } ])
       .ordered_by_name
   end
 
@@ -201,7 +225,7 @@ class EventsController < ApplicationController
     authorize! @event, to: :update_staff?
 
     if @event.update(event_staff_params)
-      redirect_to staff_event_path(@event), notice: "Event staff updated."
+      redirect_to staff_update_return_path, notice: "Event staff updated."
     else
       render :edit_staff, status: :unprocessable_content
     end
@@ -211,99 +235,6 @@ class EventsController < ApplicationController
     authorize! @event, to: :recipients?
     @event = @event.decorate
     @dashboard = EventDashboard.new(@event)
-  end
-
-  def bulk_payments
-    authorize! @event
-
-    @event = @event.decorate
-    # Shared across every card so attendee matching and allocated totals don't
-    # re-query per registration per card.
-    @event_registrations = @event.event_registrations.active.includes(:registrant)
-    @submissions = @event.form_submissions
-                         .where(role: "bulk_payment")
-                         .includes(:person, form_answers: :form_field, payment: :allocations)
-                         .order(created_at: :desc)
-    @allocated_by_registration = allocated_cents_by_registration(@event_registrations)
-  end
-
-  def allocate_bulk_payment
-    authorize! @event
-    @event = @event.decorate
-    payment = Payment.find(params[:payment_id])
-    event_registration = EventRegistration.find_by(id: params[:event_registration_id])
-    unless event_registration
-      flash.now[:alert] = "Please select a registrant"
-      assign_allocation_card_data(payment)
-      respond_to do |format|
-        format.turbo_stream
-        format.html { redirect_to bulk_payments_event_path(@event), alert: "Please select a registrant" }
-      end
-      return
-    end
-    amount_cents = (params[:amount_dollars].to_d * 100).to_i
-
-    if amount_cents <= 0
-      flash.now[:alert] = "Amount must be greater than $0.00"
-    elsif amount_cents > (payment.amount_cents_remaining || 0)
-      flash.now[:alert] = "Amount exceeds remaining balance"
-    else
-      allocation = Allocation.new(source: payment, allocatable: event_registration, amount: amount_cents)
-      if allocation.save
-        flash.now[:notice] = "Allocation successful"
-      else
-        flash.now[:alert] = allocation.errors.full_messages.to_sentence
-      end
-    end
-
-    assign_allocation_card_data(payment)
-
-    respond_to do |format|
-      format.turbo_stream
-      format.html { redirect_to bulk_payments_event_path(@event), notice: flash.now[:alert] || "Allocation successful" }
-    end
-  end
-
-  def create_bulk_payment
-    authorize! @event
-    @event = @event.decorate
-    @event_registrations = @event.event_registrations.active.includes(:registrant)
-    @allocated_by_registration = allocated_cents_by_registration(@event_registrations)
-
-    submission = @event.form_submissions.find(params[:submission_id])
-    payment_type = params[:payment_type]
-
-    unless %w[CashPayment CheckPayment].include?(payment_type)
-      flash.now[:alert] = "Invalid payment type"
-      respond_to do |format|
-        format.turbo_stream
-        format.html { redirect_to bulk_payments_event_path(@event), alert: "Invalid payment type" }
-      end
-      return
-    end
-
-    payment = submission.build_payment(
-      amount_cents: (params[:amount_dollars].to_d * 100).to_i,
-      currency: params[:currency].presence || "usd",
-      type: payment_type,
-      check_number: params[:check_number].presence,
-      memo: params[:memo].presence
-    )
-    payment.payer_sgid = params[:payer_sgid]
-    payment.additional_designation_sgid = params[:additional_designation_sgid]
-
-    if payment.save
-      @payment = payment
-      @submission = submission.decorate
-      flash.now[:notice] = "Payment recorded"
-    else
-      flash.now[:alert] = payment.errors.full_messages.to_sentence
-    end
-
-    respond_to do |format|
-      format.turbo_stream
-      format.html { redirect_to bulk_payments_event_path(@event), notice: flash.now[:alert] || "Payment recorded" }
-    end
   end
 
   def preview_reminder
@@ -505,6 +436,68 @@ class EventsController < ApplicationController
 
   private
 
+  # Where to land after saving staff: back to the origin the editor was opened
+  # from (the sample preview, or a registrant's staff callout page), else the
+  # admin staff roster. Kept in sync with the edit_staff eyebrow.
+  def staff_update_return_path
+    case params[:return_to]
+    when "sample_staff" then sample_staff_event_path(@event)
+    when "registration_staff"
+      params[:reg].present? ? registration_staff_path(params[:reg]) : staff_event_path(@event)
+    else staff_event_path(@event)
+    end
+  end
+
+  # Shared filter state for the revenue/participation/statistics report pages: the
+  # event-type and specific-event filters, plus the event list for the Event
+  # dropdown.
+  def set_report_filters
+    @event_type = params[:event_type].presence_in(%w[ trainings other ])
+    @filter_event = Event.find_by(id: params[:event_id]) if params[:event_id].present?
+    # The revenue report only covers paid events, so its Event dropdown lists only
+    # those; the others list every event.
+    dropdown_scope = action_name == "revenue" ? Event.paid : Event.all
+    @filter_events = dropdown_scope.order(start_date: :desc)
+  end
+
+  # Applies the shared report filters (event type, specific event) plus a
+  # calendar-year time period to `base` (the report's unfiltered relation, e.g.
+  # Event.paid or Event.all). Sets @year_options and @time_period for the filter
+  # form, and returns the decorated events plus the selected year (nil for "all
+  # time").
+  def filtered_report_events(base)
+    base = scoped_report_base(base)
+    @year_options = base.where.not(start_date: nil)
+      .distinct
+      .pluck(Arel.sql("YEAR(start_date)"))
+      .sort
+      .reverse
+    @time_period = params[:time_period].presence || "all_time"
+    selected_year = selected_report_year(@time_period)
+    events = selected_year ? base.in_year(selected_year) : base
+    [ events.order(start_date: :desc).map(&:decorate), selected_year ]
+  end
+
+  # Decorated events for a report, scoped by the shared filters, newest first.
+  def report_events(base)
+    scoped_report_base(base).order(start_date: :desc).map(&:decorate)
+  end
+
+  # Narrows `base` by the event-type and specific-event filters.
+  def scoped_report_base(base)
+    base = base.facilitator_trainings if @event_type == "trainings"
+    base = base.where(facilitator_training: false) if @event_type == "other"
+    base = base.where(id: @filter_event.id) if @filter_event
+    base
+  end
+
+  # The calendar year a report is scoped to: the current year for "this_year", a
+  # specific year for a "2025"-style value, or nil for "all_time".
+  def selected_report_year(time_period)
+    return Date.current.year if time_period == "this_year"
+    Integer(time_period, exception: false)
+  end
+
   # The registrations the admin checked on the recipient picker, narrowed to those
   # we can actually email. Shared by the confirm interstitial and the send action
   # so both operate on exactly the same set.
@@ -514,25 +507,6 @@ class EventsController < ApplicationController
       .where(id: allowed_ids)
       .includes(registrant: [ :user, :contact_methods ])
       .select { |r| r.registrant.preferred_email.present? }
-  end
-
-  # Reloads the payment and the data its bulk payment card needs, so the
-  # allocate turbo stream can re-render the whole card with fresh due/allocated
-  # totals and re-evaluate whether each registration is now paid in full.
-  def assign_allocation_card_data(payment)
-    @payment = payment.reload
-    @submission = @payment.form_submission
-    @event_registrations = @event.event_registrations.active.includes(:registrant)
-    @allocated_by_registration = allocated_cents_by_registration(@event_registrations)
-  end
-
-  # Allocated cents per registration id, fetched in one grouped query so the
-  # bulk payment cards read totals from a hash instead of querying per row.
-  def allocated_cents_by_registration(registrations)
-    Allocation
-      .where(allocatable_type: "EventRegistration", allocatable_id: registrations.ids)
-      .group(:allocatable_id)
-      .sum(:amount)
   end
 
   # Maps registrant person_id => the organization name they typed on the
@@ -555,7 +529,7 @@ class EventsController < ApplicationController
     cost_required = @event.cost_cents.to_i > 0
     include_ce = @event.ce_eligible?
     headers = [ "First name", "Last name", "Email", "Phone", "Organization", "Scholarship recipient", "Scholarship tasks completed", "Payment status", "Intends to pay", "Payment total" ]
-    headers << "CE status" if include_ce
+    headers += [ "CE status", "CE paid", "CE due" ] if include_ce
     CSV.generate(headers: headers, write_headers: true) do |csv_out|
       @event_registrations.each do |registration|
         csv_out << event_registration_csv_row(registration, cost_required, include_ce)
@@ -570,7 +544,7 @@ class EventsController < ApplicationController
       .map(&:organization).compact.uniq
     org_names = orgs.map(&:name).join("; ")
     total_cents = registration.allocations_sum
-    payment_total = total_cents.positive? ? format("%.2f", total_cents / 100.0) : ""
+    payment_total = csv_dollars(total_cents)
     payment_status = cost_required ? registration.payment_status_label : ""
     row = [
       person.first_name,
@@ -579,12 +553,16 @@ class EventsController < ApplicationController
       person.phone_number.presence || "",
       org_names.presence || "",
       registration.scholarships.any? ? "Yes" : "No",
-      registration.scholarships.completed.any? ? "Yes" : "No",
+      registration.scholarships.any?(&:tasks_completed?) ? "Yes" : "No",
       payment_status,
       registration.intends_to_pay? ? "Yes" : "No",
       payment_total
     ]
-    row << registration.ce_status_label.to_s if include_ce
+    if include_ce
+      row << registration.ce_status_label.to_s
+      row << csv_dollars(registration.ce_amount_paid_cents)
+      row << csv_dollars(registration.ce_amount_due_cents)
+    end
     row
   end
 
@@ -597,7 +575,7 @@ class EventsController < ApplicationController
     headers += [ "Payment status", "Fees due", "Paid amount" ] if cost_required
     headers << "Fee note"
     headers += [ "Discounted amount", "Scholarship amount", "Scholarship grant", "Scholarship tasks completed" ]
-    headers += [ "CE requested", "CE hours", "CE amount", "CE license" ] if include_ce
+    headers += [ "CE requested", "CE hours", "CE amount", "CE paid", "CE due", "CE license" ] if include_ce
     headers += EventRegistration::CHECKLIST_STEPS.values
     headers += [ "Portal user status", "Portal access" ]
     headers += (1..day_count).map { |day| "Day #{day}" }
@@ -630,7 +608,7 @@ class EventsController < ApplicationController
       row << helpers.dollars_from_cents(registration.payments_sum)
     end
     row << registration.fee_note.to_s
-    row << (registration.discount_sum.positive? ? helpers.dollars_from_cents(registration.discount_sum) : "")
+    row << csv_dollars(registration.discount_sum)
     row << (scholarship ? helpers.dollars_from_cents(scholarship.amount_cents) : "")
     row << (scholarship ? (scholarship.grant&.name.presence || "Unfunded") : "")
     row << onboarding_scholarship_tasks_csv(registration)
@@ -638,7 +616,9 @@ class EventsController < ApplicationController
       ce_hours = registration.ce_hours_total
       row << (registration.ce_registered? ? "Yes" : "No")
       row << (ce_hours.positive? ? helpers.plain_number(ce_hours) : "")
-      row << (registration.ce_amount_owed_cents.positive? ? helpers.dollars_from_cents(registration.ce_amount_owed_cents) : "")
+      row << csv_dollars(registration.ce_amount_owed_cents)
+      row << csv_dollars(registration.ce_amount_paid_cents)
+      row << csv_dollars(registration.ce_amount_due_cents)
       row << registration.ce_license_numbers.join("; ")
     end
     EventRegistration::CHECKLIST_STEPS.each_key do |step|

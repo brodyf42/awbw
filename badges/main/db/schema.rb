@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_15_053137) do
+ActiveRecord::Schema[8.1].define(version: 2026_08_05_023506) do
   create_table "action_text_mentions", charset: "utf8mb4", collation: "utf8mb4_unicode_ci", force: :cascade do |t|
     t.bigint "action_text_rich_text_id", null: false
     t.datetime "created_at", null: false
@@ -445,6 +445,26 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_15_053137) do
     t.datetime "updated_at", null: false
   end
 
+  create_table "dues_registrations", charset: "utf8mb4", collation: "utf8mb4_unicode_ci", force: :cascade do |t|
+    t.integer "cost_cents", default: 0, null: false
+    t.datetime "created_at", null: false
+    t.bigint "dues_subscription_id", null: false
+    t.date "end_date", null: false
+    t.date "start_date", null: false
+    t.datetime "updated_at", null: false
+    t.index ["dues_subscription_id"], name: "index_dues_registrations_on_dues_subscription_id"
+    t.index ["start_date", "end_date"], name: "index_dues_registrations_on_start_date_and_end_date"
+  end
+
+  create_table "dues_subscriptions", charset: "utf8mb4", collation: "utf8mb4_unicode_ci", force: :cascade do |t|
+    t.datetime "cancelled_at"
+    t.integer "cost_cents"
+    t.datetime "created_at", null: false
+    t.bigint "person_id", null: false
+    t.datetime "updated_at", null: false
+    t.index ["person_id"], name: "index_dues_subscriptions_on_person_id"
+  end
+
   create_table "event_forms", charset: "utf8mb4", collation: "utf8mb4_unicode_ci", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.bigint "event_id", null: false
@@ -537,7 +557,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_15_053137) do
     t.integer "ce_hours_cost_cents"
     t.decimal "ce_hours_offered", precision: 5, scale: 2
     t.date "ce_hours_request_deadline"
-    t.date "ce_payment_due_deadline"
+    t.datetime "ce_payment_due_deadline"
     t.integer "cost_cents"
     t.datetime "created_at", null: false
     t.integer "created_by_id"
@@ -654,6 +674,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_15_053137) do
     t.datetime "created_at", null: false
     t.bigint "event_id"
     t.integer "form_id", null: false
+    t.json "metadata"
     t.bigint "person_id", null: false
     t.string "role"
     t.string "slug"
@@ -681,13 +702,13 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_15_053137) do
 
   create_table "grants", charset: "utf8mb4", collation: "utf8mb4_unicode_ci", force: :cascade do |t|
     t.integer "amount_cents", default: 0, null: false
-    t.date "application_deadline"
     t.datetime "created_at", null: false
     t.bigint "created_by_id"
     t.text "description"
     t.bigint "donor_id", null: false
     t.string "donor_type", null: false
     t.text "eligibility_criteria"
+    t.date "funds_allocation_deadline"
     t.date "funds_received_on"
     t.string "name", null: false
     t.text "tasks"
@@ -807,6 +828,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_15_053137) do
     t.string "email"
     t.date "end_date"
     t.string "filemaker_code"
+    t.boolean "high_profile", default: false, null: false
     t.string "internal_id"
     t.boolean "legacy", default: false
     t.integer "legacy_id"
@@ -815,6 +837,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_15_053137) do
     t.string "name"
     t.text "notes", size: :long
     t.integer "organization_status_id"
+    t.boolean "profile_show_age_ranges", default: true, null: false
     t.boolean "profile_show_description", default: true, null: false
     t.boolean "profile_show_email", default: true, null: false
     t.boolean "profile_show_events_registered", default: true, null: false
@@ -1002,6 +1025,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_15_053137) do
     t.text "notes"
     t.boolean "profile_is_searchable", default: true, null: false
     t.boolean "profile_show_affiliations", default: true, null: false
+    t.boolean "profile_show_age_ranges", default: true, null: false
     t.boolean "profile_show_bio", default: true, null: false
     t.boolean "profile_show_credentials", default: true, null: false
     t.boolean "profile_show_email", default: true, null: false
@@ -1295,6 +1319,40 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_15_053137) do
     t.index ["workshop_id"], name: "index_story_ideas_on_workshop_id"
   end
 
+  create_table "topic_subscription_types", charset: "utf8mb4", collation: "utf8mb4_unicode_ci", force: :cascade do |t|
+    t.datetime "archived_at"
+    t.datetime "created_at", null: false
+    t.bigint "created_by_id"
+    t.text "description"
+    t.boolean "event_selector", default: false, null: false
+    t.string "key", null: false
+    t.string "name", null: false
+    t.datetime "updated_at", null: false
+    t.bigint "updated_by_id"
+    t.index ["archived_at"], name: "index_topic_subscription_types_on_archived_at"
+    t.index ["key"], name: "index_topic_subscription_types_on_key", unique: true
+    t.index ["name"], name: "index_topic_subscription_types_on_name", unique: true
+  end
+
+  create_table "topic_subscriptions", charset: "utf8mb4", collation: "utf8mb4_unicode_ci", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.bigint "created_by_id"
+    t.bigint "interested_event_id"
+    t.bigint "person_id", null: false
+    t.string "source"
+    t.datetime "subscribed_at", null: false
+    t.bigint "topic_subscription_type_id", null: false
+    t.datetime "unsubscribed_at"
+    t.datetime "updated_at", null: false
+    t.bigint "updated_by_id"
+    t.index ["created_by_id"], name: "index_topic_subscriptions_on_created_by_id"
+    t.index ["interested_event_id"], name: "index_topic_subscriptions_on_interested_event_id"
+    t.index ["person_id"], name: "index_topic_subscriptions_on_person_id"
+    t.index ["topic_subscription_type_id"], name: "index_topic_subscriptions_on_topic_subscription_type_id"
+    t.index ["unsubscribed_at"], name: "index_topic_subscriptions_on_unsubscribed_at"
+    t.index ["updated_by_id"], name: "index_topic_subscriptions_on_updated_by_id"
+  end
+
   create_table "user_form_form_fields", id: :integer, charset: "utf8mb4", collation: "utf8mb4_unicode_ci", force: :cascade do |t|
     t.datetime "created_at", precision: nil, null: false
     t.integer "form_field_id"
@@ -1377,6 +1435,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_15_053137) do
     t.integer "updated_by_id"
     t.datetime "welcome_instructions_created_at"
     t.datetime "welcome_instructions_sent_at"
+    t.integer "welcome_instructions_sent_by_id"
     t.string "welcome_instructions_token"
     t.string "zip"
     t.string "zip2"
@@ -1389,6 +1448,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_15_053137) do
     t.index ["reset_password_token"], name: "index_users_on_reset_password_token", unique: true
     t.index ["unlock_token"], name: "index_users_on_unlock_token", unique: true
     t.index ["updated_by_id"], name: "index_users_on_updated_by_id"
+    t.index ["welcome_instructions_sent_by_id"], name: "index_users_on_welcome_instructions_sent_by_id"
     t.index ["welcome_instructions_token"], name: "index_users_on_welcome_instructions_token", unique: true
   end
 
@@ -1729,6 +1789,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_15_053137) do
   add_foreign_key "contact_methods", "addresses"
   add_foreign_key "continuing_education_registrations", "event_registrations"
   add_foreign_key "continuing_education_registrations", "professional_licenses"
+  add_foreign_key "dues_registrations", "dues_subscriptions"
+  add_foreign_key "dues_subscriptions", "people"
   add_foreign_key "event_forms", "events"
   add_foreign_key "event_forms", "forms"
   add_foreign_key "event_registration_checklist_completions", "event_registrations"
@@ -1802,6 +1864,9 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_15_053137) do
   add_foreign_key "story_ideas", "users", column: "updated_by_id"
   add_foreign_key "story_ideas", "windows_types"
   add_foreign_key "story_ideas", "workshops"
+  add_foreign_key "topic_subscriptions", "events", column: "interested_event_id"
+  add_foreign_key "topic_subscriptions", "people"
+  add_foreign_key "topic_subscriptions", "topic_subscription_types"
   add_foreign_key "user_form_form_fields", "form_fields"
   add_foreign_key "user_form_form_fields", "user_forms"
   add_foreign_key "user_forms", "forms"

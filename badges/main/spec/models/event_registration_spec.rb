@@ -353,6 +353,12 @@ RSpec.describe EventRegistration, type: :model do
       end
       let!(:no_ce) { create(:event_registration, event: event) }
 
+      it "maps 'registered' to everyone signed up for CE, whatever its state" do
+        results = EventRegistration.ce_status("registered")
+        expect(results).to include(paid_ce, requested_ce, needs_license_ce, issued_ce)
+        expect(results).not_to include(no_ce)
+      end
+
       it "maps 'needs_license' to CE on a placeholder license" do
         results = EventRegistration.ce_status("needs_license")
         expect(results).to include(needs_license_ce)
@@ -638,25 +644,27 @@ RSpec.describe EventRegistration, type: :model do
   describe "#videoconference_details_visible?" do
     let(:user) { create(:user, :with_person) }
 
-    it "is true within a week of the start for a registrant with payment access" do
+    it "is true for a paid registrant when the event details are ungated" do
       event = create(:event, cost_cents: 1099, start_date: 6.days.from_now, end_date: 6.days.from_now + 2.hours)
       reg = create(:event_registration, event: event, registrant: user.person, intends_to_pay: true)
       expect(reg.videoconference_details_visible?).to be true
     end
 
-    it "is false more than a week before the start" do
+    it "is false while the event's videoconference callout drip date is still in the future" do
       event = create(:event, cost_cents: 1099, start_date: 8.days.from_now, end_date: 8.days.from_now + 2.hours)
+      create(:registration_ticket_callout, event:, builtin_key: "videoconference",
+        display_from: 2.days.from_now)
       reg = create(:event_registration, event: event, registrant: user.person, intends_to_pay: true)
       expect(reg.videoconference_details_visible?).to be false
     end
 
-    it "is false within a week when the registrant lacks payment access" do
+    it "is false when the registrant lacks payment access, even with the event details ungated" do
       event = create(:event, cost_cents: 1099, start_date: 6.days.from_now, end_date: 6.days.from_now + 2.hours)
       reg = create(:event_registration, event: event, registrant: user.person)
       expect(reg.videoconference_details_visible?).to be false
     end
 
-    it "is true within a week for a free event regardless of payment" do
+    it "is true for a free event regardless of payment" do
       event = create(:event, cost_cents: 0, start_date: 6.days.from_now, end_date: 6.days.from_now + 2.hours)
       reg = create(:event_registration, event: event, registrant: user.person)
       expect(reg.videoconference_details_visible?).to be true

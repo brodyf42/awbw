@@ -43,11 +43,21 @@ RSpec.describe "Admin::Home", type: :request do
       expect(response).to have_http_status(:ok)
     end
 
-    it "links to the event revenue report and still surfaces payments" do
+    it "links to events statistics and still surfaces payments" do
       get admin_path
-      expect(response.body).to include("Events revenue")
-      expect(response.body).to include(revenue_events_path)
+      expect(response.body).to include("Events statistics")
+      expect(response.body).to include(statistics_events_path)
       expect(response.body).to include("Payments")
+    end
+
+    it "surfaces Subscription topics and moves Organization statuses to Deprecated data" do
+      get admin_path
+
+      expect(response.body).to include("Subscription topics")
+      expect(response.body).to include(topic_subscription_types_path)
+      expect(response.body).to include("Deprecated data")
+      expect(response.body).to include("Organization statuses")
+      expect(response.body).to include(organization_statuses_path)
     end
   end
 end

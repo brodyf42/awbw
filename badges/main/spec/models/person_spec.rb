@@ -1,6 +1,70 @@
 require "rails_helper"
 
 RSpec.describe Person, type: :model do
+  describe "#dues_current?" do
+    let(:person) { create(:person) }
+    let(:subscription) { create(:dues_subscription, person: person) }
+
+    def term(cost_cents:, start_date: Date.current, subscription: nil)
+      create(:dues_registration,
+        dues_subscription: subscription || create(:dues_subscription, person: person),
+        cost_cents: cost_cents,
+        start_date: start_date,
+        end_date: start_date + 1.year - 1.day)
+    end
+
+    it "is false with no dues at all" do
+      expect(person).not_to be_dues_current
+    end
+
+    it "is true on a comped term" do
+      term(cost_cents: 0, subscription: subscription)
+      expect(person).to be_dues_current
+    end
+
+    it "is true on a paid term" do
+      paid = term(cost_cents: 2_500, subscription: subscription)
+      create(:allocation, source: create(:payment, amount_cents: 2_500), allocatable: paid, amount: 2_500)
+
+      expect(person).to be_dues_current
+    end
+
+    it "is true on an unpaid term still inside the grace window" do
+      term(cost_cents: 2_500, start_date: Date.current - 1, subscription: subscription)
+      expect(person).to be_dues_current
+    end
+
+    it "is false on an unpaid term past the grace window" do
+      term(cost_cents: 2_500,
+        start_date: Date.current - Dues::GRACE_PERIOD_DAYS - 1,
+        subscription: subscription)
+
+      expect(person).not_to be_dues_current
+    end
+
+    it "is false when the only comped term has expired" do
+      term(cost_cents: 0, start_date: Date.current - 2.years, subscription: subscription)
+      expect(person).not_to be_dues_current
+    end
+
+    it "is false when a comped term has not started yet" do
+      term(cost_cents: 0, start_date: Date.current + 1.day, subscription: subscription)
+      expect(person).not_to be_dues_current
+    end
+
+    it "still counts a term whose subscription was cancelled, until the term ends" do
+      term(cost_cents: 0, subscription: subscription)
+      subscription.update!(cancelled_at: Time.current)
+
+      expect(person.reload).to be_dues_current
+    end
+
+    it "answers for a past date too" do
+      term(cost_cents: 0, start_date: Date.current - 2.years, subscription: subscription)
+      expect(person.dues_current?(as_of: Date.current - 18.months)).to be(true)
+    end
+  end
+
   describe "associations" do
     it { should have_one(:user) }
     it { should belong_to(:created_by).class_name("User").optional(true) }
@@ -264,6 +328,43 @@ RSpec.describe Person, type: :model do
     it "returns first and last name" do
       person = build(:person, first_name: "Jane", last_name: "Doe")
       expect(person.full_name).to eq("Jane Doe")
+    end
+  end
+
+  describe "#phone_number" do
+    let(:person) { create(:person) }
+
+    def add_phone(value, primary: false, inactive: false, kind: "phone")
+      ContactMethod.create!(contactable: person, kind: kind, value: value, primary: primary, inactive: inactive)
+    end
+
+    # The same answer whether the caller preloaded contact_methods or not — the
+    # loaded branch exists only to spare a query per row on rosters and exports.
+    def phone_numbers
+      [ person.reload.phone_number, Person.includes(:contact_methods).find(person.id).phone_number ]
+    end
+
+    it "returns nil with no phone on file" do
+      add_phone("nope", kind: "sms")
+      expect(phone_numbers).to all(be_nil)
+    end
+
+    it "prefers the primary phone over the others" do
+      add_phone("555-0001")
+      add_phone("555-0002", primary: true)
+      expect(phone_numbers).to all(eq("555-0002"))
+    end
+
+    it "falls back to the first phone when none is primary" do
+      add_phone("555-0001")
+      add_phone("555-0002")
+      expect(phone_numbers).to all(eq("555-0001"))
+    end
+
+    it "ignores inactive phones, including an inactive primary" do
+      add_phone("555-0001", primary: true, inactive: true)
+      add_phone("555-0002")
+      expect(phone_numbers).to all(eq("555-0002"))
     end
   end
 

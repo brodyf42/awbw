@@ -24,6 +24,25 @@ RSpec.describe "Event registration edit page", type: :system do
     end
   end
 
+  describe "Linked organizations card" do
+    let(:organization) { create(:organization, name: "Asian Women Shelter") }
+
+    it "renders a linked organization as a profile link with a × removal toggle" do
+      create(:event_registration_organization, event_registration: registration, organization: organization)
+
+      sign_in(admin)
+      visit edit_event_registration_path(registration)
+
+      within("section", text: "Linked organizations") do
+        expect(page).to have_link("Asian Women Shelter", href: organization_path(organization))
+        # The × is a <label for> wired to the (visually hidden) checkbox that
+        # submits the link — unchecking it marks the org for removal on save.
+        expect(page).to have_css("label[for='org_chip_#{organization.id}']")
+        expect(page).to have_field("event_registration[organization_ids][]", type: "checkbox", with: organization.id.to_s, visible: :all)
+      end
+    end
+  end
+
   describe "payment & allocation history" do
     it "shows the cost/allocated/due totals with nothing allocated" do
       sign_in(admin)
@@ -161,7 +180,7 @@ RSpec.describe "Event registration edit page", type: :system do
 
       click_on "Save changes"
 
-      expect(page).to have_current_path(registrants_event_path(event))
+      expect(page).to have_current_path(registrants_event_path(event, highlight: registration.id))
       expect(registration.reload.shoutout).to be(true)
       expect(registration.registrant.reload.shoutout_text).to eq("Grateful to bring art to the survivors we serve.")
     end
@@ -198,7 +217,7 @@ RSpec.describe "Event registration edit page", type: :system do
       check "Day 2", allow_label_click: true
       click_on "Save changes"
 
-      expect(page).to have_current_path(registrants_event_path(event))
+      expect(page).to have_current_path(registrants_event_path(event, highlight: registration.id))
       expect(registration.reload.completed_day_1).to be(true)
       expect(registration.completed_day_2).to be(true)
     end
@@ -221,7 +240,7 @@ RSpec.describe "Event registration edit page", type: :system do
       click_on "Save changes"
 
       # Wait for the save round-trip to land before reading the database.
-      expect(page).to have_current_path(registrants_event_path(event))
+      expect(page).to have_current_path(registrants_event_path(event, highlight: registration.id))
       expect(registration.reload.status).to eq("attended")
       expect(registration.completed_day_count).to eq(3)
     end

@@ -10,8 +10,15 @@ class EventRegistrationsController < ApplicationController
     base_scope = authorized_scope(EventRegistration.all)
     filtered = base_scope.search_by_params(params)
     @event_registrations_count = filtered.size
-    @event_registrations = filtered.includes(registrant: [ :user, { avatar_attachment: :blob } ], event: :event_forms).paginate(page: params[:page], per_page: per_page)
+    registrant_includes = [ :user, { avatar_attachment: :blob } ]
+    # The phone/scholarship/payment/CE cells are CSV-only, so preload what they
+    # read (per-row queries otherwise) without eager-loading it for the HTML index.
+    registrant_includes << :contact_methods if request.format.csv?
+    includes = [ { registrant: registrant_includes }, { event: :event_forms } ]
+    includes += [ :allocations, :scholarships, { continuing_education_registrations: [ :professional_license, :allocations ] } ] if request.format.csv?
+    @event_registrations = filtered.includes(includes).paginate(page: params[:page], per_page: per_page)
     @events = Event.order(start_date: :desc)
+    @event_years = Event.where.not(start_date: nil).distinct.pluck(Arel.sql("YEAR(start_date)")).sort.reverse
     @organizations = authorized_scope(Organization.all, as: :affiliated).order(:name)
     @filtered_event = Event.find_by(id: params[:event_id]) if params[:event_id].present?
     @selected_registrant = Person.find_by(id: params[:registrant_id]) if params[:registrant_id].present?
@@ -92,7 +99,7 @@ class EventRegistrationsController < ApplicationController
         format.turbo_stream
         format.html {
           case params[:return_to]
-          when "registrants" then redirect_to registrants_event_path(@event_registration.event), notice: notice, status: :see_other
+          when "registrants" then redirect_to helpers.registrants_event_row_path(@event_registration.event, @event_registration.id), notice: notice, status: :see_other
           when "index" then redirect_to event_registrations_path, notice: notice, status: :see_other
           when "ticket" then redirect_to registration_ticket_path(@event_registration.slug), notice: notice, status: :see_other
           when "preview_reminder" then redirect_to preview_reminder_event_path(@event_registration.event), notice: notice, status: :see_other
@@ -101,7 +108,7 @@ class EventRegistrationsController < ApplicationController
             # No explicit origin: keep admins in the management context (the
             # roster) rather than dropping them on the public registration show.
             if allowed_to?(:manage?, with: EventRegistrationPolicy)
-              redirect_to registrants_event_path(@event_registration.event), notice: notice, status: :see_other
+              redirect_to helpers.registrants_event_row_path(@event_registration.event, @event_registration.id), notice: notice, status: :see_other
             else
               redirect_to registration_ticket_path(@event_registration.slug), notice: notice, status: :see_other
             end
@@ -350,7 +357,7 @@ class EventRegistrationsController < ApplicationController
 
   def csv_export(registrations)
     CSV.generate(headers: true) do |csv|
-      csv << [ "First name", "Last name", "Email", "Phone", "Event", "Status", "Scholarship", "Scholarship completed", "Payment status", "Intends to pay", "Payment total" ]
+      csv << [ "First name", "Last name", "Email", "Phone", "Event", "Status", "Scholarship", "Scholarship completed", "Payment status", "Intends to pay", "Payment total", "CE status", "CE paid", "CE due" ]
       registrations.find_each do |er|
         r = er.registrant
         e = er.event
@@ -364,10 +371,13 @@ class EventRegistrationsController < ApplicationController
           e&.title.to_s,
           er.attendance_status_label,
           er.scholarships.any? ? "Yes" : "No",
-          er.scholarships.completed.any? ? "Yes" : "No",
+          er.scholarships.any?(&:tasks_completed?) ? "Yes" : "No",
           cost_required ? er.payment_status_label : "",
           er.intends_to_pay? ? "Yes" : "No",
-          total_cents.positive? ? format("%.2f", total_cents / 100.0) : ""
+          csv_dollars(total_cents),
+          er.ce_registered? ? er.ce_status_label.to_s : "",
+          csv_dollars(er.ce_amount_paid_cents),
+          csv_dollars(er.ce_amount_due_cents)
         ]
       end
     end

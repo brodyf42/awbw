@@ -1,6 +1,7 @@
 class EventRegistration < ApplicationRecord
   include RemoteSearchable
   include Registerable
+  include Certifiable
 
   belongs_to :registrant, class_name: "Person"
   belongs_to :event
@@ -27,6 +28,21 @@ class EventRegistration < ApplicationRecord
   ACTIVE_STATUSES = %w[ registered attended incomplete_attendance transferred_in ].freeze
   INACTIVE_STATUSES = %w[ cancelled no_show transferred_out ].freeze
   ATTENDANCE_STATUSES = (ACTIVE_STATUSES + INACTIVE_STATUSES).freeze
+  # Attendance outcomes surfaced as their own participation buckets; every other
+  # status falls into "other" (registered, transfers, cancellations).
+  NAMED_OUTCOME_STATUSES = %w[ attended incomplete_attendance no_show ].freeze
+
+  # Human labels for each attendance status — the single source of truth for
+  # status display (badges, filters, the dashboard breakdown).
+  ATTENDANCE_STATUS_LABELS = {
+    "registered" => "Registered",
+    "attended" => "Attended",
+    "incomplete_attendance" => "Incomplete attendance",
+    "transferred_in" => "Transferred in",
+    "cancelled" => "Cancelled",
+    "no_show" => "No show",
+    "transferred_out" => "Transferred out"
+  }.freeze
 
   # Manual onboarding checklist steps shown on the event's Onboarding tab. Each is
   # an audited boolean (stored as a row in event_registration_checklist_completions,
@@ -58,7 +74,21 @@ class EventRegistration < ApplicationRecord
   scope :inactive, -> { where(status: INACTIVE_STATUSES) }
   scope :attended, -> { where(status: "attended") }
   scope :registrant_ids, ->(ids) { where(registrant_id: ids.to_s.split("-").map(&:to_i)) }
-  scope :attendance_status, ->(status) { where(status: status) }
+  scope :attendance_status, ->(status) {
+    status == "other" ? where.not(status: NAMED_OUTCOME_STATUSES) : where(status: status)
+  }
+  # Registrations on facilitator-training events ("trainings") vs everything else
+  # ("other"); any other value is a no-op so "all events" passes through.
+  scope :event_type, ->(type) {
+    case type
+    when "trainings" then joins(:event).where(events: { facilitator_training: true })
+    when "other" then joins(:event).where(events: { facilitator_training: false })
+    else all
+    end
+  }
+  # Registrations whose event falls in the given calendar year. Uses a subquery
+  # (via Event.in_year) so it composes with the other filters without extra joins.
+  scope :in_event_year, ->(year) { where(event_id: Event.in_year(year.to_i)) }
   scope :registrant_state, ->(state) {
     joins(registrant: :addresses)
       .where(addresses: { inactive: false, state: state })
@@ -146,7 +176,8 @@ class EventRegistration < ApplicationRecord
   # Filter by CE state. All derived (no stored CE status): payment (requested/paid)
   # is computed from allocations vs cost like the registration's own payment state;
   # issued/not_issued read the certificate delivery; needs_license is a CE
-  # registration sitting on a placeholder license.
+  # registration sitting on a placeholder license. "registered" adds no condition
+  # of its own — the EXISTS alone means "signed up for CE, whatever its state".
   scope :ce_status, ->(value) {
     paid_sql = <<~SQL.squish
       COALESCE((SELECT SUM(a.amount) FROM allocations a
@@ -155,6 +186,7 @@ class EventRegistration < ApplicationRecord
     SQL
     condition =
       case value
+      when "registered" then "TRUE"
       when "needs_license" then "pl.number IS NULL"
       when "paid" then paid_sql
       when "requested" then "NOT (#{paid_sql})"
@@ -257,6 +289,15 @@ class EventRegistration < ApplicationRecord
     if params[:ce_status].present?
       registrations = registrations.ce_status(params[:ce_status])
     end
+    if params[:attendance_status].present?
+      registrations = registrations.attendance_status(params[:attendance_status])
+    end
+    if params[:event_type].present?
+      registrations = registrations.event_type(params[:event_type])
+    end
+    if params[:event_year].present?
+      registrations = registrations.in_event_year(params[:event_year])
+    end
     registrations
   end
 
@@ -331,7 +372,9 @@ class EventRegistration < ApplicationRecord
   end
 
   def scholarship?
-    scholarships.exists?
+    # any? (not exists?) so a preloaded :scholarships association is reused
+    # instead of firing a per-row query on the registrants roster.
+    scholarships.any?
   end
 
   # Noun phrase distinguishing a scholarship-requested registration from a
@@ -361,8 +404,13 @@ class EventRegistration < ApplicationRecord
   end
 
   # The certificate of completion unlocks once the training has happened, the
-  # registrant attended, and any scholarship tasks are complete.
+  # registrant attended, and any scholarship tasks are complete. Issuing a CE
+  # certificate (an admin marking the credit sent) is itself an affirmation that
+  # the registrant completed the training, so it unlocks the certificate too —
+  # even when attendance was never tracked.
   def certificate_available?
+    return true if ce_certificate_issued?
+
     event.end_date.present? && event.end_date.past? && attended? && scholarship_tasks_met?
   end
 
@@ -438,6 +486,12 @@ class EventRegistration < ApplicationRecord
     continuing_education_registrations.sum { |c| c.remaining_cost }
   end
 
+  # CE cash collected across this registration's CE registrations (payments only,
+  # excluding discounts) — the CE analogue of payments_sum, for revenue reporting.
+  def ce_amount_paid_cents
+    continuing_education_registrations.sum { |c| c.payments_sum }
+  end
+
   # True only when every CE registration has a known license number on file.
   def ce_license_provided?
     return false unless ce_registered?
@@ -501,16 +555,7 @@ class EventRegistration < ApplicationRecord
 
   def attendance_status_label
     return "—" if status.blank?
-    case status
-    when "registered" then "Registered"
-    when "attended" then "Attended"
-    when "incomplete_attendance" then "Incomplete attendance"
-    when "cancelled" then "Cancelled"
-    when "no_show" then "No show"
-    when "transferred_in" then "Transferred in"
-    when "transferred_out" then "Transferred out"
-    else status.humanize
-    end
+    ATTENDANCE_STATUS_LABELS.fetch(status, status.humanize)
   end
 
   # The completion record for a checklist step, or nil. Reads from the loaded
@@ -603,7 +648,7 @@ class EventRegistration < ApplicationRecord
   def generate_slug
     loop do
       self.slug = SecureRandom.urlsafe_base64(16)
-      break unless EventRegistration.exists?(slug: slug)
+      break unless self.class.exists?(slug: slug)
     end
   end
 

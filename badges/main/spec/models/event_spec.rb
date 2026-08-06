@@ -49,6 +49,41 @@ RSpec.describe Event, type: :model do
     end
   end
 
+  describe "#date_title" do
+    it "labels the event by date and title, without the time or parens" do
+      event = build(:event, title: "Youth Creativity Day", start_date: Time.zone.local(2026, 9, 14, 14, 9))
+      expect(event.date_title).to eq("2026-09-14 — Youth Creativity Day")
+    end
+  end
+
+  describe ".in_year" do
+    it "matches events by the calendar year of their start date" do
+      in_year = create(:event, start_date: Time.zone.parse("2025-06-01 09:00"))
+      other_year = create(:event, start_date: Time.zone.parse("2024-06-01 09:00"))
+      expect(Event.in_year(2025)).to include(in_year)
+      expect(Event.in_year(2025)).not_to include(other_year)
+    end
+
+    it "includes a same-day start time on Dec 31 (not just midnight)" do
+      nye = create(:event, start_date: Time.zone.parse("2025-12-31 09:00"))
+      expect(Event.in_year(2025)).to include(nye)
+    end
+  end
+
+  describe ".upcoming" do
+    it "includes an event starting today" do
+      # start_date is a date column, so comparing against a time-of-day would
+      # drop today's events at midnight.
+      today = create(:event, start_date: Date.current)
+      expect(Event.upcoming).to include(today)
+    end
+
+    it "excludes an event that already started" do
+      past = create(:event, start_date: 1.day.ago)
+      expect(Event.upcoming).not_to include(past)
+    end
+  end
+
   describe "#ended?" do
     it "returns true when end_date is in the past" do
       event = build(:event, end_date: 1.day.ago)
@@ -89,34 +124,25 @@ RSpec.describe Event, type: :model do
   end
 
   describe "#videoconference_details_visible?" do
-    it "returns true when there is no drip date to wait on (no start_date)" do
-      event = build(:event, start_date: nil)
+    it "is visible when no videoconference callout has been materialized (nothing to gate on)" do
+      event = create(:event, start_date: 8.days.from_now, end_date: 8.days.from_now + 2.hours)
       expect(event.videoconference_details_visible?).to be true
     end
 
-    it "returns false more than a week before the start" do
-      event = build(:event, start_date: 8.days.from_now, end_date: 8.days.from_now + 2.hours)
-      expect(event.videoconference_details_visible?).to be false
-    end
-
-    it "returns true within a week of the start" do
-      event = build(:event, start_date: 6.days.from_now, end_date: 6.days.from_now + 2.hours)
-      expect(event.videoconference_details_visible?).to be true
-    end
-
-    it "returns true once the event has started" do
-      event = build(:event, start_date: 1.hour.ago, end_date: 1.hour.from_now)
-      expect(event.videoconference_details_visible?).to be true
-    end
-
-    it "defers to the videoconference callout's drip date over the week-before default" do
+    it "is gated while the materialized callout's drip date is still in the future" do
       event = create(:event, start_date: 6.days.from_now, end_date: 6.days.from_now + 2.hours)
       create(:registration_ticket_callout, event:, builtin_key: "videoconference",
         display_from: 2.days.from_now)
 
-      # Within the week-before default (which would be true), but before the
-      # callout's later drip date.
       expect(event.videoconference_details_visible?).to be false
+    end
+
+    it "is visible once the materialized callout's drip date has passed" do
+      event = create(:event, start_date: 6.days.from_now, end_date: 6.days.from_now + 2.hours)
+      create(:registration_ticket_callout, event:, builtin_key: "videoconference",
+        display_from: 1.day.ago)
+
+      expect(event.videoconference_details_visible?).to be true
     end
 
     it "is visible immediately when the callout's drip date has been cleared" do
@@ -379,6 +405,27 @@ RSpec.describe Event, type: :model do
 
     it "is false when CE hours are zero" do
       expect(build(:event, ce_hours_offered: 0)).not_to be_ce_eligible
+    end
+  end
+
+  describe "ce_payment_due_deadline date/time fields" do
+    it "merges the date and time inputs into the datetime column on save" do
+      event = create(:event,
+                     ce_payment_due_deadline_date: "2026-07-22",
+                     ce_payment_due_deadline_time: "09:00")
+      deadline = event.reload.ce_payment_due_deadline
+      expect(deadline.in_time_zone(Time.zone).strftime("%Y-%m-%d %H:%M")).to eq("2026-07-22 09:00")
+    end
+
+    it "exposes the stored deadline back through the virtual date/time readers" do
+      event = create(:event, ce_payment_due_deadline: Time.zone.local(2026, 7, 22, 9, 0))
+      expect(event.ce_payment_due_deadline_date).to eq("2026-07-22")
+      expect(event.ce_payment_due_deadline_time).to eq("09:00")
+    end
+
+    it "leaves the deadline nil when both inputs are blank" do
+      event = create(:event, ce_payment_due_deadline_date: "", ce_payment_due_deadline_time: "")
+      expect(event.reload.ce_payment_due_deadline).to be_nil
     end
   end
 

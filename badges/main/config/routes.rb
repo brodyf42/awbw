@@ -13,7 +13,6 @@ Rails.application.routes.draw do
                             unlocks: "unlocks" }
   devise_scope :user do
     get "/confirm/:confirmation_token", to: "confirmations#show", as: :confirm
-    get "/users/confirmation/resend", to: "confirmations#resend", as: :resend_user_confirmation
   end
   get "users/change_password", to: "users#change_password", as: "change_password"
   post "users/update_password", to: "users#update_password", as: "update_password"
@@ -74,8 +73,8 @@ Rails.application.routes.draw do
     end
   end
   resources :community_news
-  get "bulk_payment/:slug", to: "events/bulk_payments#ticket", as: :bulk_payment_ticket
-  post "bulk_payment/:slug/resend_confirmation", to: "events/bulk_payments#resend_confirmation", as: :bulk_payment_resend_confirmation
+  get "bulk_payment/:slug", to: "events/bulk_payment_form_submissions#ticket", as: :bulk_payment_ticket
+  post "bulk_payment/:slug/resend_confirmation", to: "events/bulk_payment_form_submissions#resend_confirmation", as: :bulk_payment_resend_confirmation
   get "registration/:slug", to: "events/registrations#show", as: :registration_ticket
   get "registration/:slug/invoice", to: "events/registrations#invoice", as: :registration_invoice
   get "registration/:slug/receipt", to: "events/registrations#receipt", as: :registration_receipt
@@ -91,6 +90,7 @@ Rails.application.routes.draw do
   get "registration/:slug/handouts", to: "events/callouts#handouts", as: :registration_handouts
   get "registration/:slug/resource/:resource_id", to: "events/callouts#resource", as: :registration_resource
   get "registration/:slug/videoconference", to: "events/callouts#videoconference", as: :registration_videoconference
+  get "registration/:slug/staff", to: "events/callouts#staff", as: :registration_staff
   post "registration/:slug/resend_confirmation", to: "events/registrations#resend_confirmation", as: :registration_resend_confirmation
   post "registration/:slug/cancel", to: "events/registrations#cancel", as: :registration_cancel
   post "registration/:slug/reactivate", to: "events/registrations#reactivate", as: :registration_reactivate
@@ -106,6 +106,21 @@ Rails.application.routes.draw do
       patch :update_onboarding
     end
     resources :comments, only: [ :index, :create, :update ]
+  end
+  resources :topic_subscriptions, except: [ :show ] do
+    collection do
+      get :email_addresses
+    end
+    member do
+      patch :unsubscribe
+      patch :resubscribe
+    end
+  end
+  resources :topic_subscription_types, except: [ :show ] do
+    member do
+      patch :archive
+      patch :unarchive
+    end
   end
   resources :forms do
     member do
@@ -131,6 +146,8 @@ Rails.application.routes.draw do
   resources :events do
     collection do
       get :revenue
+      get :participation
+      get :statistics
     end
     member do
       get :dashboard
@@ -143,6 +160,7 @@ Rails.application.routes.draw do
       get "sample_ticket/scholarship", to: "events/callouts#scholarship", defaults: { sample: "1" }, as: :sample_scholarship
       get "sample_ticket/ce", to: "events/callouts#ce", defaults: { sample: "1" }, as: :sample_ce
       get "sample_ticket/videoconference", to: "events/callouts#videoconference", defaults: { sample: "1" }, as: :sample_videoconference
+      get "sample_ticket/staff", to: "events/callouts#staff", defaults: { sample: "1" }, as: :sample_staff
       get :background
       get :registrants
       get :onboarding
@@ -150,19 +168,21 @@ Rails.application.routes.draw do
       get "staff/edit", action: :edit_staff, as: :edit_staff
       patch "staff", action: :update_staff
       get :recipients
-      get :bulk_payments
+      get :bulk_payments, to: "events/bulk_payments#index"
       get :preview_reminder
       patch :preview
       post :copy_registration_form
       post :confirm_reminder
       post :send_reminder
-      post :allocate_bulk_payment
-      post :create_bulk_payment
+      post :allocate_bulk_payment, to: "events/bulk_payments#allocate"
+      post :bulk_payments, to: "events/bulk_payments#create"
+      post :link_bulk_payment, to: "events/bulk_payments#link"
+      delete :unlink_bulk_payment, to: "events/bulk_payments#unlink"
     end
     resources :registration_ticket_callouts, only: [ :show, :update ]
     resource :registrations, only: %i[ create ], module: :events, as: :registrant_registration
     resource :public_registration, only: [ :new, :create, :show ], module: :events
-    resource :bulk_payment, only: [ :new, :create, :show ], module: :events
+    resource :bulk_payment, only: [ :new, :create, :show ], controller: "events/bulk_payment_form_submissions"
     resource :invoice, only: [ :show ], module: :events
     get "form_submissions/:person_id", to: "events/form_submissions#show", as: :registrant_submissions
   end
@@ -176,6 +196,7 @@ Rails.application.routes.draw do
       get :bio
     end
     resources :comments, only: [ :index, :create, :update ]
+    resources :dues_subscriptions, only: [ :index, :new, :create ]
   end
   resources :faqs
   resources :other_responses, only: [ :index, :update ] do
@@ -184,7 +205,7 @@ Rails.application.routes.draw do
       post :curate
     end
   end
-  resources :notifications, only: [ :index, :show, :update ] do
+  resources :notifications, only: [ :index, :new, :create, :show, :update ] do
     member do
       post :resend
     end
@@ -212,6 +233,12 @@ Rails.application.routes.draw do
   resources :allocations, only: [ :new, :create, :index ] do
     post :revert, on: :member
   end
+
+  resources :dues_subscriptions, only: [ :edit, :update ] do
+    resources :dues_registrations, only: [ :new, :create ]
+  end
+
+  resources :dues_registrations, only: [ :index, :edit, :update ]
 
   resources :refunds, only: [ :new, :create, :show ]
   resources :organization_statuses

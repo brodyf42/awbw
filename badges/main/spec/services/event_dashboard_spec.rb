@@ -42,6 +42,10 @@ RSpec.describe EventDashboard do
       create(:form_field, form: registration_form, field_identifier: "primary_age_group",
                           name: "Primary Age Group(s) Served", answer_type: :multi_select_checkbox)
     end
+    let(:additional_age_group_field) do
+      create(:form_field, form: registration_form, field_identifier: "additional_age_group",
+                          name: "Additional Age Group(s) Served", answer_type: :multi_select_checkbox)
+    end
 
     let!(:reg1) do
       # Affiliation exists before registration so it is captured in the snapshot.
@@ -102,6 +106,16 @@ RSpec.describe EventDashboard do
       create(:form_answer, form_field: age_group_field, submitted_answer: "#{age_group1.id}, #{age_group2.id}",
                            form_submission: create(:form_submission, person: person2, form: registration_form))
       create(:form_answer, form_field: age_group_field, submitted_answer: age_group_excluded.id.to_s,
+                           form_submission: create(:form_submission, person: cancelled_person, form: registration_form))
+
+      # Additional age group(s) served, captured as "additional_age_group" answers.
+      # person1 → Adults + Teens (Adults dupes the primary answer, so it dedupes);
+      # cancelled → Adults (ignored). This makes "All age groups" (primary +
+      # additional) differ from the primary-only breakdown.
+      create(:form_answer, form_field: additional_age_group_field,
+                           submitted_answer: "#{age_group1.id}, #{age_group2.id}",
+                           form_submission: create(:form_submission, person: person1, form: registration_form))
+      create(:form_answer, form_field: additional_age_group_field, submitted_answer: age_group1.id.to_s,
                            form_submission: create(:form_submission, person: cancelled_person, form: registration_form))
 
       # States from active registrant addresses; inactive address excluded.
@@ -359,6 +373,22 @@ RSpec.describe EventDashboard do
         map = dashboard.age_group_registrant_ids_by_category
         expect(map[age_group1.id]).to contain_exactly(person1.id, person2.id)
         expect(map[age_group2.id]).to contain_exactly(person2.id)
+      end
+    end
+
+    describe "all age groups (primary + additional registration responses)" do
+      it "returns unique age-group categories across both age group questions" do
+        expect(dashboard.all_age_groups).to contain_exactly(age_group1, age_group2)
+      end
+
+      it "counts distinct registrants per age group, deduping across both questions" do
+        expect(dashboard.all_age_group_counts).to eq(age_group1.id => 2, age_group2.id => 2)
+      end
+
+      it "maps each age group to its registrant ids across both questions" do
+        map = dashboard.all_age_group_registrant_ids_by_category
+        expect(map[age_group1.id]).to contain_exactly(person1.id, person2.id)
+        expect(map[age_group2.id]).to contain_exactly(person1.id, person2.id)
       end
     end
 
@@ -637,29 +667,81 @@ RSpec.describe EventDashboard do
     end
   end
 
-  # Continuing-education fees are stubbed to zero until the feature (and its
-  # migration) lands. The dashboard still renders the section, showing $0.
-  describe "continuing-education fees (stubbed)" do
-    let(:event) { create(:event, cost_cents: 10_000) }
+  # CE fees are billed per ContinuingEducationRegistration and flow through the
+  # generic payment/allocation system. The event is free-registration to isolate
+  # CE money (and prove CE still reports on a free event). Cancelled registrants'
+  # CE is ignored, like their registration fees.
+  describe "continuing-education fees" do
+    let(:event) { create(:event, cost_cents: 0) }
+    let(:paid_person) { create(:person) }
+    let(:partial_person) { create(:person) }
+    let(:unpaid_person) { create(:person) }
+
+    let!(:paid_reg) { create(:event_registration, event: event, registrant: paid_person, status: "registered") }
+    let!(:partial_reg) { create(:event_registration, event: event, registrant: partial_person, status: "registered") }
+    let!(:unpaid_reg) { create(:event_registration, event: event, registrant: unpaid_person, status: "registered") }
 
     before do
-      create(:event_registration, event: event, registrant: create(:person), status: "registered")
+      ce_paid = create(:continuing_education_registration, event_registration: paid_reg, cost_cents: 10_000)
+      create(:allocation, source: create(:payment, amount_cents: 10_000, amount_cents_remaining: 10_000),
+                          allocatable: ce_paid, amount: 10_000)
+
+      ce_partial = create(:continuing_education_registration, event_registration: partial_reg, cost_cents: 8_000)
+      create(:allocation, source: create(:payment, amount_cents: 3_000, amount_cents_remaining: 3_000),
+                          allocatable: ce_partial, amount: 3_000)
+
+      create(:continuing_education_registration, event_registration: unpaid_reg, cost_cents: 6_000)
+
+      cancelled = create(:event_registration, event: event, registrant: create(:person), status: "cancelled")
+      ce_cancelled = create(:continuing_education_registration, event_registration: cancelled, cost_cents: 20_000)
+      create(:allocation, source: create(:payment, amount_cents: 20_000, amount_cents_remaining: 20_000),
+                          allocatable: ce_cancelled, amount: 20_000)
     end
 
-    it "reports zero across totals, splits, and registrant lists" do
-      expect(dashboard.cont_ed_total_cents).to eq(0)
-      expect(dashboard.cont_ed_paid_cents).to eq(0)
-      expect(dashboard.cont_ed_outstanding_cents).to eq(0)
-      expect(dashboard.cont_ed_paid_count).to eq(0)
-      expect(dashboard.cont_ed_unpaid_count).to eq(0)
-      expect(dashboard.cont_ed_paid_registrants).to be_empty
-      expect(dashboard.cont_ed_unpaid_registrants).to be_empty
+    it "sums CE cash collected across active CE registrations" do
+      expect(dashboard.cont_ed_paid_cents).to eq(13_000)
     end
 
-    it "adds nothing to the grand total" do
+    it "sums CE cost still owed after allocations" do
+      expect(dashboard.cont_ed_outstanding_cents).to eq(11_000)
+    end
+
+    it "reports CE total as paid plus outstanding" do
+      expect(dashboard.cont_ed_total_cents).to eq(24_000)
+    end
+
+    it "counts registrants whose CE is fully paid vs still owing" do
+      expect(dashboard.cont_ed_paid_count).to eq(1)
+      expect(dashboard.cont_ed_unpaid_count).to eq(2)
+    end
+
+    it "lists the registrants behind each CE bucket" do
+      expect(dashboard.cont_ed_paid_registrants).to contain_exactly(paid_person)
+      expect(dashboard.cont_ed_unpaid_registrants).to contain_exactly(partial_person, unpaid_person)
+    end
+
+    it "maps each registrant to their CE paid / due amounts, reconciling with the totals" do
+      expect(dashboard.cont_ed_paid_by_registrant[paid_person.id]).to eq(10_000)
+      expect(dashboard.cont_ed_paid_by_registrant[partial_person.id]).to eq(3_000)
+      expect(dashboard.cont_ed_paid_by_registrant.values.sum).to eq(dashboard.cont_ed_paid_cents)
+
+      expect(dashboard.cont_ed_due_by_registrant[partial_person.id]).to eq(5_000)
+      expect(dashboard.cont_ed_due_by_registrant[unpaid_person.id]).to eq(6_000)
+      expect(dashboard.cont_ed_due_by_registrant.values.sum).to eq(dashboard.cont_ed_outstanding_cents)
+    end
+
+    it "counts distinct registrants with continuing education" do
+      expect(dashboard.ce_registrant_count).to eq(3)
+    end
+
+    it "adds CE fees to the grand total and cash breakdown" do
       expect(dashboard.grand_total_cents).to eq(
-        dashboard.scholarship_total_cents + dashboard.received_cents + dashboard.outstanding_cents
+        dashboard.registration_subtotal_cents + dashboard.scholarship_total_cents +
+          dashboard.cont_ed_total_cents + dashboard.unallocated_bulk_payment_cents
       )
+      expect(dashboard.grand_total_cents).to eq(24_000)
+      expect(dashboard.collected_cents).to eq(13_000)
+      expect(dashboard.due_cents).to eq(11_000)
     end
   end
 
@@ -765,6 +847,14 @@ RSpec.describe EventDashboard do
       expect(statuses[ongoing_facilitator.id]).to eq([ :ongoing ])
       expect(statuses[reinstated_facilitator.id]).to eq([ :reinstated ])
       expect(statuses).not_to have_key(cancelled_facilitator.id)
+    end
+
+    it "groups registrant ids by program status, for the breakdown drill-in" do
+      ids = dashboard.program_status_registrant_ids
+
+      expect(ids[:new]).to contain_exactly(new_facilitator.id)
+      expect(ids[:ongoing]).to contain_exactly(ongoing_facilitator.id)
+      expect(ids[:reinstated]).to contain_exactly(reinstated_facilitator.id)
     end
   end
 
@@ -903,6 +993,61 @@ RSpec.describe EventDashboard do
              amount_cents: 7_000, amount_cents_remaining: 7_000)
 
       expect(dashboard.unallocated_bulk_payment_cents).to eq(0)
+    end
+  end
+
+  describe "attendance stats" do
+    let(:event) { create(:event) }
+
+    context "with a mix of attendance outcomes" do
+      before do
+        create(:event_registration, event: event, registrant: create(:person, first_name: "Aa"), status: "attended")
+        create(:event_registration, event: event, registrant: create(:person, first_name: "Ab"), status: "attended")
+        create(:event_registration, event: event, registrant: create(:person, first_name: "Ba"), status: "incomplete_attendance")
+        create(:event_registration, event: event, registrant: create(:person, first_name: "Ca"), status: "no_show")
+        create(:event_registration, event: event, registrant: create(:person, first_name: "Da"), status: "registered")
+        create(:event_registration, event: event, registrant: create(:person, first_name: "Ea"), status: "transferred_in")
+        create(:event_registration, event: event, registrant: create(:person, first_name: "Fa"), status: "cancelled")
+      end
+
+      it "counts each attendance status individually" do
+        expect(dashboard.attendance_count_for("attended")).to eq(2)
+        expect(dashboard.attendance_count_for("incomplete_attendance")).to eq(1)
+        expect(dashboard.attendance_count_for("no_show")).to eq(1)
+        expect(dashboard.attendance_count_for("registered")).to eq(1)
+        expect(dashboard.attendance_count_for("transferred_in")).to eq(1)
+        expect(dashboard.attendance_count_for("cancelled")).to eq(1)
+        expect(dashboard.attendance_count_for("transferred_out")).to eq(0)
+      end
+
+      it "rates full attendance over every registrant (active + no-shows, excluding cancellations)" do
+        expect(dashboard.attendance_recorded?).to be(true)
+        expect(dashboard.attendance_outcome_count).to eq(4)
+        # 5 active registrants (attended ×2, incomplete, registered, transferred_in)
+        # + 1 no-show; the cancellation is excluded.
+        expect(dashboard.expected_attendee_count).to eq(6)
+        expect(dashboard.attendance_rate).to eq(2.0 / 6)
+      end
+
+      it "lists the registrants behind each status" do
+        expect(dashboard.attendance_registrants("attended").map(&:first_name)).to eq(%w[ Aa Ab ])
+        expect(dashboard.attendance_registrants("no_show").map(&:first_name)).to eq(%w[ Ca ])
+        expect(dashboard.attendance_registrants("registered", "transferred_in").map(&:first_name)).to eq(%w[ Da Ea ])
+        expect(dashboard.attendance_registrants("cancelled").map(&:first_name)).to eq(%w[ Fa ])
+      end
+    end
+
+    context "before any outcome is recorded" do
+      before do
+        create(:event_registration, event: event, status: "registered")
+      end
+
+      it "reports nothing recorded and a nil rate" do
+        expect(dashboard.attendance_recorded?).to be(false)
+        expect(dashboard.attendance_outcome_count).to eq(0)
+        expect(dashboard.attendance_rate).to be_nil
+        expect(dashboard.attendance_count_for("registered")).to eq(1)
+      end
     end
   end
 end

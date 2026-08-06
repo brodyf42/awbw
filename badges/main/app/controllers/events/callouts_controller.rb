@@ -12,7 +12,7 @@ module Events
     before_action :set_event
     # These pages carry an editable intro (the built-in row's "Callout page text")
     # above the app-controlled content, plus any resources linked to the row.
-    before_action :set_builtin_content, only: %i[ payment scholarship certificate videoconference ]
+    before_action :set_builtin_content, only: %i[ payment scholarship certificate videoconference staff ]
 
     helper_method :sample_preview?
 
@@ -34,16 +34,11 @@ module Events
       @document_cards = sample_preview? ? [] : payment_document_cards
     end
 
-    # Certificate of completion, rendered like the invoice. Only reachable once
-    # the certificate is unlocked.
+    # Certificate of completion: the certificate once unlocked, otherwise the
+    # pending unlock conditions.
     def certificate
-      # The sample preview always shows the template; a real registrant only sees
-      # it once the certificate is unlocked.
-      return if sample_preview?
-
-      unless @event_registration.certificate_available?
-        redirect_to registration_ticket_path(@event_registration.slug)
-      end
+      # The page shows the certificate once unlocked, or the pending unlock
+      # conditions until then, so there's nothing to gate here.
     end
 
     # Scholarship status: the award (amount, funder, criteria, tasks) once a
@@ -149,6 +144,7 @@ module Events
     def handouts
       return redirect_to registration_ticket_path(@event_registration.slug) unless builtin_published?("handouts")
       callout = @event.registration_ticket_callouts.find_by(builtin_key: "handouts")
+      @builtin_intro = callout&.description.presence
       @handout_cards = resource_cards_for(callout, icon: "fa-solid fa-file-pdf", return_to: "handouts")
     end
 
@@ -167,15 +163,28 @@ module Events
       @event = @event_registration.event.decorate
     end
 
+    # "Meet the staff" roster: the event's staff as the same flip-cards the admin
+    # staff page shows (shared _staff_cards partial). Reachable only when the
+    # built-in is published; the admin sample preview bypasses that gate.
+    def staff
+      return redirect_to(registration_ticket_path(@event_registration.slug)) unless sample_preview? || builtin_published?("staff")
+
+      @event = @event.decorate
+      @event_staffs = @event.event_staffs
+        .includes(person: [ :sectors, { categorizable_items: { category: :category_type } }, { avatar_attachment: :blob }, { affiliations: :organization } ])
+        .ordered_by_name
+    end
+
     # FAQ for the training, with a folded-in contact link. Only reachable when
     # the event shows the FAQ callout. Renders the editable FAQ callout copy (the
     # admin edits it like every other callout, using the <toggle> syntax for each
-    # question), falling back to the code-defined default for events that haven't
-    # materialized the card yet.
+    # question). The default questions are hydrated onto the row when it's
+    # materialized (seeded from BuiltinCallouts.faq_html), so a blanked
+    # description shows blank.
     def faq
       return redirect_to(registration_ticket_path(@event_registration.slug)) unless builtin_published?("faq")
       callout = @event.registration_ticket_callouts.find_by(builtin_key: "faq")
-      @faq_content = callout&.description.presence || BuiltinCallouts.faq_html
+      @faq_content = callout&.description
     end
 
     private
@@ -224,8 +233,9 @@ module Events
     # registrant page (PDF preview + download), each returning to this callout —
     # never inline.
     def set_builtin_content
-      callout = @event.registration_ticket_callouts.find_by(builtin_key: action_name)
-      @builtin_intro = callout&.description.presence
+      @builtin_callout = @event.registration_ticket_callouts.find_by(builtin_key: action_name)
+      @builtin_intro = @builtin_callout&.description.presence
+      callout = @builtin_callout
       callout = nil if action_name == "payment"
       @builtin_resource_cards = resource_cards_for(callout, icon: "fa-solid fa-file-lines", return_to: action_name)
     end

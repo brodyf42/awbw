@@ -153,6 +153,10 @@
                     input_html: {
                       class: "rounded-md border-gray-300 bg-blue-100 shadow-sm focus:ring-blue-500 focus:border-blue-500"
                     } %>
+        <% high_profile_gem = tag.i(class: "fa-solid fa-gem text-purple-600", aria: { hidden: true }) %>
+        <%= f.input :high_profile,
+                    label: "High profile",
+                    hint: "Shows a #{high_profile_gem} next to the org on dashboards and reports".html_safe %>
       </div>
     <% end %>
 
@@ -384,6 +388,7 @@
 
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-3">
           <%= f.input :profile_show_sectors, label: "Show sectors" %>
+          <%= f.input :profile_show_age_ranges, label: "Show age ranges" %>
           <%= f.input :profile_show_workshops, label: "Show workshops" %>
           <%= f.input :profile_show_stories, label: "Show stories" %>
           <%= f.input :profile_show_events_registered, label: "Show events hosted" %>
