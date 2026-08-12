@@ -7,15 +7,23 @@
 # account without extra per-filter SQL.
 class ReminderRecipientFilter
   # Free-text inputs matched in memory against the loaded registrations.
-  TEXT_KEYS = %i[ name reg_org grantor comment email ].freeze
+  # `funder_name` is a free-text search on the scholarship funder's name — kept
+  # distinct from the awbw/external funding-source `funder` scope so the shared
+  # roster/picker filter bar can't collide the two on the roster.
+  TEXT_KEYS = %i[ name reg_org funder_name comment email city ].freeze
   # Dropdown filters shared with the registrants roster. They reuse the
   # EventRegistration scopes (run once as a query) so both pages stay in sync —
   # same param names, options, and semantics.
   DROPDOWN_KEYS = %i[
-    attendance_status payment_status ce_status scholarship comment_status
-    org_status account_status state county
+    attendance_status payment_status payment_method ce_status scholarship
+    submission_status comment_status org_status account_status state county
   ].freeze
   FILTER_KEYS = (TEXT_KEYS + DROPDOWN_KEYS).freeze
+  # Every key above that is also a registrants-roster param, so the roster's
+  # "Send bulk emails" link can carry the active filters straight into the picker
+  # (see EventHelper#reminder_recipient_filters). The remaining text keys (name,
+  # reg_org, email) exist only here.
+  SHARED_ROSTER_KEYS = (DROPDOWN_KEYS + %i[ funder_name comment city ]).freeze
 
   def initialize(event_registrations, params, event: nil)
     @event_registrations = event_registrations
@@ -40,9 +48,10 @@ class ReminderRecipientFilter
   def matches_text?(reg)
     matches_name?(reg) &&
       matches_reg_org?(reg) &&
-      matches_grantor?(reg) &&
+      matches_funder?(reg) &&
       matches_comment?(reg) &&
-      matches_email?(reg)
+      matches_email?(reg) &&
+      matches_city?(reg)
   end
 
   # Apply the registrants-roster scopes for whichever dropdowns are set, then
@@ -54,11 +63,13 @@ class ReminderRecipientFilter
     scope = @event.event_registrations
     scope = scope.attendance_status(@params[:attendance_status]) if @params[:attendance_status].present?
     scope = scope.payment_status(@params[:payment_status]) if @params[:payment_status].present?
+    scope = scope.payment_method(@params[:payment_method]) if @params[:payment_method].present?
     scope = scope.ce_status(@params[:ce_status]) if @params[:ce_status].present?
     scope = scope.scholarship_status(@params[:scholarship]) if @params[:scholarship].present?
     scope = scope.comment_status(@params[:comment_status]) if @params[:comment_status].present?
     scope = scope.organization_status(@params[:org_status], @event) if @params[:org_status].present?
     scope = scope.account_status(@params[:account_status]) if @params[:account_status].present?
+    scope = scope.submission_status(@params[:submission_status], @event) if @params[:submission_status].present?
     scope = scope.registrant_state(@params[:state]) if @params[:state].present?
     scope = scope.registrant_county(@params[:county]) if @params[:county].present?
     scope.pluck(:id).to_set
@@ -74,10 +85,10 @@ class ReminderRecipientFilter
     end
   end
 
-  # Grantor = the funder behind a scholarship's grant. Only registrants who hold a
+  # The funder behind a scholarship's grant. Only registrants who hold a
   # scholarship drawn from a grant can match, per the filter label.
-  def matches_grantor?(reg)
-    any_term?(:grantor) do |term|
+  def matches_funder?(reg)
+    any_term?(:funder_name) do |term|
       reg.scholarships.any? do |scholarship|
         grant = scholarship.grant
         grant.present? && grant.funder_name.to_s.downcase.include?(term)
@@ -87,7 +98,19 @@ class ReminderRecipientFilter
 
   def matches_comment?(reg)
     any_term?(:comment) do |term|
-      reg.comments.any? { |comment| comment.body.to_s.downcase.include?(term) }
+      reg.comments.any? do |comment|
+        comment.body.to_s.downcase.include?(term) || comment.topic.to_s.downcase.include?(term)
+      end
+    end
+  end
+
+  # Skips inactive addresses, matching EventRegistration.registrant_city so the
+  # same City value narrows the roster and the picker identically.
+  def matches_city?(reg)
+    any_term?(:city) do |term|
+      reg.registrant.addresses.any? do |address|
+        !address.inactive? && address.city.to_s.downcase.include?(term)
+      end
     end
   end
 

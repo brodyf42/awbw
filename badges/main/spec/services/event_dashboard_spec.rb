@@ -503,6 +503,43 @@ RSpec.describe EventDashboard do
       expect(dashboard.scholarship_applicants).to eq([ separate_applicant, embedded_applicant ])
     end
 
+    it "maps each active registrant to their registration id" do
+      map = dashboard.registration_id_by_registrant
+
+      expect(map[embedded_applicant.id]).to eq(EventRegistration.find_by(event: event, registrant: embedded_applicant).id)
+      expect(map[separate_applicant.id]).to eq(EventRegistration.find_by(event: event, registrant: separate_applicant).id)
+    end
+
+    describe "#scholarship_applicants_by_funder" do
+      it "buckets applicants by their scholarship's grant funder, unfunded last, carrying the funder and its city/state" do
+        embedded_reg = event.event_registrations.find_by(registrant: embedded_applicant)
+        separate_reg = event.event_registrations.find_by(registrant: separate_applicant)
+        funder = create(:organization, name: "Joyful Heart Foundation")
+        create(:address, addressable: funder, city: "Los Angeles", state: "CA")
+        grant = create(:grant, name: "Healing Arts", funder: funder, amount_cents: 100_000)
+        funded = create(:scholarship, recipient: embedded_applicant, grant: grant, amount_cents: 1_000)
+        create(:allocation, source: funded, allocatable: embedded_reg, amount: 1_000)
+        unfunded = create(:scholarship, recipient: separate_applicant, amount_cents: 1_000)
+        create(:allocation, source: unfunded, allocatable: separate_reg, amount: 1_000)
+
+        groups = dashboard.scholarship_applicants_by_funder
+
+        expect(groups.map(&:name)).to eq([ "Joyful Heart Foundation", "Unfunded" ])
+        expect(groups.first.people).to eq([ embedded_applicant ])
+        expect(groups.first.funder).to eq(funder)
+        expect(groups.first.location).to eq("Los Angeles, CA")
+        expect(groups.last.people).to eq([ separate_applicant ])
+        expect(groups.last.funder).to be_nil
+      end
+
+      it "collects applicants with no awarded scholarship under 'No scholarship yet'" do
+        groups = dashboard.scholarship_applicants_by_funder
+
+        expect(groups.map(&:name)).to eq([ "No scholarship yet" ])
+        expect(groups.first.people).to match_array([ embedded_applicant, separate_applicant ])
+      end
+    end
+
     it "gathers scholarship answers wherever they were captured, keyed by applicant" do
       answers = dashboard.scholarship_answers_by_applicant
 
@@ -996,6 +1033,25 @@ RSpec.describe EventDashboard do
     end
   end
 
+  describe "unlinked registrations" do
+    let(:event) { create(:event) }
+
+    it "counts active registrations with no organization linked" do
+      linked = create(:event_registration, event: event, status: "registered")
+      create(:event_registration_organization, event_registration: linked)
+      create(:event_registration, event: event, status: "registered")
+      create(:event_registration, event: event, status: "attended")
+
+      expect(dashboard.unlinked_registration_count).to eq(2)
+    end
+
+    it "ignores inactive registrations" do
+      create(:event_registration, event: event, status: "cancelled")
+
+      expect(dashboard.unlinked_registration_count).to eq(0)
+    end
+  end
+
   describe "attendance stats" do
     let(:event) { create(:event) }
 
@@ -1048,6 +1104,90 @@ RSpec.describe EventDashboard do
         expect(dashboard.attendance_rate).to be_nil
         expect(dashboard.attendance_count_for("registered")).to eq(1)
       end
+    end
+  end
+
+  describe "scholarship funded/unfunded split" do
+    let(:event) { create(:event, cost_cents: 50_000) }
+    let(:person1) { create(:person) }
+    let(:person2) { create(:person) }
+    let(:person3) { create(:person) }
+    let(:person4) { create(:person) }
+
+    before do
+      reg1 = create(:event_registration, event: event, registrant: person1, status: "registered")
+      reg2 = create(:event_registration, event: event, registrant: person2, status: "registered")
+      reg4 = create(:event_registration, event: event, registrant: person4, status: "registered")
+
+      external = create(:scholarship, recipient: person1, amount_cents: 4_000, grant: create(:grant))
+      create(:allocation, source: external, allocatable: reg1, amount: 4_000)
+
+      comped = create(:scholarship, recipient: person2, amount_cents: 2_000, grant: nil)
+      create(:allocation, source: comped, allocatable: reg2, amount: 2_000)
+
+      # A grant the org donated to itself is subsidy, so it counts as UNFUNDED.
+      awbw = create(:organization, name: "A Window Between Worlds")
+      awbw_award = create(:scholarship, recipient: person4, amount_cents: 1_000, grant: create(:grant, funder: awbw))
+      create(:allocation, source: awbw_award, allocatable: reg4, amount: 1_000)
+
+      # A scholarship on a cancelled registration must be ignored everywhere.
+      cancelled = create(:event_registration, event: event, registrant: person3, status: "cancelled")
+      ignored = create(:scholarship, recipient: person3, amount_cents: 9_000, grant: create(:grant))
+      create(:allocation, source: ignored, allocatable: cancelled, amount: 9_000)
+    end
+
+    it "counts only externally grant-backed scholarships as funded" do
+      expect(dashboard.funded_scholarship_count).to eq(1)
+      expect(dashboard.funded_scholarship_cents).to eq(4_000)
+    end
+
+    it "counts grant-free and AWBW-donated scholarships as unfunded" do
+      expect(dashboard.unfunded_scholarship_count).to eq(2)
+      expect(dashboard.unfunded_scholarship_cents).to eq(3_000)
+    end
+
+    it "maps funded dollars per recipient, reconciling with the funded total" do
+      amounts = dashboard.funded_scholarship_cents_by_recipient
+      expect(amounts).to eq(person1.id => 4_000)
+      expect(amounts.values.sum).to eq(dashboard.funded_scholarship_cents)
+    end
+
+    it "maps unfunded dollars per recipient, reconciling with the unfunded total" do
+      amounts = dashboard.unfunded_scholarship_cents_by_recipient
+      expect(amounts).to eq(person2.id => 2_000, person4.id => 1_000)
+      expect(amounts.values.sum).to eq(dashboard.unfunded_scholarship_cents)
+    end
+
+    it "lists funded and unfunded recipients as name-sorted Person records" do
+      expect(dashboard.funded_scholarship_recipients).to eq([ person1 ])
+      expect(dashboard.unfunded_scholarship_recipients).to match_array([ person2, person4 ])
+    end
+  end
+
+  describe "program-status classification query count" do
+    it "classifies every represented org without a per-org affiliations query" do
+      event = create(:event, start_date: Date.current)
+      3.times do
+        person = create(:person)
+        registration = create(:event_registration, event: event, registrant: person, status: "registered")
+        org = create(:organization)
+        create(:affiliation, organization: org, person: person, title: "Facilitator", start_date: 1.year.ago)
+        registration.event_registration_organizations.create!(organization: org)
+      end
+      dashboard = EventDashboard.new(event)
+
+      affiliation_queries = 0
+      counter = ->(_name, _start, _finish, _id, payload) do
+        affiliation_queries += 1 if payload[:sql].to_s.include?("FROM `affiliations`")
+      end
+      ActiveSupport::Notifications.subscribed(counter, "sql.active_record") do
+        dashboard.program_status_counts
+        dashboard.program_status_by_organization
+      end
+
+      # Orgs' affiliations are preloaded (one query) plus the batched
+      # registrant-affiliation lookup — a small constant, not one-per-org.
+      expect(affiliation_queries).to be <= 3
     end
   end
 end

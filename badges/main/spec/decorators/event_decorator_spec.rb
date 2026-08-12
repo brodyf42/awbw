@@ -35,6 +35,18 @@ RSpec.describe EventDecorator do
     end
   end
 
+  describe "#archive_status_label" do
+    it "reads as Draft for an unpublished event" do
+      event = build(:event, :unpublished).decorate
+      expect(event.archive_status_label).to eq("Draft")
+    end
+
+    it "reads as Ended for a published event" do
+      event = build(:event, :published).decorate
+      expect(event.archive_status_label).to eq("Ended")
+    end
+  end
+
   describe "#videoconference_room" do
     it "pulls the Zoom meeting ID from the join URL and groups the digits" do
       event = build(:event, videoconference_url: "https://awbw-org.zoom.us/j/88285411273").decorate
@@ -456,6 +468,20 @@ RSpec.describe EventDecorator do
     it "is nil when no deadline is set" do
       event = build(:event, ce_payment_due_deadline: nil).decorate
       expect(event.ce_payment_due_deadline_display).to be_nil
+    end
+  end
+
+  describe "#payment_due_deadline_display" do
+    it "renders the deadline with the time and zone, e.g. '5:00 PM PDT on April 9, 2026'" do
+      deadline = Time.zone.local(2026, 4, 9, 17, 0)
+      event = build(:event, payment_due_deadline: deadline).decorate
+      tz = deadline.strftime("%Z")
+      expect(event.payment_due_deadline_display).to eq("5:00 PM #{tz} on April 9, 2026")
+    end
+
+    it "is nil when no deadline is set" do
+      event = build(:event, payment_due_deadline: nil).decorate
+      expect(event.payment_due_deadline_display).to be_nil
     end
   end
 

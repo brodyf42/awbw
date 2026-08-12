@@ -1,31 +1,34 @@
-<% content_for(:page_bg_class, "admin-only bg-blue-100") %>
+<% content_for(:page_bg_class, "admin-or-owner bg-blue-100") %>
+<%# Opt out of the layout's max-w-7xl cap to match the wider event manage pages. %>
 <% content_for(:full_width, true) %>
 
-<div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
+<div class="mx-auto max-w-[96rem] px-2 sm:px-6 lg:px-8 py-6">
   <div class="<%= DomainTheme.bg_class_for(:events) %> border border-gray-200 rounded-xl shadow p-6">
     <div class="mb-6">
       <% if params[:return_to] == "dashboard" && params[:event_id].present? %>
         <%= link_to "← Dashboard", dashboard_event_path(params[:event_id]), class: "text-sm text-gray-500 hover:text-gray-700" %>
       <% else %>
-        <%= link_to "← Events statistics", statistics_events_path(report_to_statistics_params), class: "text-sm text-gray-500 hover:text-gray-700" %>
+        <%= link_to "← Reports", reports_events_path(report_to_hub_params), class: "text-sm text-gray-500 hover:text-gray-700" %>
       <% end %>
     </div>
 
-    <div class="mb-8">
-      <h1 class="text-2xl font-semibold text-gray-900">Events revenue</h1>
-      <p class="text-gray-600 mt-1">
-        Program revenue by year — money in, what the org subsidized from its own funds, and the net.
-      </p>
-    </div>
+    <%= render "events/report_header",
+          title: "Event revenue",
+          icon: "fa-solid fa-sack-dollar",
+          theme: :payments,
+          event: @filter_event,
+          subtitle: "Program revenue by year — money in, what the org subsidized from its own funds, and the net." %>
 
     <%# Ahoy-style filters shared with the participation report — time period,
         event type and event — each auto-submitting a GET form. %>
     <%= form_with url: revenue_events_path, method: :get, local: true,
-          class: "flex flex-wrap items-end gap-4 mb-8" do %>
+          class: "rounded-xl border border-gray-200 bg-white p-4 shadow-sm mb-8" do %>
       <%= hidden_field_tag :return_to, params[:return_to] %>
-      <%= render "time_period_filter" %>
-      <%= render "event_type_filter", all_label: "All paid events" %>
-      <%= render "event_filter", all_label: "All paid events" %>
+      <div class="flex flex-wrap items-end gap-4">
+        <%= render "time_period_filter" %>
+        <%= render "event_type_filter", all_label: "All paid events" %>
+        <%= render "event_filter", all_label: "All paid events" %>
+      </div>
     <% end %>
 
     <% if @report.any? %>
@@ -44,16 +47,20 @@
         <div class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-[repeat(4,minmax(0,1fr))_minmax(0,1.5fr)_minmax(0,1.2fr)] gap-3">
           <%= render "revenue_kpi", label: "Fees collected", value: dollars_from_cents(featured.fees_cents),
                 value_class: "text-blue-700", card_class: "border-blue-300 bg-blue-100", note: "reg + CE paid", cents: featured.fees_cents,
-                prior_cents: prior&.fees_cents, prior_year: prior&.year %>
+                prior_cents: prior&.fees_cents, prior_year: prior&.year,
+                href: revenue_drilldown_path(payment_status: "paid", event_year: featured.year) %>
           <%= render "revenue_kpi", label: "Scholarships", value: dollars_from_cents(featured.funded_scholarship_cents),
                 value_class: "text-fuchsia-700", card_class: "border-fuchsia-300 bg-fuchsia-50", note: "grant-funded only", cents: featured.funded_scholarship_cents,
-                prior_cents: prior&.funded_scholarship_cents, prior_year: prior&.year %>
+                prior_cents: prior&.funded_scholarship_cents, prior_year: prior&.year,
+                href: revenue_drilldown_path(funder: "external", event_year: featured.year) %>
           <%= render "revenue_kpi", label: "Org subsidy", value: dollars_from_cents(featured.org_subsidy_cents),
                 value_class: "text-red-600", card_class: "border-red-300 bg-red-50", note: "discounts + unfunded", cents: featured.org_subsidy_cents,
-                prior_cents: prior&.org_subsidy_cents, prior_year: prior&.year %>
+                prior_cents: prior&.org_subsidy_cents, prior_year: prior&.year,
+                href: revenue_drilldown_path(funder: "awbw", event_year: featured.year) %>
           <%= render "revenue_kpi", label: "Outstanding", value: dollars_from_cents(featured.outstanding_cents),
                 value_class: "text-orange-600", card_class: "border-orange-300 bg-orange-50", note: "reg + CE owed", cents: featured.outstanding_cents,
-                prior_cents: prior&.outstanding_cents, prior_year: prior&.year %>
+                prior_cents: prior&.outstanding_cents, prior_year: prior&.year,
+                href: revenue_drilldown_path(payment_status: "unpaid", event_year: featured.year) %>
           <%= render "revenue_kpi", label: "Net", value: signed_dollars_from_cents(featured.net_cents),
                 value_class: featured.net_cents.negative? ? "text-rose-700" : "text-gray-500", card_class: "border-gray-300 bg-gray-50",
                 note: "fees + scholarships − subsidies", cents: featured.net_cents, prior_cents: prior&.net_cents, prior_year: prior&.year %>
@@ -132,27 +139,28 @@
                   </summary>
                   <div class="px-3 pb-3 pl-8 bg-gray-50">
                     <% ce_class = DomainTheme.text_class_for(:continuing_education, intensity: 600) %>
-                    <dl class="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-3 text-sm py-2">
-                      <% columns = [
-                           [ [ "Registration payments", row.registration_payments_cents, "text-gray-800" ],
-                             [ "CE paid", row.ce_paid_cents, ce_class ] ],
-                           [ [ "Funded scholarships", row.funded_scholarship_cents, "text-gray-800" ],
-                             [ "Unfunded scholarships", row.unfunded_scholarship_cents, "text-gray-800" ],
-                             [ "Discounts", row.discount_cents, "text-gray-800" ] ],
-                           [ [ "Registration owed", row.registration_outstanding_cents, "text-orange-600" ],
-                             [ "CE owed", row.ce_outstanding_cents, "text-orange-600" ] ]
-                         ] %>
+                    <% breakdown = @report.breakdown_for(row.event) %>
+                    <%# Each figure expands to the registrants (or recipients) behind it,
+                        with their individual amounts — the per-figure drilldown. %>
+                    <% columns = [
+                         [ [ "Registration payments", row.registration_payments_cents, "text-gray-800", breakdown.registration_payments ],
+                           [ "CE paid", row.ce_paid_cents, ce_class, breakdown.ce_paid ] ],
+                         [ [ "Funded scholarships", row.funded_scholarship_cents, "text-gray-800", breakdown.funded_scholarships ],
+                           [ "Unfunded scholarships", row.unfunded_scholarship_cents, "text-gray-800", breakdown.unfunded_scholarships ],
+                           [ "Discounts", row.discount_cents, "text-gray-800", breakdown.discounts ] ],
+                         [ [ "Registration owed", row.registration_outstanding_cents, "text-orange-600", breakdown.registration_outstanding ],
+                           [ "CE owed", row.ce_outstanding_cents, "text-orange-600", breakdown.ce_outstanding ] ]
+                       ] %>
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-3 text-sm py-2">
                       <% columns.each do |pair| %>
                         <div class="space-y-1.5">
-                          <% pair.each do |label, cents, value_class| %>
-                            <div class="flex items-baseline justify-between gap-3">
-                              <dt class="text-gray-500"><%= label %></dt>
-                              <dd class="tabular-nums <%= value_class %>"><%= dollars_from_cents(cents) %></dd>
-                            </div>
+                          <% pair.each do |label, cents, value_class, contributors| %>
+                            <%= render "revenue_breakdown_row", event: row.event, label: label,
+                                  cents: cents, value_class: value_class, contributors: contributors %>
                           <% end %>
                         </div>
                       <% end %>
-                    </dl>
+                    </div>
                     <%= link_to "Open event dashboard →", dashboard_event_path(row.event),
                           class: "text-xs font-medium #{DomainTheme.text_class_for(:events, intensity: 700)} hover:underline" %>
                   </div>

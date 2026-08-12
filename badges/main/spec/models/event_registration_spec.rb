@@ -197,6 +197,64 @@ RSpec.describe EventRegistration, type: :model do
     end
   end
 
+  # The attendees index composes these two rather than using one fixed scope, so
+  # that the same page can also answer "no shows" and "non-trainings".
+  describe ".attended composed with .event_type" do
+    let!(:training) { create(:event, facilitator_training: true) }
+    let!(:other) { create(:event, facilitator_training: false) }
+    let!(:attended) { create(:event_registration, event: training, status: "attended") }
+    let!(:no_show) { create(:event_registration, event: training, status: "no_show") }
+    let!(:other_event) { create(:event_registration, event: other, status: "attended") }
+
+    it "narrows to attended registrations on facilitator trainings" do
+      results = EventRegistration.attended.event_type("trainings")
+      expect(results).to include(attended)
+      expect(results).not_to include(no_show, other_event)
+    end
+
+    it "reaches the rows the old fixed scope could never return" do
+      expect(EventRegistration.attendance_status("no_show").event_type("trainings")).to include(no_show)
+      expect(EventRegistration.attended.event_type("other")).to include(other_event)
+    end
+
+    it "passes everything through when neither is applied" do
+      expect(EventRegistration.event_type(EventRegistration::FILTER_ALL))
+        .to include(attended, no_show, other_event)
+    end
+
+    # Same vocabulary as the report suite's Event type filter, which forwards its
+    # value straight into the attendees index.
+    it "splits trainings by delivery format" do
+      on_demand_training = create(:event, facilitator_training: true, on_demand: true)
+      on_demand_registration = create(:event_registration, event: on_demand_training, status: "attended")
+
+      expect(EventRegistration.event_type("live")).to include(attended)
+      expect(EventRegistration.event_type("live")).not_to include(on_demand_registration, other_event)
+      expect(EventRegistration.event_type("on_demand")).to include(on_demand_registration)
+      expect(EventRegistration.event_type("on_demand")).not_to include(attended, other_event)
+    end
+
+    it "offers the same options the report suite's Event type filter does" do
+      expect(EventRegistration::EVENT_TYPE_FILTER_OPTIONS.map(&:last))
+        .to eq(%w[ trainings live on_demand other ])
+    end
+  end
+
+  describe ".status_counts_by_event" do
+    it "returns { event_id => { status => count } } across the given events" do
+      e1 = create(:event)
+      e2 = create(:event)
+      create(:event_registration, event: e1, status: "attended")
+      create(:event_registration, event: e1, status: "attended")
+      create(:event_registration, event: e1, status: "no_show")
+      create(:event_registration, event: e2, status: "registered")
+
+      counts = EventRegistration.status_counts_by_event([ e1.id, e2.id ])
+      expect(counts[e1.id]).to eq("attended" => 2, "no_show" => 1)
+      expect(counts[e2.id]).to eq("registered" => 1)
+    end
+  end
+
   describe ".registrant_ids" do
     it "returns registrations for the registrants in a hyphenated id list" do
       person_a = create(:person)
@@ -224,6 +282,101 @@ RSpec.describe EventRegistration, type: :model do
       results = EventRegistration.registrant_sector(sector.id)
       expect(results).to include(reg_in)
       expect(results).not_to include(reg_out)
+    end
+  end
+
+  describe ".registrant_city" do
+    it "matches registrants with an address in the city (case-insensitive, partial)" do
+      in_city = create(:person)
+      create(:address, addressable: in_city, city: "Santa Monica")
+      out_city = create(:person)
+      create(:address, addressable: out_city, city: "Portland")
+      reg_in = create(:event_registration, registrant: in_city)
+      reg_out = create(:event_registration, registrant: out_city)
+
+      results = EventRegistration.registrant_city("santa")
+      expect(results).to include(reg_in)
+      expect(results).not_to include(reg_out)
+    end
+  end
+
+  describe ".comment_text" do
+    it "matches registrations whose comment topic or body contains the term" do
+      reg_body = create(:event_registration)
+      create(:comment, commentable: reg_body, topic: "General", body: "Needs a wheelchair ramp")
+      reg_topic = create(:event_registration)
+      create(:comment, commentable: reg_topic, topic: "Dietary", body: "n/a")
+      reg_none = create(:event_registration)
+      create(:comment, commentable: reg_none, topic: "Other", body: "nothing here")
+
+      expect(EventRegistration.comment_text("wheelchair")).to include(reg_body)
+      expect(EventRegistration.comment_text("wheelchair")).not_to include(reg_none)
+      expect(EventRegistration.comment_text("dietary")).to include(reg_topic)
+    end
+  end
+
+  describe ".funder_name" do
+    it "matches registrations funded by a scholarship whose grant funder name matches" do
+      matching_reg = create(:event_registration)
+      grant = create(:grant, funder: create(:organization, name: "Big Funder Foundation"))
+      scholarship = create(:scholarship, grant: grant, recipient: matching_reg.registrant)
+      create(:allocation, source: scholarship, allocatable: matching_reg, amount: 0)
+
+      other_reg = create(:event_registration)
+      other = create(:scholarship, grant: create(:grant, funder: create(:organization, name: "Someone Else")),
+                     recipient: other_reg.registrant)
+      create(:allocation, source: other, allocatable: other_reg, amount: 0)
+
+      results = EventRegistration.funder_name("big funder")
+      expect(results).to include(matching_reg)
+      expect(results).not_to include(other_reg)
+    end
+  end
+
+  describe ".submission_status" do
+    let(:submission_event) { create(:event) }
+    let!(:none_reg) { create(:event_registration, event: submission_event) }
+    let!(:single_reg) { create(:event_registration, event: submission_event) }
+    let!(:multi_reg) { create(:event_registration, event: submission_event) }
+
+    before do
+      create(:form_submission, event: submission_event, person: single_reg.registrant)
+      create(:form_submission, event: submission_event, person: multi_reg.registrant)
+      create(:form_submission, event: submission_event, person: multi_reg.registrant)
+    end
+
+    it "finds registrants with no submission" do
+      results = EventRegistration.submission_status("none", submission_event)
+      expect(results).to include(none_reg)
+      expect(results).not_to include(single_reg, multi_reg)
+    end
+
+    it "finds registrants with at least one submission" do
+      results = EventRegistration.submission_status("has", submission_event)
+      expect(results).to include(single_reg, multi_reg)
+      expect(results).not_to include(none_reg)
+    end
+
+    it "finds registrants with more than one submission" do
+      results = EventRegistration.submission_status("multiple", submission_event)
+      expect(results).to include(multi_reg)
+      expect(results).not_to include(none_reg, single_reg)
+    end
+  end
+
+  describe ".scholarship_status agreed" do
+    it "matches registrations with an agreement-signed scholarship" do
+      agreed_reg = create(:event_registration)
+      agreed = create(:scholarship, recipient: agreed_reg.registrant, agreement_signed_at: Time.current)
+      create(:allocation, source: agreed, allocatable: agreed_reg, amount: 0)
+
+      pending_reg = create(:event_registration)
+      pending = create(:scholarship, recipient: pending_reg.registrant, agreement_signed_at: nil)
+      create(:allocation, source: pending, allocatable: pending_reg, amount: 0)
+
+      results = EventRegistration.scholarship_status("agreed")
+      expect(results).to include(agreed_reg)
+      expect(results).not_to include(pending_reg)
     end
   end
 
@@ -319,6 +472,42 @@ RSpec.describe EventRegistration, type: :model do
 
       it "returns an unfiltered relation for unknown values" do
         expect(EventRegistration.payment_status("bogus")).to include(paid_reg, unpaid_reg)
+      end
+    end
+
+    describe ".funder" do
+      let(:funded_reg) { create(:event_registration, event: event) }
+
+      before do
+        funded = create(:scholarship, recipient: funded_reg.registrant, grant: create(:grant), amount_cents: 1000)
+        create(:allocation, source: funded, allocatable: funded_reg, amount: 1000)
+      end
+
+      it "maps 'awbw' to recipients of grant-less (org-subsidized) scholarships" do
+        results = EventRegistration.funder("awbw")
+        expect(results).to include(scholarship_reg, incomplete_scholarship_reg)
+        expect(results).not_to include(funded_reg, paid_reg, unpaid_reg)
+      end
+
+      it "maps 'external' to recipients of grant-funded scholarships" do
+        results = EventRegistration.funder("external")
+        expect(results).to include(funded_reg)
+        expect(results).not_to include(scholarship_reg, incomplete_scholarship_reg, paid_reg, unpaid_reg)
+      end
+
+      it "counts a grant AWBW funded itself as org-subsidized ('awbw'), not external" do
+        # Matches EventDashboard's funded/unfunded split: self-funding is subsidy.
+        awbw = create(:organization, name: "A Window Between Worlds")
+        self_funded_reg = create(:event_registration, event: event)
+        subsidy = create(:scholarship, recipient: self_funded_reg.registrant, grant: create(:grant, funder: awbw), amount_cents: 1000)
+        create(:allocation, source: subsidy, allocatable: self_funded_reg, amount: 1000)
+
+        expect(EventRegistration.funder("awbw")).to include(self_funded_reg)
+        expect(EventRegistration.funder("external")).not_to include(self_funded_reg)
+      end
+
+      it "returns an unfiltered relation for unknown values" do
+        expect(EventRegistration.funder("bogus")).to include(funded_reg, scholarship_reg, paid_reg, unpaid_reg)
       end
     end
 
@@ -454,6 +643,12 @@ RSpec.describe EventRegistration, type: :model do
         expect(results).not_to include(none_reg, access_reg, invited_reg)
       end
 
+      it "maps 'not_invited' to everyone who still needs an invite (no account or never invited)" do
+        results = EventRegistration.account_status("not_invited")
+        expect(results).to include(none_reg, no_access_reg)
+        expect(results).not_to include(access_reg, invited_reg)
+      end
+
       it "returns an unfiltered relation for unknown values" do
         expect(EventRegistration.account_status("bogus")).to include(none_reg, access_reg, invited_reg, no_access_reg)
       end
@@ -535,6 +730,10 @@ RSpec.describe EventRegistration, type: :model do
   end
 
   describe "#joinable?" do
+    # Freeze the clock so the join-window boundary cases (events placed exactly
+    # 1 minute inside the 30-minute buffer) can't flake on wall-clock drift.
+    before { freeze_time }
+
     let(:event) { create(:event, cost_cents: 1099, start_date: 1.hour.ago, end_date: 1.hour.from_now) }
     let(:user) { create(:user, :with_person) }
 
@@ -686,6 +885,19 @@ RSpec.describe EventRegistration, type: :model do
       intends = create(:event_registration, event: event, registrant: user.person, intends_to_pay: true)
       create(:event_registration, event: event, registrant: create(:person))
       expect(EventRegistration.payment_status("intends_to_pay")).to contain_exactly(intends)
+    end
+  end
+
+  describe ".organization_status scope" do
+    let(:event) { create(:event) }
+
+    it "filters linked / unlinked by organization link presence" do
+      linked = create(:event_registration, event: event)
+      create(:event_registration_organization, event_registration: linked)
+      unlinked = create(:event_registration, event: event)
+
+      expect(EventRegistration.organization_status("linked", event)).to contain_exactly(linked)
+      expect(EventRegistration.organization_status("unlinked", event)).to contain_exactly(unlinked)
     end
   end
 

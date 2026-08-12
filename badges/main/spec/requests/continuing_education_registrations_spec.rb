@@ -39,6 +39,24 @@ RSpec.describe "ContinuingEducationRegistrations", type: :request do
         issuing_state: "CA", expires_on: Date.new(2027, 1, 31))
     end
 
+    it "renders a comments box on the edit page" do
+      get edit_continuing_education_registration_path(ce_registration)
+      expect(response.body).to include("CE comments")
+      expect(response.body).to include("comment-list")
+    end
+
+    it "saves a comment added on the CE form (with the record)" do
+      expect {
+        patch continuing_education_registration_path(ce_registration),
+              params: { continuing_education_registration: {
+                hours: "6", cost_dollars: "120", license_kind: "LMFT", license_number: "555",
+                comments_attributes: { "0" => { body: "Verified license by phone" } }
+              } }
+      }.to change(ce_registration.comments, :count).by(1)
+
+      expect(ce_registration.comments.last.body).to eq("Verified license by phone")
+    end
+
     it "edits the same license in place when correcting a typo (no new record)" do
       license = create(:professional_license, person: registration.registrant, kind: "LCSW", number: "11223")
       ce_registration.update!(professional_license: license)
@@ -173,6 +191,41 @@ RSpec.describe "ContinuingEducationRegistrations", type: :request do
 
       expect(ContinuingEducationRegistration.exists?(ce_registration.id)).to be(true)
       expect(flash[:alert]).to match(/has payments/)
+    end
+
+    context "reached from the registrants roster (return_to=registrants)" do
+      let(:row_path) do
+        registrants_event_path(event, anchor: "registrant-row-#{registration.id}", highlight: registration.id)
+      end
+
+      it "shows the Registrants eyebrow and carries return_to through the new form" do
+        get new_continuing_education_registration_path(allocatable_sgid: registration.to_sgid.to_s, return_to: "registrants")
+
+        expect(response.body).to include("Registrants")
+        expect(response.body).to match(/name="return_to"[^>]*value="registrants"/)
+      end
+
+      it "sends the create redirect back to the registrant's row" do
+        post continuing_education_registrations_path,
+             params: { allocatable_sgid: registration.to_sgid.to_s, return_to: "registrants",
+               continuing_education_registration: { hours: "6", cost_dollars: "120", license_kind: "LMFT", license_number: "555" } }
+
+        expect(response).to redirect_to(row_path)
+      end
+
+      it "sends the update redirect back to the registrant's row" do
+        patch continuing_education_registration_path(ce_registration, return_to: "registrants"),
+              params: { continuing_education_registration: { hours: "6", cost_dollars: "120", license_kind: "LMFT", license_number: "555" } }
+
+        expect(response).to redirect_to(row_path)
+      end
+
+      it "sends the destroy redirect back to the registrant's row" do
+        ce_registration
+        delete continuing_education_registration_path(ce_registration, return_to: "registrants")
+
+        expect(response).to redirect_to(row_path)
+      end
     end
   end
 

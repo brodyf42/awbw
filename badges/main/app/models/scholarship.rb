@@ -19,6 +19,37 @@ class Scholarship < ApplicationRecord
   scope :completed, -> { where(tasks_completed: true) }
   scope :agreement_signed, -> { where.not(agreement_signed_at: nil) }
 
+  # Funding split (the app-wide convention, mirrored by EventDashboard and
+  # EventRevenueFigures): externally funded = backed by a grant whose funder isn't
+  # the org itself; org-subsidized = no grant, or a grant AWBW funded itself.
+  # Callers rendering both sides can pass an already-loaded self_funded set to
+  # avoid re-running Grant.self_funded_ids (an Organization.awbw + pluck) per scope.
+  scope :externally_funded, ->(self_funded = Grant.self_funded_ids) { where.not(grant_id: [ nil, *self_funded ]) }
+  scope :org_subsidized, ->(self_funded = Grant.self_funded_ids) { where(grant_id: [ nil, *self_funded ]) }
+
+  # Scholarships from grants a given funder (Person/Organization) gave — the
+  # "funder" filter. A blank funder matches nothing.
+  scope :from_funder, ->(funder) { where(grant_id: Grant.where(funder: funder).select(:id)) }
+
+  # Scholarships awarded at the given events, via the allocation → event
+  # registration chain (a scholarship's allocation is on an EventRegistration).
+  scope :for_events, ->(event_ids) {
+    registration_ids = EventRegistration.where(event_id: event_ids).select(:id)
+    source_ids = Allocation
+      .where(allocatable_type: "EventRegistration", allocatable_id: registration_ids, source_type: "Scholarship")
+      .select(:source_id)
+    where(id: source_ids)
+  }
+
+  # Ids of events this relation's scholarships were awarded at — for narrowing an
+  # event report to trainings a funder actually scholarshipped.
+  def self.event_ids
+    registration_ids = Allocation
+      .where(allocatable_type: "EventRegistration", source_type: "Scholarship", source_id: all.select(:id))
+      .select(:allocatable_id)
+    EventRegistration.where(id: registration_ids).distinct.pluck(:event_id)
+  end
+
   # The agreement is signed when a signed-at timestamp is present — a single
   # source of truth. `agreement_signed` reads/writes as a virtual boolean so the
   # admin form checkbox and strong params keep working, stamping or clearing the

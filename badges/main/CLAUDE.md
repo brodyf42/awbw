@@ -242,7 +242,7 @@ this). Match the existing pattern:
 - **Strongly prefer Stimulus** for JavaScript behavior — do not write raw/inline JS or jQuery
 - **Always use Tailwind CSS** utility classes for styling — do not write custom CSS unless absolutely necessary
 - **Prefer static Tailwind classes over dynamically-constructed ones.** Tailwind's JIT scanner only generates classes it finds as complete literal strings in the source — a class built by interpolation (e.g. `bg-#{color}-500`, `text-${size}`, `class="w-#{n}"`) won't be generated and silently renders unstyled. Write the full class names out, and select between complete literals (e.g. a lookup hash mapping a value to a whole class string, or a ternary picking between two literal classes) rather than splicing fragments. Only build a class dynamically when the set of values is open-ended and can't be enumerated; in that case add the candidates to the Tailwind safelist.
-- **Prefer Font Awesome (free)** icons over inline SVGs — use `icon("fa-solid fa-foo")` helper. Inline SVGs are acceptable when a specific icon design is preferred.
+- **Prefer Font Awesome (free)** icons over inline SVGs — render them as markup: `<i class="fa-solid fa-foo"></i>`. Inline SVGs are acceptable when a specific icon design is preferred; the `icon("name")` helper (`app/helpers/icon_helper.rb`) inlines a local SVG from `app/frontend/icons/` by filename — it is not a Font Awesome helper.
 - Prefer Turbo for navigation and form submissions before reaching for Stimulus
 - Controller naming: `[name]_controller.js`
 - Keep controllers focused and small
@@ -359,7 +359,8 @@ See `ai/` directory for executable scripts:
 |---|---|
 | `ai/recap` | Session recap: accomplishments + unresolved items (see above) |
 | `ai/review` | Code review: agent reviews the workspace diff, posts inline comments, and gives a Recap + Risks + Outstanding decisions summary (runs the `ai-review` skill) |
-| `ai/test [args]` | Run RSpec |
+| `ai/test [args]` | Run RSpec, fast path: no Vite rebuild; runs only diff-related system specs (loud banner lists what it skipped) |
+| `ai/test_extra [args]` | Full RSpec run: Vite test build + all system specs |
 | `ai/lint` | Rubocop on all files |
 | `ai/lint --fix` | Auto-fix lint issues |
 | `ai/server` | Start dev services (web + vite) |
@@ -370,3 +371,5 @@ See `ai/` directory for executable scripts:
 | `ai/security` | Security scan: Brakeman + bundler-audit (mirrors CI) |
 
 > **"ai <name>" means the `ai/` script of that name** (e.g. "ai test" → `ai/test`, "ai security" → `ai/security`) — shell scripts in `ai/`, not slash-command skills. If a referenced `ai/<name>` script doesn't exist, ask what's intended rather than substituting a similarly named skill. Two are special — they print a trigger word, and the agent does the work directly rather than producing script output: (1) **"ai recap"** triggers the **Session recap** behavior above; never confuse it with the `/audit` design skill or the `ai/security` scan. (2) **"ai review"** (`ai/review`) triggers the **`ai-review` skill** — review the current workspace diff, post one inline comment per qualifying bug, then give a Recap + Risks + Outstanding decisions summary; it is not the `/audit` skill or the `/code-review` / `/review` skills.
+
+> **Which test command to run.** Bare "test"/"run tests" while iterating → `ai/test` (fast path). But when "test" is part of a **ship** flow — e.g. the user says **"commit push pr test"** (or any combination of commit / push / PR alongside test) — run the **full** suite with **`ai/test_extra`** (Vite build + all system specs), not the fast path. Before pushing or opening/updating a PR, the full suite is what verifies the change; the fast path is only for the inner loop. In such a combined ask, run `ai/test_extra` and only proceed to commit/push/PR once it's green (or the user says otherwise).

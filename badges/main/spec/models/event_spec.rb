@@ -70,6 +70,17 @@ RSpec.describe Event, type: :model do
     end
   end
 
+  describe ".live and .on_demand" do
+    it "partitions events by delivery format" do
+      live = create(:event, on_demand: false)
+      on_demand = create(:event, on_demand: true)
+      expect(Event.live).to include(live)
+      expect(Event.live).not_to include(on_demand)
+      expect(Event.on_demand).to include(on_demand)
+      expect(Event.on_demand).not_to include(live)
+    end
+  end
+
   describe ".upcoming" do
     it "includes an event starting today" do
       # start_date is a date column, so comparing against a time-of-day would
@@ -93,6 +104,28 @@ RSpec.describe Event, type: :model do
     it "returns false when end_date is in the future" do
       event = build(:event, end_date: 1.day.from_now)
       expect(event.ended?).to be false
+    end
+  end
+
+  describe "#shown_as_card?" do
+    it "is true for a published event that has not ended" do
+      event = build(:event, :published, end_date: 1.day.from_now)
+      expect(event.shown_as_card?).to be true
+    end
+
+    it "is true for a published event that ended within the last month" do
+      event = build(:event, :published, end_date: 1.week.ago)
+      expect(event.shown_as_card?).to be true
+    end
+
+    it "is false for an unpublished event" do
+      event = build(:event, :unpublished, end_date: 1.day.from_now)
+      expect(event.shown_as_card?).to be false
+    end
+
+    it "is false for a published event that ended more than a month ago" do
+      event = build(:event, :published, end_date: (1.month + 1.day).ago)
+      expect(event.shown_as_card?).to be false
     end
   end
 

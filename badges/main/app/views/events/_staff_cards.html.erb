@@ -44,8 +44,11 @@
           <%# Front %>
           <div class="absolute inset-0 [backface-visibility:hidden] flex flex-col items-center text-center bg-white border border-gray-200 rounded-xl shadow-sm transition-shadow group-hover:shadow-md px-4 pt-12 pb-8 overflow-hidden">
             <% if event_staff.expected_to_attend? %>
-              <span class="absolute top-2 right-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700" title="Expected to attend">
-                <i class="fa-solid fa-circle-check"></i> Attending
+              <span class="absolute top-2 right-2" title="Expected to attend">
+                <%= render "shared/badge",
+                      label: "Attending",
+                      classes: "bg-green-100 text-green-700 border-green-200",
+                      icon: "fa-solid fa-circle-check" %>
               </span>
             <% end %>
 
@@ -83,9 +86,10 @@
             <% end %>
 
             <% if experience.present? %>
-              <span class="mt-1.5 px-2 py-0.5 border rounded-full text-xs font-medium <%= DomainTheme.bg_class_for(experience.first, intensity: 100) %> <%= DomainTheme.text_class_for(experience.first) %> <%= DomainTheme.border_class_for(experience.first) %>">
-                <%= experience.last %>
-              </span>
+              <%= render "shared/badge",
+                    label: experience.last,
+                    classes: "#{DomainTheme.bg_class_for(experience.first, intensity: 100)} #{DomainTheme.text_class_for(experience.first)} #{DomainTheme.border_class_for(experience.first)}",
+                    extra: "mt-1.5" %>
             <% end %>
 
             <% if lead_sector || lead_age %>
@@ -94,7 +98,7 @@
                   <%= render "sectors/tagging_label", sector: lead_sector.sector, is_primary: lead_sector.is_primary? %>
                 <% end %>
                 <% if lead_age %>
-                  <span class="inline-flex items-center whitespace-nowrap rounded-md border border-lime-300 <%= lead_age_primary ? "bg-lime-200 text-lime-800" : "bg-lime-50 text-gray-500" %> px-2 py-0.5 text-xs font-medium">
+                  <span class="inline-flex items-center whitespace-nowrap rounded-md border border-lime-300 <%= lead_age_primary ? "bg-lime-100 text-lime-800" : "bg-lime-50 text-gray-500" %> px-2 py-0.5 text-xs font-medium">
                     <% if lead_age_primary %><i class="fa-solid fa-star mr-1 text-xs text-amber-400" aria-hidden="true" title="Primary age group"></i><% end %><%= lead_age.name %>
                   </span>
                 <% end %>

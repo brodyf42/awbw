@@ -33,6 +33,9 @@ application.register("callout-preview", CalloutPreviewController)
 import CarouselController from "./carousel_controller"
 application.register("carousel", CarouselController)
 
+import ChartTooltipFooterController from "./chart_tooltip_footer_controller"
+application.register("chart-tooltip-footer", ChartTooltipFooterController)
+
 import CeLicensePickerController from "./ce_license_picker_controller"
 application.register("ce-license-picker", CeLicensePickerController)
 
@@ -102,6 +105,9 @@ application.register("grant-select", GrantSelectController)
 import InactiveToggleController from "./inactive_toggle_controller"
 application.register("inactive-toggle", InactiveToggleController)
 
+import NavigateSelectController from "./navigate_select_controller"
+application.register("navigate-select", NavigateSelectController)
+
 import OptimisticBookmarkController from "./optimistic_bookmark_controller"
 application.register("optimistic-bookmark", OptimisticBookmarkController)
 
@@ -113,6 +119,9 @@ application.register("org-toggle", OrgToggleController)
 
 import PaginatedFieldsController from "./paginated_fields_controller"
 application.register("paginated-fields", PaginatedFieldsController)
+
+import PanelToggleController from "./panel_toggle_controller"
+application.register("panel-toggle", PanelToggleController)
 
 import QuestionLibraryController from "./question_library_controller"
 application.register("question-library", QuestionLibraryController)

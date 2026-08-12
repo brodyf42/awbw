@@ -5,8 +5,10 @@ class DeviseMailer < Devise::Mailer
   include Rails.application.routes.url_helpers
 
   before_action :set_branding
-  after_action :create_notification_record
-  after_action :track_devise_email_event
+  # Skipped when rendering an on-page preview (e.g. the bulk invite picker), so
+  # previewing the email doesn't log a notification or emit an auth event.
+  after_action :create_notification_record, unless: :preview?
+  after_action :track_devise_email_event, unless: :preview?
 
   default from: ENV.fetch("REPLY_TO_EMAIL", "programs@awbw.org")
   default reply_to: ENV.fetch("REPLY_TO_EMAIL", "programs@awbw.org")
@@ -19,6 +21,11 @@ class DeviseMailer < Devise::Mailer
   end
 
   def confirmation_instructions(record, token, opts = {})
+    # Preview requests render the body only; the after_actions above are skipped.
+    @preview = opts.delete(:preview) { false }
+    # The invite sender arrives as a plain id in opts (GlobalID-safe for async
+    # delivery); pull it out before super so Devise doesn't fold it into the headers.
+    @confirmation_sender_id = opts.delete(:sender_id)
     @record = record
     @token  = token
     @user = record
@@ -51,6 +58,10 @@ class DeviseMailer < Devise::Mailer
 
   private
 
+  def preview?
+    @preview == true
+  end
+
   def notification_kind_for_devise_action
     {
       "reset_password"              => "reset_password",
@@ -82,6 +93,7 @@ class DeviseMailer < Devise::Mailer
       recipient_email: recipient_email,
       kind: kind,
       notification_type: 1,
+      sender: confirmation_sender, # the staff member who triggered it, when one did
       deliver: false # Devise already sent the email, so no need to deliver via the job
     )
 
@@ -134,7 +146,15 @@ class DeviseMailer < Devise::Mailer
     Analytics::AhoyTracker.track_auth_event(
       event_name,
       properties,
-      user: Current.user
+      user: confirmation_sender || Current.user
     )
+  end
+
+  # The staff member who triggered this confirmation, resolved from the id passed
+  # through the mailer opts. Memoized so create_notification_record and
+  # track_devise_email_event share one lookup.
+  def confirmation_sender
+    return @confirmation_sender if defined?(@confirmation_sender)
+    @confirmation_sender = @confirmation_sender_id ? User.find_by(id: @confirmation_sender_id) : nil
   end
 end

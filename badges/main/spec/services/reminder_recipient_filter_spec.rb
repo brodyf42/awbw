@@ -64,14 +64,14 @@ RSpec.describe ReminderRecipientFilter do
       expect(matched({ reg_org: "hope" }, [ reg, other ])).to eq([ reg.id ].to_set)
     end
 
-    it "filters by grantor name of an associated grant" do
-      donor = create(:organization, name: "Acme Foundation")
-      grant = create(:grant, donor: donor)
+    it "filters by funder name of an associated grant" do
+      funder = create(:organization, name: "Acme Foundation")
+      grant = create(:grant, funder: funder)
       reg = registration
       award_scholarship(reg, grant: grant)
       ungranted = registration(first_name: "Sam")
       award_scholarship(ungranted) # scholarship with no grant
-      expect(matched({ grantor: "acme" }, [ reg, ungranted ])).to eq([ reg.id ].to_set)
+      expect(matched({ funder_name: "acme" }, [ reg, ungranted ])).to eq([ reg.id ].to_set)
     end
 
     it "filters by email address" do
@@ -85,6 +85,15 @@ RSpec.describe ReminderRecipientFilter do
       aisha = registration(first_name: "Aisha", email: "aisha@example.com", user: nil)
       sam = registration(first_name: "Sam", email: "sam@other.com", user: nil)
       expect(matched({ email: "amy@--aisha@" }, [ amy, aisha, sam ])).to eq([ amy.id, aisha.id ].to_set)
+    end
+
+    it "filters by registrant city, skipping inactive addresses like the roster does" do
+      here = registration
+      create(:address, addressable: here.registrant, city: "Santa Monica")
+      moved_away = registration(first_name: "Sam")
+      create(:address, addressable: moved_away.registrant, city: "Santa Monica", inactive: true)
+      expect(matched({ city: "santa" }, [ here, moved_away ])).to eq([ here.id ].to_set)
+      expect(EventRegistration.registrant_city("santa")).not_to include(moved_away)
     end
 
     it "filters by registration comment text" do
@@ -109,6 +118,20 @@ RSpec.describe ReminderRecipientFilter do
 
       it "filters intends-to-pay registrants" do
         expect(matched({ payment_status: "intends_to_pay" }, [ paid, due, intends ])).to eq([ intends.id ].to_set)
+      end
+    end
+
+    context "payment method" do
+      let!(:card) { registration(first_name: "Card").tap { |r| r.update!(expected_payment_method: "Credit card (now)") } }
+      let!(:check) { registration(first_name: "Check").tap { |r| r.update!(expected_payment_method: "Check") } }
+      let!(:buddy) { registration(first_name: "Buddy").tap { |r| r.update!(someone_else_will_pay: true) } }
+
+      it "filters by the expected payment method" do
+        expect(matched({ payment_method: "Check" }, [ card, check, buddy ])).to eq([ check.id ].to_set)
+      end
+
+      it "filters buddy-system registrants via the sentinel value" do
+        expect(matched({ payment_method: "someone_else_will_pay" }, [ card, check, buddy ])).to eq([ buddy.id ].to_set)
       end
     end
 
@@ -208,12 +231,12 @@ RSpec.describe ReminderRecipientFilter do
     end
 
     it "combines filters with AND" do
-      donor = create(:organization, name: "Acme Foundation")
-      grant = create(:grant, donor: donor)
+      funder = create(:organization, name: "Acme Foundation")
+      grant = create(:grant, funder: funder)
       match = registration(first_name: "Jane", last_name: "Adams").tap { |r| award_scholarship(r, grant: grant) }
       name_only = registration(first_name: "Jane", last_name: "Brooks")
-      grantor_only = registration(first_name: "Sam", last_name: "Cole").tap { |r| award_scholarship(r, grant: grant) }
-      expect(matched({ name: "jane", grantor: "acme" }, [ match, name_only, grantor_only ]))
+      funder_only = registration(first_name: "Sam", last_name: "Cole").tap { |r| award_scholarship(r, grant: grant) }
+      expect(matched({ name: "jane", funder_name: "acme" }, [ match, name_only, funder_only ]))
         .to eq([ match.id ].to_set)
     end
   end

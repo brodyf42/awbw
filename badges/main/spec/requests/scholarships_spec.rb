@@ -369,8 +369,8 @@ RSpec.describe "GET /scholarships (index)", type: :request do
       training = create(:event, title: "TAC251", facilitator_training: true)
       create(:event_registration, registrant: recipient, event: training, status: "attended")
 
-      donor = create(:organization, name: "JDI Foundation")
-      grant = create(:grant, name: "JDI", donor: donor, amount_cents: 1_000_000)
+      funder = create(:organization, name: "JDI Foundation")
+      grant = create(:grant, name: "JDI", funder: funder, amount_cents: 1_000_000)
       create(:scholarship, grant: grant, recipient: recipient, amount_cents: 150_000)
 
       get scholarships_path
@@ -392,6 +392,30 @@ RSpec.describe "GET /scholarships (index)", type: :request do
 
       expect(response.body).to include("Unfunded")
       expect(response.body).to include("Jane Doe")
+    end
+
+    it "renders the shared report filters and the scholarship summary" do
+      training = create(:event, facilitator_training: true, cost_cents: 50_000, start_date: Date.current)
+      recipient = create(:person)
+      reg = create(:event_registration, event: training, registrant: recipient, status: "attended")
+      award = create(:scholarship, recipient: recipient, amount_cents: 4_000, grant: create(:grant))
+      create(:allocation, source: award, allocatable: reg, amount: 4_000)
+
+      get scholarships_path
+      expect(response.body).to include("Time period", "Abbreviation", "Funder")
+      expect(response.body).to include("Summary", "Total awarded")
+    end
+
+    it "narrows the list to a selected funder" do
+      keep = create(:organization, name: "Keep Foundation")
+      drop = create(:organization, name: "Drop Foundation")
+      create(:scholarship, grant: create(:grant, funder: keep), recipient: create(:person, first_name: "Kept", last_name: "One"))
+      create(:scholarship, grant: create(:grant, funder: drop), recipient: create(:person, first_name: "Dropped", last_name: "Two"))
+
+      get scholarships_path(funder_sgid: keep.to_signed_global_id.to_s)
+
+      expect(response.body).to include("Kept One")
+      expect(response.body).not_to include("Dropped Two")
     end
 
     it "links a grant group's grant back to the scholarship index via from_scholarships" do
@@ -420,8 +444,8 @@ end
 
 RSpec.describe "/scholarships (grant-funded flow)", type: :request do
   let(:admin) { create(:user, :admin) }
-  let(:donor) { create(:organization, name: "Helping Hands") }
-  let(:grant) { create(:grant, donor:, amount_cents: 100_000) }
+  let(:funder) { create(:organization, name: "Helping Hands") }
+  let(:grant) { create(:grant, funder:, amount_cents: 100_000) }
   let(:recipient) { create(:person, first_name: "Bob", last_name: "Barker") }
 
   before { sign_in admin }

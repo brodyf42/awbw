@@ -17,10 +17,12 @@ RSpec.describe BuiltinCalloutCards do
   end
 
   describe "#cards" do
-    it "shows the payment and staff cards for a bare paid, non-training registration" do
-      # Staff has no config gate, so it always shows in the code fallback (for
-      # events not yet materialized); every other card here gates on config. On a
-      # legacy event with no staff row the card just links back to the ticket.
+    it "shows the staff card only once the event has connected staff" do
+      # An empty roster is nothing to link to, so the staff card gates on the event
+      # having staff — like every other fallback card gates on its own config.
+      expect(card_titles(registration)).to eq([ "Make your payment" ])
+
+      create(:event_staff, event:)
       expect(card_titles(registration)).to eq([ "Make your payment", "Meet the staff" ])
     end
 
@@ -59,6 +61,18 @@ RSpec.describe BuiltinCalloutCards do
       expect(paid.badge).to eq("Paid")
       expect(paid.badge_classes).to include("blue")
       expect(paid.trailing_icon).to eq("fa-solid fa-arrow-right")
+    end
+
+    it "appends the ticket payment deadline to the due badge when the event sets one" do
+      event.update!(payment_due_deadline: Time.zone.local(2026, 4, 9, 17, 0))
+      due = card(registration, "Make your payment")
+      expect(due.badge).to eq("$10.99 due by Apr 9")
+    end
+
+    it "shows a plain due badge when the event sets no payment deadline" do
+      event.update!(payment_due_deadline: nil)
+      due = card(registration, "Make your payment")
+      expect(due.badge).to eq("$10.99 due")
     end
 
     it "uses the arrow trailing icon for every card" do
@@ -227,6 +241,7 @@ RSpec.describe BuiltinCalloutCards do
                     videoconference_url: "https://example.zoom.us/j/123",
                     start_date: 3.days.ago, end_date: 2.days.ago)
       add_scholarship_form(event)
+      create(:event_staff, event:)
       registration.update!(status: "attended", scholarship_requested: true)
       license = create(:professional_license, :placeholder, person: registration.registrant)
       create(:continuing_education_registration, event_registration: registration, professional_license: license)
@@ -284,12 +299,20 @@ RSpec.describe BuiltinCalloutCards do
     end
 
     it "links the staff card to the registrant's roster page, keeping the row's text" do
+      create(:event_staff, event:)
       callout = create(:registration_ticket_callout, event:, builtin_key: "staff",
         title: "Meet our team", subtitle: "Who you'll learn from")
 
       card = described_class.new(registration).card_for(callout)
       expect(card.title).to eq("Meet our team")            # row owns the text
       expect(card.href).to eq("/registration/#{registration.slug}/staff")
+    end
+
+    it "returns nil for a materialized staff row when the event has no staff" do
+      callout = create(:registration_ticket_callout, event:, builtin_key: "staff",
+        title: "Meet the staff")
+
+      expect(described_class.new(registration).card_for(callout)).to be_nil
     end
 
     it "keeps the live CE deadline badge on a materialized CE row" do

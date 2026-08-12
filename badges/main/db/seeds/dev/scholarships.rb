@@ -11,9 +11,9 @@
 #     visible as "potentially awarded" but the registrant still owes the cost.
 #
 # Most of these event-allocated scholarships are drawn from a parent grant, so the
-# recipients page (events/recipients) shows the funding donor's name — a mix of
-# organization and individual (Person) funders, since a grant's donor is
-# polymorphic. A few are left grant-free so the no-donor case is covered too.
+# recipients page (events/recipients) shows the funding funder's name — a mix of
+# organization and individual (Person) funders, since a grant's funder is
+# polymorphic. A few are left grant-free so the no-funder case is covered too.
 #
 # A couple of scholarship + payment combos are seeded alongside the payments in
 # db/seeds/dev/payments.rb (Amy, Jessica); this file fills out the flagship
@@ -37,27 +37,27 @@ end
 
 # --- Grants (funding sources) ----------------------------------------------
 # Create the grants up front so the event-allocated scholarships below can be
-# drawn from them (recipients page → donor name). Grants cap the total
+# drawn from them (recipients page → funder name). Grants cap the total
 # scholarship dollars from a single source, so amounts are sized to comfortably
 # cover both the event-allocated draws here and the standalone grant awards
 # further down.
-#   * a mix of donor types — three organization funders and two individual
-#     (Person) funders, since donor is polymorphic;
+#   * a mix of funder types — three organization funders and two individual
+#     (Person) funders, since funder is polymorphic;
 #   * distinct donation totals, eligibility criteria, and tasks per grant.
 puts "Creating Grants…"
 
-# Resolve a grant's donor by type: organizations by name, individuals by their
-# first/last name (so a Person can fund a grant, mirroring the polymorphic donor).
-resolve_donor = ->(donor_type, donor_name) do
-  if donor_type == "Person"
-    first, last = donor_name.split(" ", 2)
+# Resolve a grant's funder by type: organizations by name, individuals by their
+# first/last name (so a Person can fund a grant, mirroring the polymorphic funder).
+resolve_funder = ->(funder_type, funder_name) do
+  if funder_type == "Person"
+    first, last = funder_name.split(" ", 2)
     Person.find_by(first_name: first, last_name: last)
   else
-    Organization.find_by(name: donor_name)
+    Organization.find_by(name: funder_name)
   end
 end
 
-# [ name, donor_type, donor name, amount_cents, [ standalone award amounts… ], eligibility, tasks ]
+# [ name, funder_type, funder name, amount_cents, [ standalone award amounts… ], eligibility, tasks ]
 grant_plans = [
   [ "Healing Arts Scholarship Fund", "Organization", "Joyful Heart Foundation", 2_000_000, [ 250_000, 150_000, 100_000 ],
     "Lead expressive-arts groups for trauma survivors\nServe a community-based partner organization",
@@ -79,12 +79,12 @@ grant_plans = [
 # Build the grants, re-syncing funder + descriptive fields for grants left over
 # from an earlier run. Indexed by plan so the standalone-award amounts stay paired
 # with their grant.
-grants = grant_plans.filter_map do |(name, donor_type, donor_name, amount_cents, _awards, eligibility, tasks)|
-  donor = resolve_donor.(donor_type, donor_name)
-  next unless donor
+grants = grant_plans.filter_map do |(name, funder_type, funder_name, amount_cents, _awards, eligibility, tasks)|
+  funder = resolve_funder.(funder_type, funder_name)
+  next unless funder
 
   grant = Grant.find_or_create_by!(name: name) do |g|
-    g.donor = donor
+    g.funder = funder
     g.amount_cents = amount_cents
     g.funds_allocation_deadline = Date.current + 30
     g.funds_received_on = Date.current - 30
@@ -92,15 +92,15 @@ grants = grant_plans.filter_map do |(name, donor_type, donor_name, amount_cents,
     g.tasks = tasks
   end
 
-  if grant.donor != donor || grant.amount_cents != amount_cents ||
+  if grant.funder != funder || grant.amount_cents != amount_cents ||
      grant.eligibility_criteria != eligibility || grant.tasks != tasks
-    grant.update!(donor: donor, amount_cents: amount_cents, eligibility_criteria: eligibility, tasks: tasks)
+    grant.update!(funder: funder, amount_cents: amount_cents, eligibility_criteria: eligibility, tasks: tasks)
   end
 
   grant
 end
 
-# Round-robin across grants for donor variety, but only hand back one that can
+# Round-robin across grants for funder variety, but only hand back one that can
 # still absorb this award within its donation cap; returns nil when none has room
 # (the scholarship is then created grant-free).
 grant_cursor = 0
@@ -120,7 +120,7 @@ end
 # set amount + tasks_completed so sync_allocation_amount funds the allocation only
 # when the recipient's tasks are complete (completed → allocated; pending → $0).
 # When grant_funded, draws the award from a parent grant so the recipients page
-# can name the funding donor.
+# can name the funding funder.
 award_scholarship = ->(registration, amount_cents:, tasks_completed:, grant_funded: false) do
   return unless registration
   return if registration.scholarships.exists?
@@ -166,7 +166,7 @@ scholarship_answer_sets = [
       "and the ripple effect on the survivors we serve would be immediate.",
     "scholarship_contribution" => "Our agency can contribute about $250 toward the cost.",
     "sector" => "Sexual Assault",
-    "age_group" => "Adults (18+)",
+    "age_group" => "Adults",
     "title" => "Prevention, Education, and Outreach Specialist"
   },
   {
@@ -183,7 +183,7 @@ scholarship_answer_sets = [
       "I've wanted formal facilitation training for years but our continuing-education budget was cut. This scholarship would change that.",
     "scholarship_contribution" => "I could personally cover roughly $150.",
     "sector" => "Mental Health",
-    "age_group" => "Adults (18+)",
+    "age_group" => "Adults",
     "title" => "Behavioral Health Clinician"
   },
   {
@@ -200,7 +200,7 @@ scholarship_answer_sets = [
       "Our program serves families at no cost, so outside funding for my training is what makes this possible. Thank you.",
     "scholarship_contribution" => "Unfortunately we can't contribute anything at this time.",
     "sector" => "Child Abuse/Neglect",
-    "age_group" => "Children (0-12)",
+    "age_group" => "Children",
     "title" => "Youth Program Coordinator"
   },
   {
@@ -217,7 +217,7 @@ scholarship_answer_sets = [
       "I'm so grateful for this opportunity. Investing in me is investing in everyone I'll go on to support.",
     "scholarship_contribution" => "I'm able to pay up to $100 out of pocket.",
     "sector" => "Domestic Violence",
-    "age_group" => "Adults (18+)",
+    "age_group" => "Adults",
     "title" => "Peer Support Specialist"
   }
 ]
@@ -392,8 +392,8 @@ if facilitator_training
 
   # Fund the newly chosen recipients (Amy already has hers from payments); varied
   # shares and completion states give the dashboard both allocated and pending awards.
-  # Most draw from a parent grant so the recipients page shows the funding donor;
-  # one is left grant-free to cover the no-donor case.
+  # Most draw from a parent grant so the recipients page shows the funding funder;
+  # one is left grant-free to cover the no-funder case.
   # [ share of the registration fee, tasks_completed, grant_funded ]
   award_plan = [ [ 1.0, true, true ], [ 0.5, true, true ], [ 0.75, false, true ], [ 0.5, true, true ], [ 0.25, false, false ] ]
   plan_index = 0
@@ -426,6 +426,64 @@ end
   end
 end
 
+# --- Prior-year facilitator trainings --------------------------------------
+# Every dev event above sits in the current year, so the events scholarship
+# report only ever shows a single year group. Seed a few past-year trainings —
+# each with attended trainees and a mix of funded/unfunded awards — so the
+# report's year grouping and the "All time" period have real multi-year data,
+# and "Registrants attended" exceeds the scholarship count (plain attendees on
+# top of recipients). Idempotent: keyed on each training's title.
+puts "Creating prior-year facilitator trainings with scholarships…"
+
+admin_user = User.find_by(email: "umberto.user@example.com")
+people_pool = Person.order(:id).to_a
+person_cursor = 0
+take_person = -> do
+  person = people_pool[person_cursor % people_pool.length]
+  person_cursor += 1
+  person
+end
+
+# [ title, abbreviation, start_date, cost_cents,
+#   [ [ award_cents, grant_funded ], … ] (each an attended recipient),
+#   plain_attendee_count (attended, no scholarship) ]
+prior_year_trainings = [
+  [ "Facilitator Training: Trauma-Informed Art (2024)", "TAC24", Date.new(2024, 4, 12), 30_000,
+    [ [ 30_000, true ], [ 15_000, true ], [ 12_000, false ] ], 4 ],
+  [ "Facilitator Training: Expressive Arts Intensive (2025)", "TAC25S", Date.new(2025, 3, 8), 32_500,
+    [ [ 32_500, true ], [ 20_000, false ], [ 10_000, false ] ], 5 ],
+  [ "Facilitator Training: Community Healing Cohort (2025)", "TAC25F", Date.new(2025, 10, 18), 35_000,
+    [ [ 35_000, true ], [ 17_500, true ] ], 3 ]
+]
+
+prior_year_trainings.each do |title, abbreviation, start_date, cost_cents, awards, plain_count|
+  event = Event.find_or_create_by!(title: title) do |e|
+    e.abbreviation = abbreviation
+    e.start_date = start_date
+    e.end_date = start_date + 1.day
+    e.cost_cents = cost_cents
+    e.facilitator_training = true
+    e.published = true
+    e.created_by = admin_user
+  end
+  event.update!(abbreviation: abbreviation, start_date: start_date, end_date: start_date + 1.day,
+                cost_cents: cost_cents, facilitator_training: true)
+
+  awards.each do |award_cents, grant_funded|
+    registration = EventRegistration.find_or_create_by!(event: event, registrant: take_person.()) do |reg|
+      reg.status = "attended"
+    end
+    registration.update!(status: "attended") unless registration.status == "attended"
+    award_scholarship.(registration, amount_cents: award_cents, tasks_completed: true, grant_funded: grant_funded)
+  end
+
+  plain_count.times do
+    EventRegistration.find_or_create_by!(event: event, registrant: take_person.()) do |reg|
+      reg.status = "attended"
+    end
+  end
+end
+
 # --- Standalone grant-funded scholarships ----------------------------------
 # Beyond the event-allocated awards above (which now draw from these grants too),
 # seed a few standalone grant awards — recipient + grant, no event allocation —
@@ -449,7 +507,7 @@ grant_has_standalone = ->(grant) do
   Scholarship.where(grant: grant).left_outer_joins(:allocation).where(allocations: { id: nil }).exists?
 end
 
-grant_plans.each do |(name, _donor_type, _donor_name, _amount_cents, awards, _eligibility, _tasks)|
+grant_plans.each do |(name, _funder_type, _funder_name, _amount_cents, awards, _eligibility, _tasks)|
   grant = grants.find { |g| g.name == name }
   next unless grant && grant_recipient_pool.any?
   next if grant_has_standalone.(grant)
@@ -475,7 +533,7 @@ puts "Creating scholarship index demo states (multi-grant funder, Reinstate)…"
 anchor_grant = grants.first
 if anchor_grant && recipient_orgs.any?
   sibling = Grant.find_or_create_by!(name: "#{anchor_grant.name} (2026)") do |g|
-    g.donor = anchor_grant.donor
+    g.funder = anchor_grant.funder
     g.amount_cents = 600_000
     g.funds_allocation_deadline = Date.current + 60
     g.funds_received_on = Date.current - 10

@@ -15,7 +15,7 @@ class Organization < ApplicationRecord
   has_many :comments, -> { newest_first }, as: :commentable, dependent: :destroy
   has_many :reports
   has_many :workshop_logs
-  has_many :grants, as: :donor, dependent: :destroy
+  has_many :grants, as: :funder, dependent: :destroy
 
   has_many :categorizable_items, dependent: :destroy, inverse_of: :categorizable, as: :categorizable
   has_many :sectorable_items, as: :sectorable, dependent: :destroy
@@ -39,6 +39,14 @@ class Organization < ApplicationRecord
   # unmatched select can't silently save as the first option.
   AGENCY_TYPE_OTHER = "Other"
   AGENCY_TYPES = [ "501c3/nonprofit", "For-profit", "Government agency", AGENCY_TYPE_OTHER ].freeze
+
+  # The organization that runs this app. A grant it donates is the org funding
+  # itself, so reports count it as subsidy (unfunded), not external funding.
+  # Identified by name via ORGANIZATION_NAME — the only marker available today.
+  # Not memoized: the record can be created mid-process (seeds, tests).
+  def self.awbw
+    find_by(name: ENV.fetch("ORGANIZATION_NAME", "A Window Between Worlds"))
+  end
 
   # Validations
   validates :logo,
@@ -120,6 +128,10 @@ class Organization < ApplicationRecord
     direct.or(legacy).distinct
   end
 
+  # Facilitator program statuses in display order — the values #facilitator_status
+  # and #facilitator_status_on return, and the attendees index filters on.
+  FACILITATOR_PROGRAM_STATUSES = %i[ new ongoing reinstated ].freeze
+
   # Classifies this organization as a facilitator program relative to a reference
   # ("current") facilitator affiliation — typically a registrant's affiliation
   # captured through the event registration form:
@@ -143,15 +155,18 @@ class Organization < ApplicationRecord
   def facilitator_status_on(reference_date, excluding_affiliation_id: nil)
     reference_start = reference_date || Date.current
 
-    earlier = affiliations.facilitators
-      .where.not(start_date: nil)
-      .where("affiliations.start_date < ?", reference_start)
-    earlier = earlier.where.not(id: excluding_affiliation_id) if excluding_affiliation_id
+    # Filter the (often preloaded) affiliations in Ruby rather than firing a query
+    # per org — the event dashboard classifies every represented org this way.
+    earlier = affiliations.select do |affiliation|
+      affiliation.facilitator? &&
+        affiliation.start_date && affiliation.start_date < reference_start &&
+        affiliation.id != excluding_affiliation_id
+    end
 
-    return :new unless earlier.exists?
+    return :new if earlier.empty?
 
-    active_overlap = earlier.where("affiliations.end_date IS NULL OR affiliations.end_date >= ?", reference_start)
-    active_overlap.exists? ? :ongoing : :reinstated
+    active_overlap = earlier.any? { |affiliation| affiliation.end_date.nil? || affiliation.end_date >= reference_start }
+    active_overlap ? :ongoing : :reinstated
   end
 
   # Methods

@@ -54,6 +54,48 @@ RSpec.describe "Events", type: :request do
       expect(response).to have_http_status(:ok)
     end
 
+    context "as an admin with unpublished and long-past events" do
+      let!(:current_event) do
+        create(:event, :published, title: "Current workshop",
+          start_date: 5.days.from_now, end_date: 6.days.from_now)
+      end
+      let!(:draft_event) { create(:event, :unpublished, title: "Draft workshop") }
+      let!(:old_event) do
+        create(:event, :published, title: "Old workshop",
+          start_date: 3.months.ago, end_date: 3.months.ago + 1.day)
+      end
+
+      before do
+        sign_in admin
+        get events_path
+      end
+
+      it "shows current published events as cards" do
+        expect(response.body).to include(ActionView::RecordIdentifier.dom_id(current_event, :card))
+      end
+
+      it "lists unpublished and long-ended events instead of carding them" do
+        expect(response.body).to include("Drafts and past events")
+        expect(response.body).not_to include(ActionView::RecordIdentifier.dom_id(draft_event, :card))
+        expect(response.body).not_to include(ActionView::RecordIdentifier.dom_id(old_event, :card))
+        expect(response.body).to include("Draft workshop")
+        expect(response.body).to include("Old workshop")
+      end
+    end
+
+    context "as a non-admin" do
+      let!(:current_event) do
+        create(:event, :published, :publicly_visible, title: "Public workshop",
+          start_date: 5.days.from_now, end_date: 6.days.from_now)
+      end
+
+      it "never shows the drafts and past events list" do
+        sign_in user
+        get events_path
+        expect(response.body).not_to include("Drafts and past events")
+      end
+    end
+
     context "when user time_zone is set" do
       # 19:00 UTC = 12:00 noon PT = 15:00 (3 pm) ET (June 15, 2031 with DST)
       let(:utc_start) { Time.utc(2031, 6, 15, 19, 0, 0) }
@@ -163,7 +205,7 @@ RSpec.describe "Events", type: :request do
         sign_in admin
         get revenue_events_path
         expect(response).to have_http_status(:ok)
-        expect(response.body).to include("Events revenue")
+        expect(response.body).to include("Event revenue")
         expect(response.body).to include("Revenue by year")
         expect(response.body).to include("Fees collected")
         expect(response.body).to include("TAC 261")
@@ -172,12 +214,60 @@ RSpec.describe "Events", type: :request do
         expect(response.body).not_to include("Free open house")
       end
 
+      # Money KPIs count people's registrations, so they drill into the people index
+      # rather than the raw registrations table. Each opts out of the attendees
+      # index's attended/trainings defaults or it would show the wrong population.
+      # The money lives on registrations, so these land on a registrations table
+      # with payment columns — the same kind of destination as the per-registrant
+      # breakdown rows lower down, rather than the attendees people-index.
+      it "drills its money KPIs into the registrations index across events" do
+        sign_in admin
+        get revenue_events_path
+
+        hrefs = Capybara.string(response.body).all("a[href^='#{event_registrations_path}?']").map { |a| a[:href] }
+
+        expect(hrefs).to include(a_string_including("payment_status=unpaid"))
+        expect(hrefs).to include(a_string_including("funder=external"))
+        expect(response.body).not_to include("/events/attendees")
+      end
+
+      it "drills them into that event's Manage list when scoped to one event" do
+        sign_in admin
+        get revenue_events_path(event_id: paid_training.id)
+
+        hrefs = Capybara.string(response.body).all("a[href^='#{registrants_event_path(paid_training)}?']").map { |a| a[:href] }
+        expect(hrefs).to include(a_string_including("payment_status=unpaid"))
+      end
+
       it "labels an event by its abbreviation when set, keeping the full title as a tooltip" do
         paid_training.update!(abbreviation: "TAC261")
         sign_in admin
         get revenue_events_path
         expect(response.body).to include("TAC261")
         expect(response.body).to include('title="TAC 261"')
+      end
+
+      it "links each drillable revenue KPI to its filtered registrant list" do
+        sign_in admin
+        get revenue_events_path
+        expect(response.body).to include("payment_status=paid")   # Fees collected
+        expect(response.body).to include("payment_status=unpaid") # Outstanding
+        expect(response.body).to include("funder=external")       # Scholarships (grant-funded)
+        expect(response.body).to include("funder=awbw")           # Org subsidy
+      end
+
+      it "expands a subtotal to the registrants behind it with their amounts" do
+        registrant = create(:person, first_name: "Dana", last_name: "Rivers")
+        registration = create(:event_registration, event: paid_training, registrant: registrant, status: "registered")
+        create(:allocation, source: create(:payment, amount_cents: 4_000, amount_cents_remaining: 4_000),
+                            allocatable: registration, amount: 4_000)
+
+        sign_in admin
+        get revenue_events_path
+
+        expect(response.body).to include("Registration payments")
+        expect(response.body).to include("Dana Rivers")
+        expect(response.body).to include(CGI.escapeHTML(registrants_event_path(paid_training, registrant_ids: registrant.id)))
       end
 
       # The Event dropdown lists every (paid) event, so the report rows are
@@ -217,12 +307,12 @@ RSpec.describe "Events", type: :request do
         expect(response.body).to include("← Dashboard")
       end
 
-      it "carries the statistics origin and active filters back through the eyebrow" do
+      it "carries the reports origin and active filters back through the eyebrow" do
         sign_in admin
         get revenue_events_path(return_to: "events", event_type: "trainings", event_id: paid_training.id)
-        expect(response.body).to include("← Events statistics")
+        expect(response.body).to include("← Reports")
         expect(response.body).to include(
-          CGI.escapeHTML(statistics_events_path(return_to: "events", event_type: "trainings", event_id: paid_training.id, period: "all_time"))
+          CGI.escapeHTML(reports_events_path(return_to: "events", event_type: "trainings", event_id: paid_training.id, period: "all_time"))
         )
       end
     end
@@ -251,11 +341,31 @@ RSpec.describe "Events", type: :request do
         sign_in admin
         get participation_events_path
         expect(response).to have_http_status(:ok)
-        expect(response.body).to include("Events participation")
+        expect(response.body).to include("Event participation")
         expect(response.body).to include("Attendance by year")
         expect(response.body).to include("TAC 261")
         expect(response.body).to include("Open webinar")
         expect(response.body).to include("2026", "2025")
+      end
+
+      # The KPIs count people, so they drill into the people index rather than the
+      # raw registrations table. Each has to opt out of the attendees index's
+      # attended/trainings defaults or it would silently show the wrong population.
+      it "drills its outcome KPIs into the attendees index, defaults opted out" do
+        sign_in admin
+        get participation_events_path
+
+        hrefs = Capybara.string(response.body).all("a[href*='/events/attendees']").map { |a| a[:href] }
+
+        # No show is the case the old registrations-index target existed for: the
+        # attendees index used to exclude no-shows outright.
+        no_show = hrefs.find { |href| href.include?("attendance_status=no_show") }
+        expect(no_show).to be_present
+        expect(no_show).to include("event_type=all", "return_to=participation")
+
+        # "Registrations" counts every outcome, so it opts out of both defaults.
+        expect(hrefs).to include(a_string_including("attendance_status=all", "event_type=all"))
+        expect(response.body).not_to include(%(href="#{event_registrations_path}?))
       end
 
       # The Event dropdown lists every event, so the report rows are identified by
@@ -274,6 +384,20 @@ RSpec.describe "Events", type: :request do
         expect(response.body).not_to include(dashboard_event_path(training_2026))
       end
 
+      it "narrows to live vs on-demand trainings by event type" do
+        sign_in admin
+        on_demand_training = create(:event, title: "On-demand TAC", facilitator_training: true, on_demand: true, start_date: Date.new(2026, 7, 1))
+        create(:event_registration, event: on_demand_training, status: "attended")
+
+        get participation_events_path(event_type: "live")
+        expect(response.body).to include(dashboard_event_path(training_2026))
+        expect(response.body).not_to include(dashboard_event_path(on_demand_training))
+
+        get participation_events_path(event_type: "on_demand")
+        expect(response.body).to include(dashboard_event_path(on_demand_training))
+        expect(response.body).not_to include(dashboard_event_path(training_2026))
+      end
+
       it "narrows to a single selected event" do
         sign_in admin
         get participation_events_path(event_id: training_2026.id)
@@ -288,12 +412,12 @@ RSpec.describe "Events", type: :request do
         expect(response.body).not_to include(dashboard_event_path(training_2026))
       end
 
-      it "carries the statistics origin and active filters back through the eyebrow and the filter form" do
+      it "carries the reports origin and active filters back through the eyebrow and the filter form" do
         sign_in admin
         get participation_events_path(return_to: "events", event_type: "trainings", event_id: training_2026.id)
-        expect(response.body).to include("← Events statistics")
+        expect(response.body).to include("← Reports")
         expect(response.body).to include(
-          CGI.escapeHTML(statistics_events_path(return_to: "events", event_type: "trainings", event_id: training_2026.id, period: "all_time"))
+          CGI.escapeHTML(reports_events_path(return_to: "events", event_type: "trainings", event_id: training_2026.id, period: "all_time"))
         )
         expect(response.body).to match(/<input[^>]*name="return_to"[^>]*value="events"/)
       end
@@ -308,7 +432,7 @@ RSpec.describe "Events", type: :request do
     end
   end
 
-  describe "GET /statistics" do
+  describe "GET /reports" do
     let!(:training) { create(:event, facilitator_training: true, cost_cents: 10_000, start_date: Date.current) }
 
     before { create(:event_registration, event: training, status: "attended") }
@@ -316,29 +440,60 @@ RSpec.describe "Events", type: :request do
     context "as admin" do
       it "shows the revenue and participation summaries side by side" do
         sign_in admin
-        get statistics_events_path
+        get reports_events_path
         expect(response).to have_http_status(:ok)
-        expect(response.body).to include("Events statistics")
+        expect(response.body).to include("Event reports")
         expect(response.body).to include("Revenue")
         expect(response.body).to include("Participation")
+        expect(response.body).to match(/<h3[^>]*>Participation<\/h3>.*<h3[^>]*>Scholarships<\/h3>.*<h3[^>]*>Revenue<\/h3>/m)
         expect(response.body).to include("People attended")
+        expect(response.body).to include("Scholarships awarded")
+        expect(response.body).to include("fees + funded")
+        expect(response.body).to include("discounts")
         expect(response.body).to match(/\d+ trainings/)
         expect(response.body).to match(/\d+ other/)
-        # The trainings/other split links into the filtered registrants index.
-        expect(response.body).to include("event_type=trainings", "attendance_status=attended")
+        # The trainings figure links into the cross-event training attendees index;
+        # the other-events figure into the filtered registrants index.
+        expect(response.body).to include(attendees_events_path)
+        expect(response.body).to include("event_type=other", "attendance_status=attended")
         expect(response.body).to include(revenue_events_path, participation_events_path)
+      end
+
+      # Demographics stay next to the people they describe; the hub signposts them
+      # rather than hosting them. ?charts=1 so the link doesn't land on a collapsed
+      # panel.
+      it "links to the cross-event breakdowns when unscoped" do
+        sign_in admin
+        get reports_events_path
+
+        expect(response.body).to include("Breakdowns →")
+        expect(response.body).to include(CGI.escapeHTML(attendees_events_path(charts: 1)))
+      end
+
+      it "links to that event's own breakdowns when scoped to one event" do
+        sign_in admin
+        get reports_events_path(event_id: training.id)
+
+        expect(response.body).to include(CGI.escapeHTML(roster_event_path(training, charts: 1)))
+      end
+
+      it "shows the scholarship summary card linking to its full report" do
+        sign_in admin
+        get reports_events_path
+        expect(response.body).to include("Scholarships")
+        expect(response.body).to include(scholarships_events_path)
       end
 
       it "carries the active filters into the full report links" do
         sign_in admin
-        get statistics_events_path(period: "all_time", event_type: "trainings")
+        get reports_events_path(period: "all_time", event_type: "trainings")
         expect(response.body).to include(CGI.escapeHTML(revenue_events_path(event_type: "trainings", time_period: "all_time")))
         expect(response.body).to include(CGI.escapeHTML(participation_events_path(event_type: "trainings", time_period: "all_time")))
       end
 
       it "toggles the summary figures to all time via the period select" do
         sign_in admin
-        get statistics_events_path(period: "all_time")
+        get reports_events_path(period: "all_time")
         expect(response).to have_http_status(:ok)
         expect(response.body).to include("All time")
         expect(response.body).to match(/<select[^>]*name="period"/)
@@ -346,13 +501,13 @@ RSpec.describe "Events", type: :request do
 
       it "returns to the admin home by default" do
         sign_in admin
-        get statistics_events_path
+        get reports_events_path
         expect(response.body).to include("← Admin home")
       end
 
       it "returns to the events index when arrived from it" do
         sign_in admin
-        get statistics_events_path(return_to: "events")
+        get reports_events_path(return_to: "events")
         expect(response.body).to include("← Events")
         expect(response.body).to include(events_path)
       end
@@ -361,7 +516,109 @@ RSpec.describe "Events", type: :request do
     context "as non-admin" do
       it "redirects" do
         sign_in user
-        get statistics_events_path
+        get reports_events_path
+        expect(response).to redirect_to(root_path)
+      end
+    end
+  end
+
+  describe "GET /scholarships" do
+    let!(:training) { create(:event, title: "TAC 261", abbreviation: "TAC261", facilitator_training: true, cost_cents: 10_000, start_date: Date.new(2026, 5, 1)) }
+    let!(:on_demand) { create(:event, title: "Self-paced training", abbreviation: "OND100", facilitator_training: true, on_demand: true, start_date: Date.new(2026, 6, 1)) }
+    let!(:webinar) { create(:event, title: "Paid webinar", facilitator_training: false, cost_cents: 5_000, start_date: Date.new(2026, 5, 1)) }
+
+    context "as admin" do
+      it "renders the report with only facilitator trainings" do
+        sign_in admin
+        get scholarships_events_path
+        expect(response).to have_http_status(:ok)
+        expect(response.body).to include("Event scholarships")
+        expect(response.body).to include("$ of scholarships", "# of scholarships", "Attended breakdown")
+        expect(response.body).to include("TAC 261", "Self-paced training")
+        expect(response.body).not_to include("Paid webinar")
+      end
+
+      # Two reasons to count on this report: the money stays with the event
+      # whatever the attendance, but "trained" means a completed attendance. So an
+      # incomplete one is reported beside the attended figure, never inside it, and
+      # its scholarship still lands in the dollar columns.
+      it "reports incomplete attendance beside the attended count, keeping its money" do
+        partial = create(:person, first_name: "Pat", last_name: "Partial")
+        reg = create(:event_registration, event: training, registrant: partial, status: "incomplete_attendance")
+        create(:event_registration, event: training, registrant: create(:person), status: "attended")
+        award = create(:scholarship, recipient: partial, amount_cents: 3_000, grant: nil)
+        create(:allocation, source: award, allocatable: reg, amount: 3_000)
+
+        sign_in admin
+        get scholarships_events_path
+
+        expect(response.body).to include("incomplete attendance, counted in the money but not as attended")
+        expect(response.body).to include("$30")
+      end
+
+      it "renders the combined-cell layout when the view toggle is set" do
+        sign_in admin
+        get scholarships_events_path(view: "combined")
+        # Combined view folds the two count/$ column groups into one; the split
+        # view's separate headers are gone.
+        expect(response.body).to include("Event scholarships")
+        expect(response.body).not_to include("# of scholarships", "$ of scholarships")
+      end
+
+      it "narrows to trainings whose abbreviation matches the search" do
+        sign_in admin
+        get scholarships_events_path(search: "TAC")
+        # Abbreviations head the report columns; the excluded training's is absent
+        # (its title still appears in the always-full Event dropdown).
+        expect(response.body).to include("TAC261")
+        expect(response.body).not_to include("OND100")
+      end
+
+      it "narrows to trainings whose title matches the search" do
+        sign_in admin
+        get scholarships_events_path(search: "Self-paced")
+        expect(response.body).to include("OND100")
+        expect(response.body).not_to include("TAC261")
+      end
+
+      it "expands a training row to list its scholarship recipients and amounts, split funded vs unfunded" do
+        funder = create(:organization, name: "Community Trust")
+        funded_person = create(:person, first_name: "Fern", last_name: "Funded")
+        unfunded_person = create(:person, first_name: "Uma", last_name: "Unfunded")
+        funded_reg = create(:event_registration, event: training, registrant: funded_person, status: "attended")
+        unfunded_reg = create(:event_registration, event: training, registrant: unfunded_person, status: "attended")
+        funded_award = create(:scholarship, recipient: funded_person, amount_cents: 4_000, grant: create(:grant, funder: funder))
+        create(:allocation, source: funded_award, allocatable: funded_reg, amount: 4_000)
+        unfunded_award = create(:scholarship, recipient: unfunded_person, amount_cents: 2_500, grant: nil)
+        create(:allocation, source: unfunded_award, allocatable: unfunded_reg, amount: 2_500)
+
+        sign_in admin
+        get scholarships_events_path
+        expect(response.body).to include("Fern Funded", "Uma Unfunded")
+        expect(response.body).to include("$40", "$25")
+        # Each recipient links into that training's registrants, filtered to them,
+        # stamped so the eyebrow returns to the report.
+        expect(response.body).to include("registrant_ids=#{funded_person.id}", "return_to=scholarships")
+      end
+
+      it "narrows to trainings a selected funder scholarshipped" do
+        funder = create(:organization, name: "Community Trust")
+        person = create(:person)
+        reg = create(:event_registration, event: training, registrant: person, status: "attended")
+        award = create(:scholarship, recipient: person, amount_cents: 4_000, grant: create(:grant, funder: funder))
+        create(:allocation, source: award, allocatable: reg, amount: 4_000)
+
+        sign_in admin
+        get scholarships_events_path(funder_sgid: funder.to_signed_global_id.to_s)
+        expect(response.body).to include("TAC261")
+        expect(response.body).not_to include("OND100")
+      end
+    end
+
+    context "as non-admin" do
+      it "redirects" do
+        sign_in user
+        get scholarships_events_path
         expect(response).to redirect_to(root_path)
       end
     end
@@ -389,6 +646,11 @@ RSpec.describe "Events", type: :request do
       it "materializes the built-in callouts so the preview reads from real rows" do
         expect { get sample_ticket_event_path(event) }
           .to change { event.registration_ticket_callouts.builtin.count }.from(0).to(8)
+      end
+
+      it "logs an Ahoy page-view event" do
+        expect(Analytics::AhoyTracker).to receive(:track_event).with(anything, "view.events.sample_ticket", { event_id: event.id })
+        get sample_ticket_event_path(event)
       end
 
       it "renders a published custom callout as a link to its detail page" do
@@ -792,6 +1054,17 @@ RSpec.describe "Events", type: :request do
         pacific = event.ce_payment_due_deadline.in_time_zone("Pacific Time (US & Canada)")
         expect(pacific.strftime("%Y-%m-%d %H:%M")).to eq("2026-08-15 09:00")
       end
+
+      it "adds event staff via nested attributes" do
+        person = create(:person)
+        patch event_path(event), params: { event: {
+          event_staffs_attributes: { "0" => { person_id: person.id, title: "Lead facilitator", expected_to_attend: "1" } }
+        } }
+        staff = event.reload.event_staffs.first
+        expect(staff.person).to eq(person)
+        expect(staff.title).to eq("Lead facilitator")
+        expect(staff.expected_to_attend).to be(true)
+      end
     end
 
     context "as non-admin" do
@@ -824,6 +1097,11 @@ RSpec.describe "Events", type: :request do
         original_title = event.title
         patch preview_event_path(event), params: { event: { title: "Preview Title" } }
         expect(event.reload.title).to eq(original_title)
+      end
+
+      it "logs an Ahoy page-view event" do
+        expect(Analytics::AhoyTracker).to receive(:track_event).with(anything, "view.events.preview", { event_id: event.id })
+        patch preview_event_path(event), params: { event: { title: "Preview Title" } }
       end
     end
 
@@ -899,19 +1177,138 @@ RSpec.describe "Events", type: :request do
     before { sign_in admin }
 
     context "eyebrow back link" do
-      it "returns to the originating background section when arrived from it" do
-        get registrants_event_path(event, return_to: "background", return_anchor: "all-cities")
-
-        expect(response.body).to include("← Background")
-        expect(response.body).to include("#{background_event_path(event)}#all-cities")
-        expect(response.body).not_to include("← Dashboard")
-      end
-
-      it "falls back to the dashboard without background return context" do
+      it "returns to the dashboard by default" do
         get registrants_event_path(event)
 
         expect(response.body).to include("← Dashboard")
       end
+    end
+
+    context "CE column links" do
+      before { offer_ce!(event) }
+
+      it "links a registrant without a CE registration to the new CE form" do
+        get registrants_event_path(event)
+
+        expect(response.body).to match(%r{/continuing_education_registrations/new\?[^"]*return_to=registrants})
+      end
+
+      it "links a registrant with a CE registration to its edit page" do
+        ce = create(:continuing_education_registration, event_registration: registration,
+          professional_license: create(:professional_license, :placeholder, person: person))
+
+        get registrants_event_path(event)
+
+        expect(response.body).to include(edit_continuing_education_registration_path(ce, return_to: "registrants"))
+      end
+    end
+
+    context "Send bulk emails link" do
+      it "reads 'Send bulk emails' with no filters and links without filter params" do
+        get registrants_event_path(event)
+
+        expect(response.body).to include(">Send bulk emails</a>")
+        expect(response.body).not_to include("Send bulk emails (filtered)")
+        expect(response.body).to include(CGI.escapeHTML(preview_reminder_event_path(event)))
+      end
+
+      it "reads 'Send bulk emails (filtered)' and forwards shared filters when a filter is active" do
+        get registrants_event_path(event, scholarship: "yes", account_status: "invited")
+
+        expect(response.body).to include("Send bulk emails (filtered)")
+        expect(response.body).to include(CGI.escapeHTML(
+          preview_reminder_event_path(event, scholarship: "yes", account_status: "invited")
+        ))
+      end
+
+      it "forwards the shared text filters (city, comment, funder) too" do
+        get registrants_event_path(event, city: "santa", comment: "ramp", funder_name: "acme")
+
+        expect(response.body).to include("Send bulk emails (filtered)")
+        expect(response.body).to include(CGI.escapeHTML(
+          preview_reminder_event_path(event, funder_name: "acme", comment: "ramp", city: "santa")
+        ))
+      end
+
+      it "does not treat roster-only filters (keyword) as reminder filters" do
+        get registrants_event_path(event, keyword: "smith")
+
+        expect(response.body).to include(">Send bulk emails</a>")
+        expect(response.body).not_to include("Send bulk emails (filtered)")
+      end
+    end
+
+    context "shared filter bar" do
+      it "renders the Filters heading and a collapsed More filters toggle by default" do
+        get registrants_event_path(event)
+
+        expect(response.body).to include("fa-filter")
+        expect(response.body).to include(">Filters<")
+        expect(response.body).to include("More filters")
+        expect(response.body).to include('id="more-filters-toggle" class="sr-only">')
+      end
+
+      it "opens the More filters section (checks the toggle) when a collapsed filter is active" do
+        get registrants_event_path(event, account_status: "invited")
+
+        expect(response.body).to include('id="more-filters-toggle" class="sr-only" checked>')
+      end
+
+      it "keeps the More filters section collapsed for a primary-row filter" do
+        get registrants_event_path(event, keyword: "smith")
+
+        expect(response.body).to include('id="more-filters-toggle" class="sr-only">')
+      end
+    end
+
+    context "new roster filters" do
+      let(:event) { create(:event, cost_cents: 10_000) }
+
+      it "renders the new controls and relabeled options" do
+        get registrants_event_path(event)
+
+        expect(response.body).to include("Submission status")
+        expect(response.body).to include("Funder")
+        expect(response.body).to include("City name")
+        expect(response.body).to include("Comment status")
+        expect(response.body).to include("Comment text")
+        expect(response.body).to include(">Attendance<")
+        expect(response.body).to include("Agreed")
+        expect(response.body).to include("Any status")
+      end
+
+      it "narrows the roster by city" do
+        here = create(:person, first_name: "Cityful", last_name: "Local")
+        create(:address, addressable: here, city: "Santa Monica")
+        there = create(:person, first_name: "Faraway", last_name: "Person")
+        create(:address, addressable: there, city: "Portland")
+        create(:event_registration, event: event, registrant: here)
+        create(:event_registration, event: event, registrant: there)
+
+        get registrants_event_path(event, city: "santa")
+
+        expect(response.body).to include("Cityful")
+        expect(response.body).not_to include("Faraway")
+      end
+
+      it "does not crash on the new funder / comment-text / submission filters" do
+        get registrants_event_path(event, funder_name: "someone")
+        expect(response).to have_http_status(:ok)
+        get registrants_event_path(event, comment: "note")
+        expect(response).to have_http_status(:ok)
+        get registrants_event_path(event, submission_status: "multiple")
+        expect(response).to have_http_status(:ok)
+      end
+    end
+
+    it "hides cost-only filters (payment, scholarship, funder) on a free event" do
+      free_event = create(:event, cost_cents: 0)
+      get registrants_event_path(free_event)
+
+      expect(response.body).not_to include("Any payment status")
+      expect(response.body).not_to include("Any payment method")
+      expect(response.body).not_to include("Funder name")
+      expect(response.body).not_to include("Any status")
     end
 
     context "with unknown filter params" do
@@ -925,6 +1322,89 @@ RSpec.describe "Events", type: :request do
         get registrants_event_path(event, scholarship: "bogus")
 
         expect(response).to have_http_status(:ok)
+      end
+
+      it "does not crash on an invalid funder" do
+        get registrants_event_path(event, funder: "bogus")
+
+        expect(response).to have_http_status(:ok)
+      end
+
+      it "does not crash on an invalid payment_method" do
+        get registrants_event_path(event, payment_method: "bogus")
+
+        expect(response).to have_http_status(:ok)
+      end
+    end
+
+    context "payment method filter" do
+      let(:event) { create(:event, cost_cents: 10_000) }
+
+      let!(:ccn) do
+        create(:event_registration, event: event, expected_payment_method: "Credit card (now)",
+          registrant: create(:person, first_name: "Cardnow", last_name: "Payer"))
+      end
+      let!(:check) do
+        create(:event_registration, event: event, expected_payment_method: "Check",
+          registrant: create(:person, first_name: "Checkwriter", last_name: "Payer"))
+      end
+      let!(:buddy) do
+        create(:event_registration, event: event, someone_else_will_pay: true,
+          registrant: create(:person, first_name: "Sponsored", last_name: "Buddy"))
+      end
+
+      it "shows a short-code badge beside the registrant's name" do
+        get registrants_event_path(event)
+
+        expect(response.body).to include("CCN")
+        expect(response.body).to include("BUD")
+      end
+
+      it "offers every method plus the buddy option in the filter" do
+        get registrants_event_path(event)
+
+        expect(response.body).to include("Credit card (CCN)")
+        expect(response.body).to include("Check (CK)")
+        expect(response.body).to include("Someone else will pay (BUD)")
+      end
+
+      it "narrows the roster to the chosen method" do
+        get registrants_event_path(event, payment_method: "Check")
+
+        expect(response.body).to include("Checkwriter")
+        expect(response.body).not_to include("Cardnow")
+      end
+
+      it "narrows the roster to buddy-system registrations" do
+        get registrants_event_path(event, payment_method: "someone_else_will_pay")
+
+        expect(response.body).to include("Sponsored")
+        expect(response.body).not_to include("Cardnow")
+      end
+
+      it "includes the expected payment method and buddy columns in the CSV export" do
+        get registrants_event_path(event, format: :csv)
+
+        rows = CSV.parse(response.body, headers: true)
+        expect(rows.headers).to include("Expected payment method", "Someone else will pay")
+        expect(rows.find { |r| r["First name"] == "Cardnow" }["Expected payment method"]).to eq("Credit card (now)")
+        expect(rows.find { |r| r["First name"] == "Sponsored" }["Someone else will pay"]).to eq("Yes")
+      end
+    end
+
+    context "funder filter" do
+      it "narrows the roster to org-subsidized (unfunded) scholarship recipients" do
+        subsidized = create(:event_registration, event: event, registrant: create(:person, first_name: "Orgsubsidized", last_name: "Recipient"))
+        create(:allocation, source: create(:scholarship, recipient: subsidized.registrant, amount_cents: 1000),
+                            allocatable: subsidized, amount: 1000)
+        grant_funded = create(:event_registration, event: event, registrant: create(:person, first_name: "Grantfunded", last_name: "Recipient"))
+        create(:allocation, source: create(:scholarship, recipient: grant_funded.registrant, grant: create(:grant), amount_cents: 1000),
+                            allocatable: grant_funded, amount: 1000)
+
+        get registrants_event_path(event, funder: "awbw")
+
+        expect(response.body).to include("Orgsubsidized")
+        expect(response.body).not_to include("Grantfunded")
       end
     end
 
@@ -1052,9 +1532,10 @@ RSpec.describe "Events", type: :request do
         create(:event_registration_organization, event_registration: ready_registration, organization: create(:organization))
       end
 
-      it "renders the combined Status column with the right badge labels" do
+      it "renders the combined Progress column with the right badge labels" do
         get registrants_event_path(event)
 
+        expect(response.body).to include("Progress")
         expect(response.body).to include("Ready")
         expect(response.body).to include("Not ready")
       end
@@ -1588,6 +2069,34 @@ RSpec.describe "Events", type: :request do
       sign_in admin
     end
 
+    # Each row's program-status badge classifies its linked orgs via
+    # Organization#facilitator_status_on, which filters the loaded association —
+    # so without the preload that's a query per org, each pulling every
+    # affiliation row. Guards the same N+1 the roster/attendees/recipients
+    # breakdowns already guard.
+    it "classifies program status without a query per linked organization" do
+      3.times do
+        registrant = create(:person)
+        reg = create(:event_registration, event: event, registrant: registrant)
+        org = create(:organization)
+        create(:affiliation, organization: org, person: registrant, title: "Facilitator", start_date: 1.year.ago)
+        reg.event_registration_organizations.create!(organization: org)
+      end
+
+      affiliation_queries = 0
+      counter = ->(_name, _start, _finish, _id, payload) do
+        affiliation_queries += 1 if payload[:sql].to_s.include?("FROM `affiliations`")
+      end
+      ActiveSupport::Notifications.subscribed(counter, "sql.active_record") do
+        get onboarding_event_path(event)
+      end
+
+      expect(response).to have_http_status(:ok)
+      # Orgs' and registrants' affiliations each preloaded in one query — a small
+      # constant, not one per org.
+      expect(affiliation_queries).to be <= 3
+    end
+
     it "renders the onboarding matrix with the checklist columns" do
       get onboarding_event_path(event)
 
@@ -1821,6 +2330,21 @@ RSpec.describe "Events", type: :request do
         expect(page).to have_link(href: registrants_event_path(event, status_filter: "inactive"), visible: :all)
       end
 
+      it "flags registrations with no organization linked via an unlinked badge" do
+        get dashboard_event_path(event)
+
+        page = Capybara.string(response.body)
+        expect(page).to have_link("1 unlinked", href: registrants_event_path(event, org_status: "unlinked"), visible: :all)
+      end
+
+      it "omits the unlinked badge when every registration has an organization linked" do
+        create(:event_registration_organization, event_registration: registration)
+
+        get dashboard_event_path(event)
+
+        expect(response.body).not_to include("unlinked")
+      end
+
       it "drills the CE card into the registrants filtered to continuing education" do
         create(:continuing_education_registration, event_registration: registration, cost_cents: 6_000)
 
@@ -1978,294 +2502,418 @@ RSpec.describe "Events", type: :request do
     end
   end
 
-  describe "GET /events/:id/background" do
-    let(:event) { create(:event) }
+  describe "GET /events/:id/roster" do
+    let(:owner) { create(:user) }
+    let(:owned_event) { create(:event, created_by: owner) }
     let(:person) { create(:person, first_name: "Ada", last_name: "Lovelace") }
-    let(:organization) { create(:organization, name: "Background Org") }
+    let(:organization) { create(:organization, name: "Roster Org") }
     let!(:registration) do
       create(:affiliation, person: person, organization: organization)
-      create(:event_registration, event: event, registrant: person, status: "registered")
+      create(:event_registration, event: owned_event, registrant: person, status: "registered")
+    end
+
+    # The demographic charts load into their own lazy Turbo frame, so every
+    # breakdown assertion asks for the page with that frame's header. The stat bar
+    # and the registrant table come back on the plain request.
+    let(:charts_headers) { { "Turbo-Frame" => "event_roster_charts" } }
+
+    context "authorization" do
+      it "is visible to the event owner" do
+        sign_in owner
+        get roster_event_path(owned_event)
+        expect(response).to have_http_status(:ok)
+      end
+
+      it "redirects a non-owner non-admin" do
+        sign_in user
+        get roster_event_path(owned_event)
+        expect(response).to redirect_to(root_path)
+      end
+
+      it "logs an Ahoy page-view event" do
+        sign_in admin
+        expect(Analytics::AhoyTracker).to receive(:track_event).with(anything, "view.events.roster", { event_id: owned_event.id })
+        get roster_event_path(owned_event)
+      end
     end
 
     context "as admin" do
       before { sign_in admin }
 
-      it "renders the registrant roster with names and program" do
-        get background_event_path(event)
+      describe "the page shell and registrant table" do
+        it "renders the registrant roster with names and program" do
+          get roster_event_path(owned_event)
 
-        expect(response).to have_http_status(:ok)
-        expect(response.body).to include("Get to know the registrants")
-        expect(response.body).to include("Ada")
-        expect(response.body).to include("Lovelace")
-        expect(response.body).to include("Background Org")
+          expect(response).to have_http_status(:ok)
+          expect(response.body).to include("Registrant roster")
+          expect(response.body).to include("Ada")
+          expect(response.body).to include("Lovelace")
+          expect(response.body).to include("Roster Org")
+        end
+
+        # An incomplete attendance holds this event's scholarship and paid its fees,
+        # so it stays in the roster's population — dropping it would pull that money
+        # out of the page's totals. "Completed the training" is a separate figure;
+        # here the header just names how many of the registrants were partial.
+        it "keeps incomplete attendance in the roster and names it in the header" do
+          partial = create(:person, first_name: "Zed", last_name: "Zulu")
+          create(:event_registration, event: owned_event, registrant: partial, status: "incomplete_attendance")
+
+          get roster_event_path(owned_event)
+
+          expect(response.body).to include("Lovelace")
+          expect(response.body).to include("Zulu")
+          expect(response.body).to include("2 active registrants (1 with incomplete attendance)")
+        end
+
+        it "omits the incomplete note when nobody has a partial attendance" do
+          get roster_event_path(owned_event)
+
+          expect(response.body).to include("1 active registrant")
+          expect(response.body).not_to include("with incomplete attendance")
+        end
+
+        it "links each registrant row to their registration, not their profile" do
+          get roster_event_path(owned_event)
+
+          expect(response.body).to include(
+            CGI.escapeHTML(edit_event_registration_path(registration, return_to: "roster"))
+          )
+          expect(response.body).not_to include(person_path(person))
+        end
+
+        it "excludes registrants with an inactive status" do
+          cancelled = create(:person, first_name: "Grace", last_name: "Hopper")
+          create(:event_registration, event: owned_event, registrant: cancelled, status: "cancelled")
+
+          get roster_event_path(owned_event)
+
+          expect(response.body).to include("Lovelace")
+          expect(response.body).not_to include("Hopper")
+        end
+
+        it "shows a read-only attendance-status pill linking to the registration edit page" do
+          registration.update!(status: "attended")
+
+          get roster_event_path(owned_event)
+
+          expect(response.body).to include("Attendance")
+          expect(response.body).to include("Attended")
+          # The pill links to the edit page (the row edits attendance there, not
+          # inline) — no status <select> in the roster table.
+          expect(response.body).to include(
+            CGI.escapeHTML(edit_event_registration_path(registration, return_to: "roster"))
+          )
+          expect(response.body).not_to include("Change attendance status")
+        end
+
+        it "shows each registrant's Primary sector and Primary age group in the roster" do
+          registration_form = create(:form, name: "Registration")
+          create(:event_form, event: owned_event, form: registration_form, role: "registration")
+          submission = create(:form_submission, person: person, form: registration_form)
+
+          sector = create(:sector, name: "Sexual Assault")
+          sector_field = create(:form_field, form: registration_form, field_identifier: "primary_sector_single")
+          create(:form_answer, form_submission: submission, form_field: sector_field, submitted_answer: sector.id.to_s)
+
+          age_range = create(:category_type, name: "AgeRange")
+          teens = create(:category, name: "Teens", category_type: age_range)
+          age_field = create(:form_field, form: registration_form, field_identifier: "primary_age_group")
+          create(:form_answer, form_submission: submission, form_field: age_field, submitted_answer: teens.id.to_s)
+
+          get roster_event_path(owned_event)
+
+          expect(response.body).to include("Primary sector")
+          expect(response.body).to include("Primary age group")
+          expect(response.body).to include("Sexual Assault")
+          expect(response.body).to include("Teens")
+        end
+
+        it "links a registrant's organization to its profile and the CE icon to the CE registration edit" do
+          ce_registration = create(:continuing_education_registration, event_registration: registration)
+
+          get roster_event_path(owned_event)
+
+          # Roster Org is linked to Ada via the affiliation in the registration let!.
+          expect(response.body).to include(organization_path(organization))
+          expect(response.body).to include(edit_continuing_education_registration_path(ce_registration))
+        end
+
+        it "shows a location column with the registrant's state abbreviation" do
+          create(:address, addressable: person, state: "WY", country: nil, inactive: false)
+
+          get roster_event_path(owned_event)
+
+          expect(response.body).to include("Location")
+          expect(response.body).to include("WY")
+        end
+
+        it "shows the ISO country code in the location column for international registrants" do
+          create(:address, addressable: person, state: "ON", country: "Canada", inactive: false)
+
+          get roster_event_path(owned_event)
+
+          expect(response.body).to include("CAN")
+        end
+
+        it "shows a program-status column in the registrant roster" do
+          get roster_event_path(owned_event)
+
+          # "Roster Org" is the registrant's first-facilitator program → New.
+          expect(response.body).to include("Program status")
+          expect(response.body).to include("New")
+        end
+
+        it "labels the organizations count box and breaks it down by program status" do
+          get roster_event_path(owned_event)
+
+          expect(response.body).to include("Organizations")
+          expect(response.body).to match(/\d+ new · \d+ ongoing · \d+ reinstated/)
+        end
+
+        it "links scholarship recipients to their entry on the recipients page" do
+          scholarship = create(:scholarship, recipient: person)
+          create(:allocation, source: scholarship, allocatable: registration)
+
+          get roster_event_path(owned_event)
+
+          expect(response.body).to include("fa-graduation-cap")
+          expect(response.body).to include("#{recipients_event_path(owned_event)}#participant-#{registration.slug}")
+        end
+
+        it "does not show a recipients link for registrants without a scholarship" do
+          get roster_event_path(owned_event)
+
+          expect(response.body).not_to include("#scholarship_")
+        end
+
+        # The stat bar filters this page rather than sending the admin to Manage,
+        # so there's no back-link to stamp — you never leave.
+        it "filters in place from the stat bar instead of leaving for Manage" do
+          get roster_event_path(owned_event)
+
+          expect(response.body).to include('id="overview"')
+          expect(response.body).to include(CGI.escapeHTML(roster_event_path(owned_event, registrant_ids: registration.registrant_id.to_s)))
+          expect(response.body).not_to include(%(href="#{registrants_event_path(owned_event)}?registrant_ids))
+        end
+
+        it "narrows only the table, leaving the stat bar whole, and says what's applied" do
+          other = create(:person, first_name: "Zed", last_name: "Zulu")
+          create(:event_registration, event: owned_event, registrant: other, status: "registered")
+
+          get roster_event_path(owned_event, registrant_ids: registration.registrant_id.to_s)
+
+          expect(response.body).to include("Lovelace")
+          expect(response.body).not_to include("Zulu")
+          expect(response.body).to include("Applied")
+          expect(response.body).to include("Showing 1 of 2")
+        end
+
+        # The sector drill-in resolves ids through SectorableItem rather than an
+        # EventDashboard map, so it has to stay bounded to this event's registrants —
+        # someone else carrying the same sector must not leak into the table.
+        it "narrows the table by a sector drill-in without pulling in non-registrants" do
+          sector = create(:sector, name: "Sexual Assault")
+          create(:sectorable_item, sectorable: person, sector: sector)
+          outsider = create(:person, first_name: "Zed", last_name: "Zulu")
+          create(:sectorable_item, sectorable: outsider, sector: sector)
+
+          get roster_event_path(owned_event, sector: sector.id)
+
+          expect(response.body).to include("Lovelace")
+          expect(response.body).not_to include("Zulu")
+          expect(response.body).to include("Showing 1 of 1")
+        end
+
+        it "returns to the roster from the registration it opened" do
+          get edit_event_registration_path(registration, return_to: "roster")
+
+          expect(response.body).to include("Registrant roster")
+          expect(response.body).to include(roster_event_path(owned_event))
+        end
+
+        it "defers the demographic charts to a lazy frame (not rendered inline)" do
+          get roster_event_path(owned_event)
+
+          expect(response.body).to include("event_roster_charts")
+          expect(response.body).not_to include("All sectors")
+        end
+
+        # The Reports hub's "Breakdowns →" link arrives with ?charts=1; without this
+        # it would land on a collapsed panel and show nothing.
+        it "starts the breakdowns panel collapsed, and open on a ?charts=1 arrival" do
+          get roster_event_path(owned_event)
+          collapsed = Capybara.string(response.body)
+          expect(collapsed).to have_selector("[data-panel-toggle-name='charts'].hidden", visible: :all)
+
+          get roster_event_path(owned_event, charts: 1)
+          opened = Capybara.string(response.body)
+          expect(opened).not_to have_selector("div[data-panel-toggle-name='charts'].hidden", visible: :all)
+          expect(opened).to have_selector("button[data-panel-toggle-name='charts'][aria-expanded='true']", visible: :all)
+        end
       end
 
-      it "links each registrant row to their profile" do
-        get background_event_path(event)
-
-        expect(response.body).to include(person_path(person))
-      end
-
-      it "shows each registrant's Primary sector and Primary age group in the roster" do
-        registration_form = create(:form, name: "Registration")
-        create(:event_form, event: event, form: registration_form, role: "registration")
-        submission = create(:form_submission, person: person, form: registration_form)
-
-        sector = create(:sector, name: "Sexual Assault")
-        sector_field = create(:form_field, form: registration_form, field_identifier: "primary_sector_single")
-        create(:form_answer, form_submission: submission, form_field: sector_field, submitted_answer: sector.id.to_s)
-
-        age_range = create(:category_type, name: "AgeRange")
-        teens = create(:category, name: "Teens", category_type: age_range)
-        age_field = create(:form_field, form: registration_form, field_identifier: "primary_age_group")
-        create(:form_answer, form_submission: submission, form_field: age_field, submitted_answer: teens.id.to_s)
-
-        get background_event_path(event)
-
-        expect(response.body).to include("Primary sector")
-        expect(response.body).to include("Primary age group")
-        expect(response.body).to include("Sexual Assault")
-        expect(response.body).to include("Teens")
-      end
-
-      it "links a registrant's organization to its profile and the CE icon to the CE registration edit" do
-        ce_registration = create(:continuing_education_registration, event_registration: registration)
-
-        get background_event_path(event)
-
-        # Background Org is linked to Ada via the affiliation in the registration let!.
-        expect(response.body).to include(organization_path(organization))
-        expect(response.body).to include(edit_continuing_education_registration_path(ce_registration))
-      end
-
-      it "shows a countries breakdown from registrant addresses" do
-        create(:address, addressable: person, state: "CA", country: "Canada", inactive: false)
-
-        get background_event_path(event)
-
-        expect(response.body).to include("Canada")
-        expect(response.body).to include("Countries")
-      end
-
-      it "shows a location column with the registrant's state abbreviation" do
-        create(:address, addressable: person, state: "WY", country: nil, inactive: false)
-
-        get background_event_path(event)
-
-        expect(response.body).to include("Location")
-        expect(response.body).to include("WY")
-      end
-
-      it "shows the ISO country code in the location column for international registrants" do
-        create(:address, addressable: person, state: "ON", country: "Canada", inactive: false)
-
-        get background_event_path(event)
-
-        expect(response.body).to include("CAN")
-      end
-
-      it "shows a school districts breakdown from registrant addresses" do
-        create(:address, addressable: person, state: "CA", district: "Compton Unified", inactive: false)
-
-        get background_event_path(event)
-
-        expect(response.body).to include("School districts")
-        expect(response.body).to include("Compton Unified")
-      end
-
-      it "shows a sectors count box from registrants' sectors" do
-        create(:sectorable_item, sector: create(:sector, name: "Sexual Assault"), sectorable: person)
-        create(:sectorable_item, sector: create(:sector, name: "Mental Health"), sectorable: person)
-
-        get background_event_path(event)
-
-        expect(response.body).to include("Sectors")
-        expect(response.body).to include("Sexual Assault")
-      end
-
-      it "shows the free-text \"Other\" sector responses as their own detail card" do
-        create(:other_response, owner: person, text: "Hospice care")
-
-        get background_event_path(event)
-
-        expect(response.body).to include("Other sector responses")
-        expect(response.body).to include("Hospice care")
-      end
-
-      it "labels the organizations count box and breaks it down by program status" do
-        get background_event_path(event)
-
-        expect(response.body).to include("Organizations")
-        expect(response.body).to match(/\d+ new · \d+ ongoing · \d+ reinstated/)
-      end
-
-      it "charts the organizations' program-status breakdown above the org list" do
-        get background_event_path(event)
-
-        expect(response.body).to include("Organization/program status")
-        # "Background Org" is the registrant's first-facilitator program → New.
-        expect(response.body).to include("New")
-      end
-
-      it "shows a program-status column in the registrant roster" do
-        get background_event_path(event)
-
-        # "Background Org" is the registrant's first-facilitator program → New.
-        expect(response.body).to include("Status")
-        expect(response.body).to include("New")
-      end
-
-      it "renders the states breakdown as a US choropleth map fed by per-state counts" do
-        create(:address, addressable: person, state: "CA", inactive: false)
-
-        get background_event_path(event)
-
-        expect(response.body).to include("States")
-        expect(response.body).to include('data-controller="us-map-chart"')
-        expect(response.body).to include("CA")
-      end
-
-      it "flags scholarship-recipient orgs in the Organizations breakdown and offers a CSS filter toggle" do
-        scholarship = create(:scholarship, recipient: person, amount_cents: 500)
-        create(:allocation, source: scholarship, allocatable: registration, amount: 500)
-
-        get background_event_path(event)
-
-        # Pure-CSS toggle: a `peer` checkbox reveals the scholarship-only list.
-        expect(response.body).to include("Only scholarship orgs")
-        expect(response.body).to include('id="org-scholarship-filter"')
-        expect(response.body).to include("peer-checked:table")
-        # The recipient's org (Background Org) is flagged with the grad-cap icon.
-        expect(response.body).to include("fa-graduation-cap")
-      end
-
-      it "omits the scholarship-org filter toggle when no org has a recipient" do
-        get background_event_path(event)
-
-        expect(response.body).to include("Organizations")
-        expect(response.body).not_to include("Only scholarship orgs")
-      end
-
-      it "groups registrants by the city of the org linked on their registration" do
-        city_org = create(:organization, name: "City Org")
-        create(:address, addressable: city_org, city: "Los Angeles", state: "CA", inactive: false)
-        create(:event_registration_organization, event_registration: registration, organization: city_org)
-        scholarship = create(:scholarship, recipient: person, amount_cents: 500)
-        create(:allocation, source: scholarship, allocatable: registration, amount: 500)
-
-        get background_event_path(event)
-
-        # On the background page the city card is titled "All cities".
-        expect(response.body).to include("All cities")
-        expect(response.body).to include("Los Angeles, CA")
-        # Scholarship recipient in that city renders in the "(🎓 1)" parenthetical.
-        expect(response.body).to include("fa-graduation-cap")
-        # Same pure-CSS toggle as the Organizations card.
-        expect(response.body).to include('id="city-scholarship-filter"')
-      end
-
-      it "anchors its sections and stamps registrants drill-downs with a back-to-section eyebrow" do
-        get background_event_path(event)
-
-        # Sections carry stable ids so a drill-down can scroll back to them.
-        expect(response.body).to include('id="overview"')
-        expect(response.body).to include('id="all-organizations"')
-        expect(response.body).to include('id="primary-sector"')
-        # Registrants links carry the origin page + section so the eyebrow returns here.
-        expect(response.body).to include("return_to=background")
-        expect(response.body).to include("return_anchor=overview")
-        expect(response.body).to include("return_anchor=all-organizations")
-      end
-
-      it "excludes registrants with an inactive status" do
-        cancelled = create(:person, first_name: "Grace", last_name: "Hopper")
-        create(:event_registration, event: event, registrant: cancelled, status: "cancelled")
-
-        get background_event_path(event)
-
-        expect(response.body).to include("Lovelace")
-        expect(response.body).not_to include("Hopper")
-      end
-
-      it "shows a primary age group breakdown from registration responses" do
-        registration_form = create(:form, name: "Registration")
-        field = create(:form_field, form: registration_form, field_identifier: "primary_age_group",
-                                    answer_type: :multi_select_checkbox)
-        create(:event_form, event: event, form: registration_form, role: "registration")
-        age_range = create(:category_type, name: "AgeRange")
-        adults = create(:category, name: "Adults", category_type: age_range)
-        submission = create(:form_submission, person: person, form: registration_form)
-        create(:form_answer, form_submission: submission, form_field: field, submitted_answer: adults.id.to_s)
-
-        get background_event_path(event)
-
-        expect(response.body).to include("Primary age group")
-        expect(response.body).to include("Adults")
-        # Percentages render as always-visible text (not hover-only), so they read on mobile.
-        expect(response.body).to include("100.0%")
-      end
-
-      it "shows an all age groups breakdown spanning the primary and additional questions" do
-        registration_form = create(:form, name: "Registration")
-        create(:event_form, event: event, form: registration_form, role: "registration")
-        age_range = create(:category_type, name: "AgeRange")
-        adults = create(:category, name: "Adults", category_type: age_range)
-        teens = create(:category, name: "Teens", category_type: age_range)
-        primary_field = create(:form_field, form: registration_form, field_identifier: "primary_age_group",
-                                            answer_type: :multi_select_checkbox)
-        additional_field = create(:form_field, form: registration_form, field_identifier: "additional_age_group",
-                                               answer_type: :multi_select_checkbox)
-        submission = create(:form_submission, person: person, form: registration_form)
-        create(:form_answer, form_submission: submission, form_field: primary_field, submitted_answer: adults.id.to_s)
-        create(:form_answer, form_submission: submission, form_field: additional_field, submitted_answer: teens.id.to_s)
-
-        get background_event_path(event)
-
-        expect(response.body).to include("All age groups")
-        expect(response.body).to include("Teens")
-      end
-
-      it "shows a life experiences breakdown from registrants' StoryPopulation tags" do
-        story_population = create(:category_type, name: "StoryPopulation")
-        experience = create(:category, name: "Veterans", category_type: story_population)
-        create(:categorizable_item, category: experience, categorizable: person)
-
-        get background_event_path(event)
-
-        expect(response.body).to include("Life experiences")
-        expect(response.body).to include("Veterans")
-      end
-
-      it "hides the life experiences and settings cards when registrants have no tags" do
-        get background_event_path(event)
-
-        expect(response.body).not_to include("Life experiences")
-        expect(response.body).not_to include("Settings")
-      end
-
-      it "links scholarship recipients to their entry on the recipients page" do
-        scholarship = create(:scholarship, recipient: person)
-        create(:allocation, source: scholarship, allocatable: registration)
-
-        get background_event_path(event)
-
-        expect(response.body).to include("fa-graduation-cap")
-        expect(response.body).to include("#{recipients_event_path(event)}#participant-#{registration.slug}")
-      end
-
-      it "does not show a recipients link for registrants without a scholarship" do
-        get background_event_path(event)
-
-        expect(response.body).not_to include("#scholarship_")
-      end
-    end
-
-    context "as non-admin non-owner" do
-      before { sign_in user }
-
-      it "redirects" do
-        get background_event_path(event)
-        expect(response).to redirect_to(root_path)
+      describe "the demographic charts frame" do
+        it "renders the sector breakdowns" do
+          create(:sectorable_item, sectorable: person, sector: create(:sector, name: "Sexual Assault"), is_primary: true)
+          create(:sectorable_item, sectorable: person, sector: create(:sector, name: "Mental Health"))
+
+          get roster_event_path(owned_event), headers: charts_headers
+
+          expect(response.body).to include("Primary sector")
+          expect(response.body).to include("All sectors")
+          expect(response.body).to include("Sexual Assault")
+        end
+
+        it "shows the free-text \"Other\" sector responses as their own detail card" do
+          create(:other_response, owner: person, text: "Hospice care")
+
+          get roster_event_path(owned_event), headers: charts_headers
+
+          expect(response.body).to include("Other sector responses")
+          expect(response.body).to include("Hospice care")
+        end
+
+        it "shows a countries breakdown from registrant addresses" do
+          create(:address, addressable: person, state: "CA", country: "Canada", inactive: false)
+
+          get roster_event_path(owned_event), headers: charts_headers
+
+          expect(response.body).to include("Canada")
+          expect(response.body).to include("Countries")
+        end
+
+        it "shows a school districts breakdown from registrant addresses" do
+          create(:address, addressable: person, state: "CA", district: "Compton Unified", inactive: false)
+
+          get roster_event_path(owned_event), headers: charts_headers
+
+          expect(response.body).to include("School districts")
+          expect(response.body).to include("Compton Unified")
+        end
+
+        it "renders the states breakdown as a US choropleth map fed by per-state counts" do
+          create(:address, addressable: person, state: "CA", inactive: false)
+
+          get roster_event_path(owned_event), headers: charts_headers
+
+          expect(response.body).to include("States")
+          expect(response.body).to include('data-controller="us-map-chart"')
+          expect(response.body).to include("CA")
+        end
+
+        it "charts the organizations' program-status breakdown above the org list" do
+          get roster_event_path(owned_event), headers: charts_headers
+
+          expect(response.body).to include("Organization/program status")
+          # "Roster Org" is the registrant's first-facilitator program → New.
+          expect(response.body).to include("New")
+        end
+
+        it "flags scholarship-recipient orgs in the Organizations breakdown and offers a CSS filter toggle" do
+          scholarship = create(:scholarship, recipient: person, amount_cents: 500)
+          create(:allocation, source: scholarship, allocatable: registration, amount: 500)
+
+          get roster_event_path(owned_event), headers: charts_headers
+
+          # Pure-CSS toggle: a `peer` checkbox reveals the scholarship-only list.
+          expect(response.body).to include("Only scholarship orgs")
+          expect(response.body).to include('id="org-scholarship-filter"')
+          expect(response.body).to include("peer-checked:table")
+          # The recipient's org (Roster Org) is flagged with the grad-cap icon.
+          expect(response.body).to include("fa-graduation-cap")
+        end
+
+        it "omits the scholarship-org filter toggle when no org has a recipient" do
+          get roster_event_path(owned_event), headers: charts_headers
+
+          expect(response.body).to include('id="all-organizations"')
+          expect(response.body).not_to include("Only scholarship orgs")
+        end
+
+        it "groups registrants by the city of the org linked on their registration" do
+          city_org = create(:organization, name: "City Org")
+          create(:address, addressable: city_org, city: "Los Angeles", state: "CA", inactive: false)
+          create(:event_registration_organization, event_registration: registration, organization: city_org)
+          scholarship = create(:scholarship, recipient: person, amount_cents: 500)
+          create(:allocation, source: scholarship, allocatable: registration, amount: 500)
+
+          get roster_event_path(owned_event), headers: charts_headers
+
+          expect(response.body).to include("All cities")
+          expect(response.body).to include("Los Angeles, CA")
+          # Scholarship recipient in that city renders in the "(🎓 1)" parenthetical.
+          expect(response.body).to include("fa-graduation-cap")
+          # Same pure-CSS toggle as the Organizations card.
+          expect(response.body).to include('id="city-scholarship-filter"')
+        end
+
+        it "shows a primary age group breakdown from registration responses" do
+          registration_form = create(:form, name: "Registration")
+          field = create(:form_field, form: registration_form, field_identifier: "primary_age_group",
+                                      answer_type: :multi_select_checkbox)
+          create(:event_form, event: owned_event, form: registration_form, role: "registration")
+          age_range = create(:category_type, name: "AgeRange")
+          adults = create(:category, name: "Adults", category_type: age_range)
+          submission = create(:form_submission, person: person, form: registration_form)
+          create(:form_answer, form_submission: submission, form_field: field, submitted_answer: adults.id.to_s)
+
+          get roster_event_path(owned_event), headers: charts_headers
+
+          expect(response.body).to include("Primary age group")
+          expect(response.body).to include("Adults")
+          # Percentages render as always-visible text (not hover-only), so they read on mobile.
+          expect(response.body).to include("100.0%")
+        end
+
+        it "shows an all age groups breakdown spanning the primary and additional questions" do
+          registration_form = create(:form, name: "Registration")
+          create(:event_form, event: owned_event, form: registration_form, role: "registration")
+          age_range = create(:category_type, name: "AgeRange")
+          adults = create(:category, name: "Adults", category_type: age_range)
+          teens = create(:category, name: "Teens", category_type: age_range)
+          primary_field = create(:form_field, form: registration_form, field_identifier: "primary_age_group",
+                                              answer_type: :multi_select_checkbox)
+          additional_field = create(:form_field, form: registration_form, field_identifier: "additional_age_group",
+                                                 answer_type: :multi_select_checkbox)
+          submission = create(:form_submission, person: person, form: registration_form)
+          create(:form_answer, form_submission: submission, form_field: primary_field, submitted_answer: adults.id.to_s)
+          create(:form_answer, form_submission: submission, form_field: additional_field, submitted_answer: teens.id.to_s)
+
+          get roster_event_path(owned_event), headers: charts_headers
+
+          expect(response.body).to include("All age groups")
+          expect(response.body).to include("Teens")
+        end
+
+        it "shows a life experiences breakdown from registrants' StoryPopulation tags" do
+          story_population = create(:category_type, name: "StoryPopulation")
+          experience = create(:category, name: "Veterans", category_type: story_population)
+          create(:categorizable_item, category: experience, categorizable: person)
+
+          get roster_event_path(owned_event), headers: charts_headers
+
+          expect(response.body).to include("Life experiences")
+          expect(response.body).to include("Veterans")
+        end
+
+        it "hides the life experiences and settings cards when registrants have no tags" do
+          get roster_event_path(owned_event), headers: charts_headers
+
+          expect(response.body).not_to include("Life experiences")
+          expect(response.body).not_to include("Settings")
+        end
+
+        it "anchors its breakdown sections and drills each row back into this page" do
+          get roster_event_path(owned_event), headers: charts_headers
+
+          expect(response.body).to include('id="all-organizations"')
+          expect(response.body).to include('id="primary-sector"')
+          # Rows filter the roster itself — nothing points at the Manage list — and
+          # carry charts=1 so the panel they were clicked from is still open on arrival.
+          expect(response.body).to include(CGI.escapeHTML("#{roster_event_path(owned_event)}?charts=1&registrant_ids="))
+          expect(response.body).not_to include(registrants_event_path(owned_event))
+        end
       end
     end
   end
@@ -2362,15 +3010,16 @@ RSpec.describe "Events", type: :request do
         expect(response.body).to include("It will let me reach more survivors.")
       end
 
-      it "shows a Registrants by city breakdown grouped by the registration-linked org" do
+      it "shows a recipient city breakdown, grouped by the registration-linked org, in the lazy charts frame" do
         org = create(:organization, name: "Reach Org")
         create(:address, addressable: org, city: "Richmond", state: "CA", inactive: false)
         registration = EventRegistration.find_by!(registrant: applicant, event: event)
         create(:event_registration_organization, event_registration: registration, organization: org)
 
-        get recipients_event_path(event)
+        get recipients_event_path(event), headers: { "Turbo-Frame" => "recipients_charts" }
 
-        expect(response.body).to include("Registrants by city")
+        expect(response).to have_http_status(:ok)
+        expect(response.body).to include("All cities")
         expect(response.body).to include("Richmond, CA")
       end
 
@@ -2393,12 +3042,88 @@ RSpec.describe "Events", type: :request do
         expect(response.body).to include("Show scholarship status")
       end
 
-      it "renders the Recipients and Statistics section headers with placeholder breakdowns" do
+      it "renders the Recipients and Breakdowns section headers with a breakdowns toggle" do
         get recipients_event_path(event)
 
-        expect(response.body).to include("Statistics")
-        expect(response.body).to include("Recipients by city")
-        expect(response.body).to include("Recipients by organization")
+        expect(response.body).to include("Recipients")
+        expect(response.body).to include("Breakdowns")
+        expect(response.body).to include("Hide recipients")
+        expect(response.body).to include("Show breakdowns")
+        # The real breakdowns load lazily; no placeholder boxes remain.
+        expect(response.body).not_to include("Coming soon")
+      end
+
+      # Every section toggles the same way, and its header stays put while
+      # collapsed so the page still reads — the "Show …" prompt sits under it.
+      it "toggles the shout outs alongside the other sections" do
+        applicant.update!(shoutout_text: "This training changed how we serve survivors.")
+        event.event_registrations.find_by(registrant: applicant).update!(shoutout: true)
+
+        get recipients_event_path(event)
+        page = Capybara.string(response.body)
+
+        expect(response.body).to include("Shout outs")
+        expect(response.body).to include("Hide shout outs")
+        expect(page).to have_selector("[data-panel-toggle-name='shoutouts']", visible: :all)
+      end
+
+      # Same rule as the roster: a breakdown row filters the cards on this page
+      # rather than navigating anywhere, and keeps the charts panel open.
+      it "drills its breakdown rows back into this page" do
+        get recipients_event_path(event), headers: { "Turbo-Frame" => "recipients_charts" }
+
+        expect(response.body).to include(CGI.escapeHTML("#{recipients_event_path(event)}?charts=1&registrant_ids="))
+      end
+
+      it "narrows the cards to a drill-in, leaving the header count whole" do
+        other = create(:person, first_name: "Zed", last_name: "Zulu")
+        create(:event_registration, event: event, registrant: other, status: "registered", scholarship_requested: true)
+
+        get recipients_event_path(event, registrant_ids: applicant.id.to_s)
+
+        expect(response.body).to include("Tara Gallagher")
+        expect(response.body).not_to include("Zed Zulu")
+        expect(response.body).to include("Showing 1 of 2")
+      end
+
+      # The drill-in and the funder grouping are independent controls, so each has
+      # to carry the other through — otherwise switching grouping silently clears
+      # the applied filter and the funder buckets never narrow.
+      it "keeps a drill-in applied when the funder grouping is toggled" do
+        other = create(:person, first_name: "Zed", last_name: "Zulu")
+        create(:event_registration, event: event, registrant: other, status: "registered", scholarship_requested: true)
+
+        get recipients_event_path(event, registrant_ids: applicant.id.to_s)
+
+        expect(response.body).to include(
+          CGI.escapeHTML(recipients_event_path(event, registrant_ids: applicant.id.to_s, group_by: "funder"))
+        )
+
+        get recipients_event_path(event, registrant_ids: applicant.id.to_s, group_by: "funder")
+
+        expect(response.body).to include("Tara Gallagher")
+        expect(response.body).not_to include("Zed Zulu")
+        # Ungrouping drops only group_by, keeping the drill-in.
+        expect(response.body).to include(
+          CGI.escapeHTML(recipients_event_path(event, registrant_ids: applicant.id.to_s))
+        )
+      end
+
+      it "gives every section a Show/Hide control beside its heading" do
+        get recipients_event_path(event)
+        page = Capybara.string(response.body)
+
+        %w[ recipients charts ].each do |panel|
+          expect(page).to have_selector("button[data-panel-toggle-name='#{panel}']", visible: :all)
+        end
+        # The top toggle bar rides at the right of the first heading's row, so that
+        # section's control is the bar's own button — whose visible label already
+        # names the subject — rather than a second inline pill in the same row.
+        expect(page).to have_selector("button[data-panel-toggle-name='recipients']", text: "Hide recipients", visible: :all)
+        expect(page).to have_no_selector("button[data-panel-toggle-name='recipients'][aria-label^='Toggle']", visible: :all)
+        # Sections further down keep the short pill; the heading beside it supplies
+        # the subject, so aria-label carries it for screen readers.
+        expect(page).to have_selector("button[aria-label='Toggle breakdowns']", text: "Show", visible: :all)
       end
 
       it "shows each recipient's awarded amount and completed tasks status" do
@@ -2414,6 +3139,24 @@ RSpec.describe "Events", type: :request do
         expect(response.body).to include("Tasks completed")
       end
 
+      # "recipients" already means "back to the shout-outs section" (the
+      # feature-a-shout-out flow), so the name link uses its own token to come
+      # back to this person's card instead.
+      it "links each recipient's name to their registration, returning to their card" do
+        registration = event.event_registrations.find_by(registrant: applicant)
+
+        get recipients_event_path(event)
+        expect(response.body).to include(
+          CGI.escapeHTML(edit_event_registration_path(registration, return_to: "recipient_card"))
+        )
+
+        get edit_event_registration_path(registration, return_to: "recipient_card")
+        expect(response.body).to include("Scholarship recipients")
+        expect(response.body).to include(
+          CGI.escapeHTML("#{recipients_event_path(event)}#participant-#{registration.slug}")
+        )
+      end
+
       it "links each scholarship to its edit page, returning to this recipients page" do
         event.update!(cost_cents: 50_000)
         registration = event.event_registrations.find_by(registrant: applicant)
@@ -2425,10 +3168,10 @@ RSpec.describe "Events", type: :request do
         expect(response.body).to include(CGI.escapeHTML(edit_scholarship_path(scholarship, return_to: "recipients", participant: registration.slug)))
       end
 
-      it "names the funding donor when the scholarship is drawn from a grant" do
+      it "names the funder when the scholarship is drawn from a grant" do
         registration = event.event_registrations.find_by(registrant: applicant)
         org = create(:organization, name: "Joyful Heart Foundation")
-        grant = create(:grant, name: "Healing Arts Fund", donor: org, amount_cents: 100_000)
+        grant = create(:grant, name: "Healing Arts Fund", funder: org, amount_cents: 100_000)
         scholarship = create(:scholarship, recipient: applicant, grant: grant, amount_cents: 1_000, tasks_completed: true)
         create(:allocation, source: scholarship, allocatable: registration, amount: 1_000)
 
@@ -2438,7 +3181,7 @@ RSpec.describe "Events", type: :request do
         expect(response.body).to include("Joyful Heart Foundation")
       end
 
-      it "omits the donor line for a scholarship with no parent grant" do
+      it "omits the funder line for a scholarship with no parent grant" do
         registration = event.event_registrations.find_by(registrant: applicant)
         scholarship = create(:scholarship, recipient: applicant, amount_cents: 1_000, tasks_completed: true)
         create(:allocation, source: scholarship, allocatable: registration, amount: 1_000)
@@ -2494,7 +3237,7 @@ RSpec.describe "Events", type: :request do
         expect(response.body).not_to include("Pat Plain")
       end
 
-      it "renders each recipient's tagged age groups as chips, primary ones starred" do
+      it "renders each recipient's tagged age groups as muted chips linking to the taggings filter, primary ones starred" do
         age_type = create(:category_type, name: "AgeRange", published: true)
         teens = create(:category, :published, category_type: age_type, name: "13-17")
         adults = create(:category, :published, category_type: age_type, name: "18+")
@@ -2505,8 +3248,41 @@ RSpec.describe "Events", type: :request do
         page = Capybara.string(response.body)
         expect(page).to have_content("13-17")
         expect(page).to have_content("18+")
-        # The primary group leads with the starred lime chip from the shared partial.
-        expect(page).to have_css("span.text-lime-800 i.fa-star")
+        # Each age chip links to the taggings page filtered to that category, like
+        # the sector chips do.
+        expect(page).to have_css("a[href*='category_names_all=13-17']")
+        expect(page).to have_css("a[href*='category_names_all=18%2B']")
+        # The primary group leads with a starred, muted (neutral-grey) chip.
+        expect(page).to have_css("a.text-gray-700 i.fa-star")
+      end
+
+      it "links each recipient's name row to their registration ticket" do
+        registration = event.event_registrations.find_by(registrant: applicant)
+
+        get recipients_event_path(event)
+
+        expect(response.body).to include(registration_ticket_path(registration.slug))
+      end
+
+      it "groups recipients by funder with a linked header carrying the funder's city/state, hiding the per-card funder line" do
+        registration = event.event_registrations.find_by(registrant: applicant)
+        org = create(:organization, name: "Joyful Heart Foundation")
+        create(:address, addressable: org, city: "Los Angeles", state: "CA")
+        grant = create(:grant, name: "Healing Arts Fund", funder: org, amount_cents: 100_000)
+        scholarship = create(:scholarship, recipient: applicant, grant: grant, amount_cents: 1_000)
+        create(:allocation, source: scholarship, allocatable: registration, amount: 1_000)
+
+        get recipients_event_path(event, group_by: "funder")
+
+        expect(response).to have_http_status(:ok)
+        page = Capybara.string(response.body)
+        # The funder name renders as a section header linking to the funder's profile,
+        # with its city/state alongside.
+        expect(page).to have_css("h2 a[href='#{organization_path(org)}']", text: "Joyful Heart Foundation")
+        expect(page).to have_content("Los Angeles, CA")
+        expect(response.body).to include("Ungroup")
+        # The redundant per-card "Funded by" line is dropped when grouped.
+        expect(response.body).not_to include("Funded by")
       end
 
       it "shows the org linked to its website on the left and the bold recipient name linked to their profile on the right" do
@@ -2554,6 +3330,75 @@ RSpec.describe "Events", type: :request do
         get recipients_event_path(event)
 
         expect(response.body).not_to include("Shout outs")
+      end
+
+      it "offers a recipient search that posts to feature a chosen recipient" do
+        applicant.update!(shoutout_text: "Grateful to serve.")
+        registration = event.event_registrations.find_by(registrant: applicant)
+        registration.update!(shoutout: true)
+
+        get recipients_event_path(event)
+
+        expect(response.body).to include("Add shoutout")
+        expect(response.body).to include(feature_recipient_shoutout_event_path(event))
+        # The recipient is an option, valued by their registration id.
+        expect(response.body).to include("value=\"#{registration.id}\"")
+      end
+
+      it "links each shout-out row to that registrant's registration edit form" do
+        applicant.update!(shoutout_text: "Grateful to serve.")
+        registration = event.event_registrations.find_by(registrant: applicant)
+        registration.update!(shoutout: true)
+
+        get recipients_event_path(event)
+
+        expect(response.body).to include(edit_event_registration_path(registration.id, return_to: "recipients", anchor: "shout-out"))
+      end
+
+      describe "POST /events/:id/feature_recipient_shoutout" do
+        it "flags the registration and sends the admin to its edit form" do
+          registration = event.event_registrations.find_by(registrant: applicant)
+
+          post feature_recipient_shoutout_event_path(event), params: { registration_id: registration.id }
+
+          expect(registration.reload.shoutout).to be(true)
+          expect(response).to redirect_to(
+            edit_event_registration_path(registration, return_to: "recipients", anchor: "shout-out")
+          )
+        end
+
+        it "seeds the shout-out text from the profile bio when it is blank" do
+          applicant.update!(bio: "Two decades bringing art to survivors.", profile_show_bio: true, shoutout_text: nil)
+          registration = event.event_registrations.find_by(registrant: applicant)
+
+          post feature_recipient_shoutout_event_path(event), params: { registration_id: registration.id }
+
+          expect(applicant.reload.shoutout_text).to eq("Two decades bringing art to survivors.")
+        end
+
+        it "does not overwrite existing shout-out text with the bio" do
+          applicant.update!(bio: "Bio text.", shoutout_text: "Custom shout-out.")
+          registration = event.event_registrations.find_by(registrant: applicant)
+
+          post feature_recipient_shoutout_event_path(event), params: { registration_id: registration.id }
+
+          expect(applicant.reload.shoutout_text).to eq("Custom shout-out.")
+        end
+
+        it "leaves the shout-out text blank when the profile bio is hidden" do
+          applicant.update!(bio: "Hidden bio.", profile_show_bio: false, shoutout_text: nil)
+          registration = event.event_registrations.find_by(registrant: applicant)
+
+          post feature_recipient_shoutout_event_path(event), params: { registration_id: registration.id }
+
+          expect(applicant.reload.shoutout_text).to be_blank
+        end
+
+        it "returns to the recipients page with an alert when no recipient is chosen" do
+          post feature_recipient_shoutout_event_path(event), params: { registration_id: "" }
+
+          expect(response).to redirect_to(recipients_event_path(event))
+        end
       end
     end
 
@@ -2768,20 +3613,6 @@ RSpec.describe "Events", type: :request do
         expect(response).to redirect_to(root_path)
       end
     end
-
-    describe "GET /index?staffed_by_me" do
-      it "returns only events the current user's person staffs" do
-        admin_with_person = create(:user, :admin, :with_person)
-        staffed = create(:event, :published, title: "Staffed event")
-        create(:event, :published, title: "Other event")
-        create(:event_staff, event: staffed, person: admin_with_person.person)
-
-        sign_in admin_with_person
-        get events_path(staffed_by_me: true)
-        expect(response.body).to include("Staffed event")
-        expect(response.body).not_to include("Other event")
-      end
-    end
   end
 
   describe "GET /show register button for signed-in users" do
@@ -2868,6 +3699,33 @@ RSpec.describe "Events", type: :request do
       }.not_to change(Notification, :count)
 
       expect(response).to redirect_to(preview_reminder_event_path(event, custom_message: "", custom_subject: ""))
+    end
+
+    it "logs an Ahoy event with the recipient count on a successful send" do
+      expect(Analytics::AhoyTracker).to receive(:track_event)
+        .with(anything, "view.events.send_reminder", { event_id: event.id, recipient_count: 2 })
+      post send_reminder_event_path(event), params: { registration_ids: [ registration_one.id, registration_two.id ] }
+    end
+
+    it "logs nothing when nothing is selected" do
+      expect(Analytics::AhoyTracker).not_to receive(:track_event)
+      post send_reminder_event_path(event), params: { registration_ids: [] }
+    end
+  end
+
+  describe "POST /confirm_reminder" do
+    let!(:registration) { create(:event_registration, event: event) }
+
+    before { sign_in admin }
+
+    it "logs an Ahoy page-view event when it renders the confirmation" do
+      expect(Analytics::AhoyTracker).to receive(:track_event).with(anything, "view.events.confirm_reminder", { event_id: event.id })
+      post confirm_reminder_event_path(event), params: { registration_ids: [ registration.id ] }
+    end
+
+    it "logs nothing when it bounces back for having no recipients" do
+      expect(Analytics::AhoyTracker).not_to receive(:track_event)
+      post confirm_reminder_event_path(event), params: { registration_ids: [] }
     end
   end
 

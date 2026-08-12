@@ -1,6 +1,6 @@
 class PeopleController < ApplicationController
   include AhoyTracking, TagAssignable
-  before_action :set_person, only: %i[ show edit update destroy workshop_logs checkout bio ]
+  before_action :set_person, only: %i[ show edit update destroy workshop_logs checkout bio all_comments ]
 
   def index
     authorize!
@@ -30,12 +30,17 @@ class PeopleController < ApplicationController
     @person = Person.includes(:avatar_attachment, :contact_methods, :user,
                               categorizable_items: { category: :category_type }).find(params[:id]).decorate
     track_view(@person)
-    @dues_subscription = dues_subscription_for(@person)
+    @membership = membership_for(@person)
+    @membership_autopay = allowed_to?(:own_membership?, @person) && @person.payment_processor.subscribed?
 
     if params[:checkout] == "success"
       flash[:notice] = "Thank you for your donation!"
     elsif params[:checkout] == "cancelled"
       flash[:alert] = "Donation was cancelled."
+    elsif params[:membership_checkout] == "success"
+      flash[:notice] = "Your annual membership is set up. Thank you!"
+    elsif params[:membership_checkout] == "cancelled"
+      flash[:alert] = "Membership setup was cancelled."
     end
 
     # Handle paginated sections for Turbo Frame requests
@@ -85,6 +90,31 @@ class PeopleController < ApplicationController
         @affiliations = @person.affiliations.active.includes(organization: :logo_attachment).paginate(page: params[:page], per_page: per_page)
         render partial: "people/sections/affiliations", locals: { person: @person, affiliations: @affiliations }
       end
+    end
+  end
+
+  # Every comment connected to this person — their profile plus the records that
+  # hang off them (registrations, scholarships, CE registrations, user account) —
+  # in one newest-first feed you can add to and edit in place. Staff-only, since
+  # comments are internal notes (CommentPolicy#manage? = admin).
+  def all_comments
+    authorize! @person, to: :manage?, with: CommentPolicy
+    @person = @person.decorate
+
+    base = PersonCommentAggregator.new(@person).comments
+
+    if turbo_frame_request?
+      filtered = base.search_by_params(params)
+      @total_count = base.count
+      @count_display = filtered.count == @total_count ? @total_count : "#{filtered.count}/#{@total_count}"
+      @comments = filtered.paginate(page: params[:page], per_page: 20)
+      render :person_comments_results
+    else
+      @total_count = base.count
+      @flagged_count = base.flagged.count
+      @new_comment = Comment.new
+      @comment_targets = helpers.person_comment_targets(@person)
+      track_view("person_all_comments", { person_id: @person.id })
     end
   end
 
@@ -495,6 +525,7 @@ class PeopleController < ApplicationController
       :mailing_list_consented,
       :bio, :shoutout_text, :notes,
       :display_name_preference,
+      :anonymous_contributions,
       :pronouns,
       :profile_show_name_preference,
       :profile_is_searchable,
@@ -594,9 +625,9 @@ class PeopleController < ApplicationController
     )
   end
 
-  def dues_subscription_for(person)
-    return unless allowed_to?(:index?, DuesRegistration)
+  def membership_for(person)
+    return unless Membership.enabled? && allowed_to?(:show?, person)
 
-    person.dues_subscriptions.includes(:dues_registrations).order(created_at: :desc).first&.decorate
+    person.memberships.includes(:membership_invoices).order(created_at: :desc).first&.decorate
   end
 end

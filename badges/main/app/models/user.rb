@@ -8,7 +8,7 @@ class User < ApplicationRecord
 
   before_save :sync_locked_at_from_locked
 
-  after_commit :start_dues_subscription, on: [ :create, :update ],
+  after_commit :start_membership, on: [ :create, :update ],
     if: :saved_change_to_welcome_instructions_sent_at?
 
   after_update :track_welcome_instructions
@@ -215,10 +215,18 @@ class User < ApplicationRecord
   # Devise's default checks `pending_reconfirmation?` but can still route to the
   # current email in some flows. This ensures the confirmation always targets the
   # unconfirmed (new) email address.
-  def send_confirmation_instructions
+  #
+  # The invite sender (the staff member who triggered it, when one did) rides
+  # through the mailer opts as a plain id — DeviseMailer reads it to attribute the
+  # notification it logs, since it has no request and no current_user. Passing an
+  # id rather than stashing it on the record keeps it intact if the confirmation
+  # is ever delivered async (the record round-trips through GlobalID; the opts don't).
+  def send_confirmation_instructions(sender: nil)
     generate_confirmation_token! unless @raw_confirmation_token
     target = unconfirmed_email.presence || email
-    send_devise_notification(:confirmation_instructions, @raw_confirmation_token, to: target)
+    opts = { to: target }
+    opts[:sender_id] = sender.id if sender
+    send_devise_notification(:confirmation_instructions, @raw_confirmation_token, opts)
   end
 
   def set_welcome_instructions_token!
@@ -299,8 +307,8 @@ class User < ApplicationRecord
     track_auth_event("auth.welcome_instructions_sent")
   end
 
-  def start_dues_subscription
-    Dues::StartSubscription.call(person: person)
+  def start_membership
+    Membership::Start.call(person: person)
   end
 
   def track_account_deleted

@@ -7,6 +7,11 @@ class Event < ApplicationRecord
   # link is available to paid registrants.
   VIDEOCONFERENCE_JOIN_BUFFER = 30.minutes
 
+  # How long a finished event keeps a full card on the events index before it
+  # collapses into the compact archive list (admins only — they're the only ones
+  # who see past and unpublished events there).
+  CARD_ARCHIVE_AGE = 1.month
+
   has_rich_text :rhino_header
   has_rich_text :rhino_description
 
@@ -86,10 +91,12 @@ class Event < ApplicationRecord
   scope :publicly_featured, -> { where(published: true, publicly_visible: true, publicly_featured: true) } # overrides Featureable
   scope :registerable, -> { where("registration_close_date IS NULL OR registration_close_date >= ?", Time.current) }
   scope :using_form, ->(form_id) { joins(:event_forms).where(event_forms: { form_id: form_id }).distinct }
-  scope :staffed_by, ->(person) { joins(:event_staffs).where(event_staffs: { person_id: person }).distinct }
   # Events flagged as facilitator trainings (the "TAC" a scholarship recipient
   # attends). Drives the scholarship index's training column.
   scope :facilitator_trainings, -> { where(facilitator_training: true) }
+  # Delivery format: self-paced ("On-demand") vs scheduled instructor-led ("Live").
+  scope :on_demand, -> { where(on_demand: true) }
+  scope :live, -> { where(on_demand: false) }
   # start_date is a date column, so compare against a date — a Time would be cast
   # to midnight and drop events starting today.
   scope :upcoming, -> { where("start_date >= ?", Date.current) }
@@ -149,6 +156,13 @@ class Event < ApplicationRecord
 
   def ended?
     end_date < Time.current
+  end
+
+  # Whether the event shows as a full card on the events index. Unpublished
+  # events and events that ended more than a month ago collapse into the compact
+  # archive list instead of taking up a card.
+  def shown_as_card?
+    published? && end_date >= CARD_ARCHIVE_AGE.ago
   end
 
   def videoconference_window_open?
@@ -220,7 +234,8 @@ class Event < ApplicationRecord
   attr_writer :start_date_date, :start_date_time,
               :end_date_date, :end_date_time,
               :registration_close_date_date, :registration_close_date_time,
-              :ce_payment_due_deadline_date, :ce_payment_due_deadline_time
+              :ce_payment_due_deadline_date, :ce_payment_due_deadline_time,
+              :payment_due_deadline_date, :payment_due_deadline_time
 
   def start_date_date
     @start_date_date || start_date&.strftime("%Y-%m-%d")
@@ -252,6 +267,14 @@ class Event < ApplicationRecord
 
   def ce_payment_due_deadline_time
     @ce_payment_due_deadline_time || ce_payment_due_deadline&.strftime("%H:%M")
+  end
+
+  def payment_due_deadline_date
+    @payment_due_deadline_date || payment_due_deadline&.strftime("%Y-%m-%d")
+  end
+
+  def payment_due_deadline_time
+    @payment_due_deadline_time || payment_due_deadline&.strftime("%H:%M")
   end
 
   # Virtual attribute for cost in dollars (converts to/from cost_cents)
@@ -319,6 +342,7 @@ class Event < ApplicationRecord
     merge_date_time(:end_date)
     merge_date_time(:registration_close_date)
     merge_date_time(:ce_payment_due_deadline)
+    merge_date_time(:payment_due_deadline)
   end
 
   def merge_date_time(field)

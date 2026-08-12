@@ -53,6 +53,7 @@ Rails.application.routes.draw do
     get "activities/charts",         to: "ahoy_activities#charts", as: "activities_charts"
     get "activities/counts",         to: "analytics#index", as: "activities_counts"
     post "activities/counts/print",  to: "analytics#print", as: "analytics_print"
+    resources :comments, only: [ :index ]
   end
 
   resources :banners
@@ -104,6 +105,7 @@ Rails.application.routes.draw do
       post :create_organization
       delete :unlink_organization
       patch :update_onboarding
+      patch :toggle_certificate_issued
     end
     resources :comments, only: [ :index, :create, :update ]
   end
@@ -115,6 +117,7 @@ Rails.application.routes.draw do
       patch :unsubscribe
       patch :resubscribe
     end
+    resources :comments, only: [ :index, :create, :update ]
   end
   resources :topic_subscription_types, except: [ :show ] do
     member do
@@ -123,6 +126,9 @@ Rails.application.routes.draw do
     end
   end
   resources :forms do
+    collection do
+      get :smart_form_settings
+    end
     member do
       patch :reorder_field
       put :reorder_fields
@@ -134,9 +140,11 @@ Rails.application.routes.draw do
   resources :grants
   resources :scholarships, only: [ :index, :new, :create, :show, :edit, :update, :destroy ] do
     member { patch :toggle_tasks }
+    resources :comments, only: [ :index, :create, :update ]
   end
   resources :continuing_education_registrations, only: [ :new, :create, :edit, :update, :destroy ] do
     member { patch :toggle_certificate }
+    resources :comments, only: [ :index, :create, :update ]
   end
   resources :discounts, only: [ :create, :show, :destroy ] do
     collection do
@@ -147,7 +155,9 @@ Rails.application.routes.draw do
     collection do
       get :revenue
       get :participation
-      get :statistics
+      get :reports
+      get :scholarships
+      get :attendees
     end
     member do
       get :dashboard
@@ -161,13 +171,14 @@ Rails.application.routes.draw do
       get "sample_ticket/ce", to: "events/callouts#ce", defaults: { sample: "1" }, as: :sample_ce
       get "sample_ticket/videoconference", to: "events/callouts#videoconference", defaults: { sample: "1" }, as: :sample_videoconference
       get "sample_ticket/staff", to: "events/callouts#staff", defaults: { sample: "1" }, as: :sample_staff
-      get :background
       get :registrants
+      get :roster
       get :onboarding
       get :staff
       get "staff/edit", action: :edit_staff, as: :edit_staff
       patch "staff", action: :update_staff
       get :recipients
+      post :feature_recipient_shoutout
       get :bulk_payments, to: "events/bulk_payments#index"
       get :preview_reminder
       patch :preview
@@ -194,9 +205,10 @@ Rails.application.routes.draw do
       get :workshop_logs
       get :checkout
       get :bio
+      get :all_comments
     end
     resources :comments, only: [ :index, :create, :update ]
-    resources :dues_subscriptions, only: [ :index, :new, :create ]
+    resources :memberships, only: [ :index, :new, :create ]
   end
   resources :faqs
   resources :other_responses, only: [ :index, :update ] do
@@ -234,11 +246,12 @@ Rails.application.routes.draw do
     post :revert, on: :member
   end
 
-  resources :dues_subscriptions, only: [ :edit, :update ] do
-    resources :dues_registrations, only: [ :new, :create ]
+  resources :memberships, only: [ :edit, :update ] do
+    resources :membership_invoices, only: [ :new, :create ]
   end
 
-  resources :dues_registrations, only: [ :index, :edit, :update ]
+  resources :membership_invoices, only: [ :index, :show, :edit, :update ]
+  resources :membership_checkouts, only: [ :create ]
 
   resources :refunds, only: [ :new, :create, :show ]
   resources :organization_statuses
@@ -267,8 +280,16 @@ Rails.application.routes.draw do
   end
   get "search/:model", to: "search#index"
   resources :story_ideas
+  resource :story_import, only: %i[new create], path: "stories/import",
+                          controller: "story_imports" do
+    post :confirm
+  end
   resources :stories
-  resources :story_shares, only: [ :index, :show ]
+  get "story_share/admin", to: "story_share_admin#show", as: :story_share_admin
+  match "story_share/admin/reorder", to: "story_share_admin#reorder", via: [ :put, :patch ], as: :story_share_admin_reorder
+  post "story_share/admin/add", to: "story_share_admin#add", as: :story_share_admin_add
+  delete "story_share/admin/remove", to: "story_share_admin#remove", as: :story_share_admin_remove
+  resources :story_shares, path: "story_share", only: [ :index, :show, :new ]
   resources :video_recordings
   resources :user_forms
   resources :windows_types

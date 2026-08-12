@@ -3,6 +3,11 @@ class EventRegistration < ApplicationRecord
   include Registerable
   include Certifiable
 
+  # Sentinel for the roster's Payment method filter that matches buddy-system
+  # registrations (someone_else_will_pay), which isn't an expected_payment_method
+  # value. Equals the column name so the meaning is self-evident.
+  BUDDY_PAYMENT_FILTER = "someone_else_will_pay".freeze
+
   belongs_to :registrant, class_name: "Person"
   belongs_to :event
   has_many :comments, -> { newest_first }, as: :commentable, dependent: :destroy
@@ -31,6 +36,40 @@ class EventRegistration < ApplicationRecord
   # Attendance outcomes surfaced as their own participation buckets; every other
   # status falls into "other" (registered, transfers, cancellations).
   NAMED_OUTCOME_STATUSES = %w[ attended incomplete_attendance no_show ].freeze
+  # Sentinel filter value meaning "don't narrow on this dimension" — for a filter
+  # that defaults to something specific (the attendees index defaults to attended
+  # registrations on trainings, so it needs a way to say "all of them").
+  FILTER_ALL = "all".freeze
+  # Attendance-outcome filter options, shared by the registrations index and the
+  # attendees index so the vocabulary can't drift between them.
+  ATTENDANCE_FILTER_OPTIONS = (
+    ATTENDANCE_STATUSES.map { |status| [ status.humanize, status ] } +
+    [ [ "Other (registered, transfers, cancellations)", "other" ] ]
+  ).freeze
+  # Event-type filter options, matching the .event_type scope's vocabulary and the
+  # report suite's Event type select (events/_event_type_filter), so the same value
+  # means the same thing on a report and on the attendees index it drills into.
+  EVENT_TYPE_FILTER_OPTIONS = [
+    [ "All trainings", "trainings" ],
+    [ "Live trainings", "live" ],
+    [ "On-demand trainings", "on_demand" ],
+    [ "Other events", "other" ]
+  ].freeze
+  # Payment-situation filter options (the .payment_status scope's vocabulary),
+  # shared by the registrants filter bar and the attendees index's applied-filter
+  # chips so a value can't be worded one way in the select and another in the chip.
+  PAYMENT_STATUS_FILTER_OPTIONS = [
+    [ "Due", "unpaid" ],
+    [ "Paid", "paid" ],
+    [ "Intends to pay", "intends_to_pay" ]
+  ].freeze
+  # Scholarship funding-source options (the .funder scope's vocabulary), named the
+  # way Scholarship.externally_funded / .org_subsidized name the same split. No
+  # select offers these yet — they arrive from the revenue report's drill-ins.
+  FUNDER_FILTER_OPTIONS = [
+    [ "Grant-funded", "external" ],
+    [ "Org-subsidized", "awbw" ]
+  ].freeze
 
   # Human labels for each attendance status — the single source of truth for
   # status display (badges, filters, the dashboard breakdown).
@@ -77,11 +116,14 @@ class EventRegistration < ApplicationRecord
   scope :attendance_status, ->(status) {
     status == "other" ? where.not(status: NAMED_OUTCOME_STATUSES) : where(status: status)
   }
-  # Registrations on facilitator-training events ("trainings") vs everything else
-  # ("other"); any other value is a no-op so "all events" passes through.
+  # Registrations on facilitator-training events ("trainings", narrowable to the
+  # "live"/"on_demand" delivery formats) vs everything else ("other"); any other
+  # value is a no-op so "all events" passes through.
   scope :event_type, ->(type) {
     case type
     when "trainings" then joins(:event).where(events: { facilitator_training: true })
+    when "live" then joins(:event).where(events: { facilitator_training: true, on_demand: false })
+    when "on_demand" then joins(:event).where(events: { facilitator_training: true, on_demand: true })
     when "other" then joins(:event).where(events: { facilitator_training: false })
     else all
     end
@@ -102,6 +144,14 @@ class EventRegistration < ApplicationRecord
     conditions = { inactive: false, county: county }
     conditions[:state] = state if state.present?
     joins(registrant: :addresses).where(addresses: conditions).distinct
+  }
+  scope :registrant_city, ->(term) {
+    return all if term.blank?
+    like = "%#{sanitize_sql_like(term.downcase.strip)}%"
+    joins(registrant: :addresses)
+      .where("LOWER(addresses.city) LIKE ?", like)
+      .where(addresses: { inactive: false })
+      .distinct
   }
   scope :registrant_sector, ->(sector_id) {
     joins(registrant: :sectorable_items)
@@ -132,13 +182,73 @@ class EventRegistration < ApplicationRecord
       )
     SQL
   }
+  scope :with_agreed_scholarship, -> {
+    where(<<~SQL.squish)
+      EXISTS (
+        SELECT 1 FROM allocations
+        INNER JOIN scholarships ON scholarships.id = allocations.source_id
+        WHERE allocations.allocatable_type = 'EventRegistration'
+          AND allocations.allocatable_id = event_registrations.id
+          AND allocations.source_type = 'Scholarship'
+          AND scholarships.agreement_signed_at IS NOT NULL
+      )
+    SQL
+  }
   scope :scholarship_status, ->(value) {
     case value
     when "yes" then with_scholarship
+    when "agreed" then with_agreed_scholarship
     when "complete" then scholarship_tasks_completed
     when "incomplete" then scholarship_tasks_incomplete
     else all
     end
+  }
+  # Funded vs org-subsidized follow the app-wide split (Scholarship.externally_funded
+  # / .org_subsidized): a grant AWBW funded itself counts as subsidy, not
+  # external funding, so it lands in the unfunded set alongside grant-less awards.
+  scope :with_funded_scholarship, -> { where(id: scholarship_allocatable_ids(Scholarship.externally_funded)) }
+  scope :with_unfunded_scholarship, -> { where(id: scholarship_allocatable_ids(Scholarship.org_subsidized)) }
+  # EventRegistration ids that a scholarship in the given relation is allocated to.
+  def self.scholarship_allocatable_ids(scholarships)
+    Allocation
+      .where(allocatable_type: "EventRegistration", source_type: "Scholarship", source_id: scholarships.select(:id))
+      .select(:allocatable_id)
+  end
+  # Funding source of a registrant's scholarship. "awbw" = org-subsidized (no
+  # grant, or a grant AWBW funded itself); "external" = grant-funded (drawn from an
+  # external funder's grant).
+  scope :funder, ->(value) {
+    case value
+    when "awbw" then with_unfunded_scholarship
+    when "external" then with_funded_scholarship
+    else all
+    end
+  }
+  # Free-text match on the funder behind a registrant's scholarship: the grant's
+  # polymorphic funder (a Person or Organization). Labeled "Funder" in the UI. The
+  # param is :funder_name to stay clear of the awbw/external funding-source
+  # :funder scope above.
+  scope :funder_name, ->(term) {
+    return all if term.blank?
+    like = "%#{sanitize_sql_like(term.downcase.strip)}%"
+    where(<<~SQL.squish, like, like)
+      EXISTS (
+        SELECT 1 FROM allocations
+        INNER JOIN scholarships ON scholarships.id = allocations.source_id
+        INNER JOIN grants ON grants.id = scholarships.grant_id
+        LEFT JOIN people funder_people
+          ON grants.funder_type = 'Person' AND funder_people.id = grants.funder_id
+        LEFT JOIN organizations funder_orgs
+          ON grants.funder_type = 'Organization' AND funder_orgs.id = grants.funder_id
+        WHERE allocations.allocatable_type = 'EventRegistration'
+          AND allocations.allocatable_id = event_registrations.id
+          AND allocations.source_type = 'Scholarship'
+          AND (
+            LOWER(CONCAT(funder_people.first_name, ' ', funder_people.last_name)) LIKE ?
+            OR LOWER(funder_orgs.name) LIKE ?
+          )
+      )
+    SQL
   }
   scope :paid_in_full, -> {
     where(<<~SQL.squish)
@@ -171,6 +281,16 @@ class EventRegistration < ApplicationRecord
     when "unpaid" then not_paid_in_full
     when "intends_to_pay" then where(intends_to_pay: true)
     else all
+    end
+  }
+  # Filter the roster by payment situation: the expected payment method (the stored
+  # form answer, e.g. "Credit card (now)"), or the buddy-system sentinel, which
+  # matches registrations where someone else will pay. Surfaced as short-code badges.
+  scope :payment_method, ->(value) {
+    if value == BUDDY_PAYMENT_FILTER
+      where(someone_else_will_pay: true)
+    else
+      where(expected_payment_method: value)
     end
   }
   # Filter by CE state. All derived (no stored CE status): payment (requested/paid)
@@ -213,8 +333,16 @@ class EventRegistration < ApplicationRecord
     else all
     end
   }
+  # Free-text match on a registrant's comments — topic or body.
+  scope :comment_text, ->(term) {
+    return all if term.blank?
+    where(id: Comment.where(commentable_type: "EventRegistration").matching(term).select(:commentable_id))
+  }
   # Mirrors EventRegistration#account_status (none / has_access / invited /
-  # no_access) as a DB filter, joining the registrant's login account.
+  # no_access) as a DB filter, joining the registrant's login account. Also
+  # supports "not_invited" — an umbrella for everyone who still needs an invite
+  # (no account at all, or an account that was never sent a welcome invite),
+  # i.e. none ∪ no_access.
   scope :account_status, ->(value) {
     # Guard every subquery against NULL person_id (system/audit users) — a NULL in
     # a NOT IN list makes the whole comparison return no rows.
@@ -226,17 +354,20 @@ class EventRegistration < ApplicationRecord
     when "has_access" then where(registrant_id: has_access)
     when "invited" then where(registrant_id: invited).where.not(registrant_id: has_access)
     when "no_access" then where(registrant_id: with_user).where.not(registrant_id: has_access).where.not(registrant_id: invited)
+    when "not_invited" then where.not(registrant_id: invited).where.not(registrant_id: has_access)
     else all
     end
   }
-  # "linked" = at least one organization linked; "pending" = the registrant
-  # submitted an agency name on the event's registration form but nothing is
-  # linked yet (mirrors the Pending chip on the roster). Needs the event to
-  # resolve its registration form's agency_name field.
+  # "linked" = at least one organization linked; "unlinked" = no organization
+  # linked (whether or not an agency name was submitted); "pending" = the
+  # registrant submitted an agency name on the event's registration form but
+  # nothing is linked yet (mirrors the Pending chip on the roster). Needs the
+  # event to resolve its registration form's agency_name field.
   scope :organization_status, ->(value, event) {
     linked = EventRegistrationOrganization.select(:event_registration_id)
     case value
     when "linked" then where(id: linked)
+    when "unlinked" then where.not(id: linked)
     when "pending"
       field = event.registration_form&.form_fields&.find_by(field_identifier: "agency_name")
       next none unless field
@@ -245,6 +376,18 @@ class EventRegistration < ApplicationRecord
         .where.not(submitted_answer: [ nil, "" ])
         .select(Arel.sql("form_submissions.person_id"))
       where(registrant_id: submitted).where.not(id: linked)
+    else all
+    end
+  }
+  # Filter by how many form submissions the registrant made for this event:
+  # none, at least one, or more than one.
+  scope :submission_status, ->(value, event) {
+    submissions = FormSubmission.where(event_id: event.id)
+    case value
+    when "none" then where.not(registrant_id: submissions.select(:person_id))
+    when "has" then where(registrant_id: submissions.select(:person_id))
+    when "multiple"
+      where(registrant_id: submissions.group(:person_id).having("COUNT(*) > 1").select(:person_id))
     else all
     end
   }
@@ -268,6 +411,18 @@ class EventRegistration < ApplicationRecord
       )
       .distinct
   }
+
+  # { event_id => { status => count } } from a single grouped query, so callers
+  # never round-trip per event. The single-event dashboard reads its own event's
+  # slice; the participation report reads every event's at once.
+  def self.status_counts_by_event(event_ids)
+    where(event_id: event_ids)
+      .group(:event_id, :status)
+      .count
+      .each_with_object({}) do |((event_id, status), count), map|
+        (map[event_id] ||= {})[status] = count
+      end
+  end
 
   def self.search_by_params(params)
     registrations = is_a?(ActiveRecord::Relation) ? self : all
@@ -297,6 +452,15 @@ class EventRegistration < ApplicationRecord
     end
     if params[:event_year].present?
       registrations = registrations.in_event_year(params[:event_year])
+    end
+    if params[:payment_status].present?
+      registrations = registrations.payment_status(params[:payment_status])
+    end
+    if params[:scholarship].present?
+      registrations = registrations.scholarship_status(params[:scholarship])
+    end
+    if params[:funder].present?
+      registrations = registrations.funder(params[:funder])
     end
     registrations
   end
@@ -505,6 +669,23 @@ class EventRegistration < ApplicationRecord
     return false unless ce_registered?
 
     continuing_education_registrations.all? { |c| c.certificate_sent_at.present? }
+  end
+
+  # The registration's completion certificate, as shown by the registrants-roster
+  # toggle. For a CE-eligible registration that's the CE certificate
+  # (certificate_sent_at on its CE registrations, so it stays in sync with the CE
+  # edit page); otherwise the registration's own certificate_sent_at (Certifiable).
+  def certificate_issued?
+    ce_registered? ? ce_certificate_issued? : certificate_sent?
+  end
+
+  def mark_certificate_issued!(issued)
+    at = issued ? Time.current : nil
+    if ce_registered?
+      continuing_education_registrations.each { |c| c.update!(certificate_sent_at: at) }
+    else
+      update!(certificate_sent_at: at)
+    end
   end
 
   # True when a CE registration exists and every one is fully paid.

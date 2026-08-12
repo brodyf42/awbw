@@ -1,6 +1,11 @@
 class EventDashboard
-  def initialize(event)
+  # scholarship_funder: when set, every scholarship figure (funded/unfunded cents
+  # and counts, totals, recipients) is scoped to grants that funder gave — for the
+  # funder-filtered scholarship report. Attendance/registration figures are
+  # unaffected. Default nil = every scholarship, as before.
+  def initialize(event, scholarship_funder: nil)
     @event = event
+    @scholarship_funder = scholarship_funder
   end
 
   attr_reader :event
@@ -12,6 +17,13 @@ class EventDashboard
   # Cancelled / no-show registrations.
   def inactive_registration_count
     event.event_registrations.where(status: EventRegistration::INACTIVE_STATUSES).count
+  end
+
+  # Active registrations with no organization linked (via
+  # EventRegistrationOrganization) — flags registrants still needing an agency
+  # linked, mirroring the "Unlinked" registrants filter.
+  def unlinked_registration_count
+    @unlinked_registration_count ||= active_registrations.where.not(id: linked_registration_ids).count
   end
 
   # Registrant (Person) ids behind the inactive (cancelled / no-show)
@@ -35,7 +47,7 @@ class EventDashboard
 
   # Every registration status for this event, counted in one query.
   def registration_status_counts
-    @registration_status_counts ||= event.event_registrations.group(:status).count
+    @registration_status_counts ||= EventRegistration.status_counts_by_event([ event.id ]).fetch(event.id, {})
   end
 
   # Count of registrations in a single status.
@@ -90,17 +102,28 @@ class EventDashboard
     scholarships.sum(:amount_cents)
   end
 
-  # Scholarship dollars drawn from a funder/grant — money a grant pays toward
-  # registration cost, so it counts as revenue. Paired with
+  # Scholarship dollars drawn from an EXTERNAL funder/grant — money a grant pays
+  # toward registration cost, so it counts as revenue. Paired with
   # unfunded_scholarship_cents, these sum to scholarship_total_cents.
   def funded_scholarship_cents
-    scholarships.where.not(grant_id: nil).sum(:amount_cents)
+    funded_scholarships.sum(:amount_cents)
   end
 
-  # Scholarship dollars awarded without a grant behind them — cost the org comps
-  # directly, so no money actually changes hands.
+  # Scholarship dollars the org comps from its own pocket: awards with no grant,
+  # plus awards from a grant the org donated to itself (AWBW) — that's subsidy,
+  # not external funding.
   def unfunded_scholarship_cents
-    scholarships.where(grant_id: nil).sum(:amount_cents)
+    unfunded_scholarships.sum(:amount_cents)
+  end
+
+  # Number of scholarship awards, split the same way as the dollar figures.
+  # Together these sum to the event's total scholarship award count.
+  def funded_scholarship_count
+    funded_scholarships.count
+  end
+
+  def unfunded_scholarship_count
+    unfunded_scholarships.count
   end
 
   def scholarship_recipient_count
@@ -138,6 +161,13 @@ class EventDashboard
   # records sorted by display name. Sectors, age-range tags, and affiliations are
   # preloaded for the recipients page header; their application answers appear
   # below it.
+  # Person ids of this event's scholarship recipients — the lightweight id list
+  # behind #scholarship_applicants (no includes/sort), for scoping the recipients
+  # charts frame, which only needs their ids. Public: the controller calls it.
+  def scholarship_applicant_ids
+    @scholarship_applicant_ids ||= active_registrations.where(scholarship_requested: true).pluck(:registrant_id)
+  end
+
   def scholarship_applicants
     @scholarship_applicants ||= Person
       .where(id: scholarship_applicant_ids)
@@ -145,6 +175,33 @@ class EventDashboard
                 { categorizable_items: { category: :category_type } },
                 { affiliations: :organization })
       .sort_by(&:name)
+  end
+
+  # Label for the "no scholarship record yet" bucket in the funder grouping —
+  # applicants who requested a scholarship but haven't been awarded one.
+  FUNDER_NONE_LABEL = "No scholarship yet".freeze
+
+  # Label for scholarships awarded without a parent grant (comped directly).
+  FUNDER_UNFUNDED_LABEL = "Unfunded".freeze
+
+  # One funder bucket for the recipients page "group by funder" view: the funder
+  # name, the funder record behind it (an Organization or Person — nil for the
+  # unfunded / no-scholarship buckets), that funder's "City, State", and the
+  # applicants in the bucket.
+  FunderGroup = Struct.new(:name, :funder, :location, :people, keyword_init: true) do
+    def count = people.size
+  end
+
+  # Scholarship applicants bucketed by their scholarship's funder (the grant's
+  # funder), as ordered FunderGroups — alphabetical by funder with the "Unfunded"
+  # and "No scholarship yet" buckets pinned last. Grants from the same funder
+  # share a bucket. People within a group keep #scholarship_applicants'
+  # display-name order.
+  def scholarship_applicants_by_funder
+    @scholarship_applicants_by_funder ||= scholarship_applicants
+      .group_by { |person| funder_key_for(person) }
+      .map { |_key, people| build_applicant_funder_group(people) }
+      .sort_by { |group| funder_group_sort_key(group.name) }
   end
 
   # Scholarship-application answers for this event's applicants, keyed by Person
@@ -204,7 +261,7 @@ class EventDashboard
   # decide whether to flag a registrant as a scholarship recipient. First
   # scholarship wins if a person has several.
   def scholarship_by_recipient
-    @scholarship_by_recipient ||= scholarships.includes(grant: :donor).group_by(&:recipient_id).transform_values(&:first)
+    @scholarship_by_recipient ||= scholarships.includes(grant: :funder).group_by(&:recipient_id).transform_values(&:first)
   end
 
   # Active registration slug per registrant (Person id) — a stable, non-db
@@ -214,12 +271,62 @@ class EventDashboard
     @registration_slug_by_registrant ||= active_registrations.pluck(:registrant_id, :slug).to_h
   end
 
+  # Active registration id per registrant (Person id) — links a recipient's
+  # shout-out row on the recipients page to their registration edit form, where
+  # the shout-out flag and text are set. One active registration per event.
+  def registration_id_by_registrant
+    @registration_id_by_registrant ||= active_registrations.pluck(:registrant_id, :id).to_h
+  end
+
+  # The [ event, participant slug ] a registrant's scholarship icon links to: this
+  # event's recipients page, anchored to their entry. The shared roster partial
+  # reads this so the same column works on the cross-event training-attendees
+  # index (see AttendeesRoster#scholarship_link_target).
+  def scholarship_link_target(person)
+    [ event, registration_slug_by_registrant[person.id] ]
+  end
+
+  # The registration a registrant's roster row links to: their active registration
+  # for this event. The shared roster partial reads this so the same row link works
+  # on the cross-event attendees index (see AttendeesRoster).
+  def registration_link_target(person)
+    registration_by_registrant[person.id]
+  end
+
+  def registration_by_registrant
+    @registration_by_registrant ||= active_registrations.index_by(&:registrant_id)
+  end
+
   def scholarship_registrants
     @scholarship_registrants ||= people_sorted(scholarships.distinct.pluck(:recipient_id))
   end
 
   def scholarship_amounts_by_recipient
     @scholarship_amounts_by_recipient ||= scholarships.group(:recipient_id).sum(:amount_cents)
+  end
+
+  # Funded / unfunded scholarship dollars per recipient (Person id => cents) — the
+  # per-person split behind funded_scholarship_cents / unfunded_scholarship_cents.
+  # Recipients with no award in that split are absent, so a recipient can appear in
+  # one map, both, or neither.
+  def funded_scholarship_cents_by_recipient
+    @funded_scholarship_cents_by_recipient ||= funded_scholarships.group(:recipient_id).sum(:amount_cents)
+  end
+
+  def unfunded_scholarship_cents_by_recipient
+    @unfunded_scholarship_cents_by_recipient ||= unfunded_scholarships.group(:recipient_id).sum(:amount_cents)
+  end
+
+  # Scholarship recipients (Person records, name-sorted) with a funded / unfunded
+  # award — the people behind each split, for the scholarship report row's expander.
+  # Both reuse the recipients already loaded by #scholarship_registrants, so the
+  # split adds no extra Person query.
+  def funded_scholarship_recipients
+    @funded_scholarship_recipients ||= recipients_for(funded_scholarship_cents_by_recipient.keys)
+  end
+
+  def unfunded_scholarship_recipients
+    @unfunded_scholarship_recipients ||= recipients_for(unfunded_scholarship_cents_by_recipient.keys)
   end
 
   # Per-registrant payment-sourced cents received, keyed by Person id. Aggregates
@@ -380,7 +487,10 @@ class EventDashboard
   # registrants' affiliations that were active at the time of the event
   # (#reference_date).
   def organizations
-    @organizations ||= Organization.where(id: organization_ids).order(:name)
+    # Preload affiliations: the program-status breakdown classifies every org via
+    # Organization#facilitator_status_on, which reads the loaded association rather
+    # than re-querying per org.
+    @organizations ||= Organization.where(id: organization_ids).includes(:affiliations).order(:name)
   end
 
   def organization_count
@@ -394,8 +504,8 @@ class EventDashboard
   # as the reference when present, otherwise the org's earliest facilitator
   # affiliation; an org with no facilitator history at all counts as :new.
   def program_status_counts
-    @program_status_counts ||= organizations.each_with_object({ new: 0, ongoing: 0, reinstated: 0 }) do |organization, counts|
-      counts[program_status_for(organization)] += 1
+    @program_status_counts ||= program_status_by_organization.each_with_object({ new: 0, ongoing: 0, reinstated: 0 }) do |(_organization_id, status), counts|
+      counts[status] += 1
     end
   end
 
@@ -861,22 +971,13 @@ class EventDashboard
 
   private
 
-  # USPS abbreviations for the 50 states, DC, and the territories the US atlas
-  # draws. The States breakdown only shows these, so international registrants'
-  # regions (e.g. "ON", "England") are excluded — those belong to the Countries map.
-  US_STATE_ABBREVIATIONS = %w[
-    AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO
-    MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY
-    PR GU VI AS MP
-  ].freeze
-
   # Active registrant addresses whose state is a recognized US state/territory —
   # the source for every States figure (count card, choropleth, and drill-in).
   def us_state_addresses
     Address
       .active
       .where(addressable_type: "Person", addressable_id: registrant_ids)
-      .where("UPPER(addresses.state) IN (?)", US_STATE_ABBREVIATIONS)
+      .where("UPPER(addresses.state) IN (?)", Address::US_STATE_ABBREVIATIONS)
   end
 
   def district_addresses
@@ -892,6 +993,14 @@ class EventDashboard
 
   def active_registration_ids
     @active_registration_ids ||= active_registrations.pluck(:id)
+  end
+
+  # Ids of active registrations that have at least one organization linked.
+  def linked_registration_ids
+    @linked_registration_ids ||= EventRegistrationOrganization
+      .where(event_registration_id: active_registration_ids)
+      .distinct
+      .pluck(:event_registration_id)
   end
 
   def registrant_ids
@@ -949,8 +1058,50 @@ class EventDashboard
     @reference_date ||= (event.start_date || Date.current).to_date
   end
 
-  def scholarship_applicant_ids
-    @scholarship_applicant_ids ||= active_registrations.where(scholarship_requested: true).pluck(:registrant_id)
+  # Grouping key for an applicant's funder: the funder identity when the
+  # scholarship is drawn from a grant (so a funder's grants share a bucket), else
+  # the unfunded / no-scholarship bucket.
+  def funder_key_for(person)
+    scholarship = scholarship_by_recipient[person.id]
+    return :none unless scholarship
+    funder = scholarship.grant&.funder
+    return :unfunded unless funder
+    [ funder.class.name, funder.id ]
+  end
+
+  # Builds a FunderGroup from a bucket of applicants that share a funder, reading
+  # the funder name, funder record, and location from any member's scholarship (they're
+  # identical across the bucket).
+  def build_applicant_funder_group(people)
+    scholarship = scholarship_by_recipient[people.first.id]
+    grant = scholarship&.grant
+    funder = grant&.funder
+    name = if scholarship.nil?
+      FUNDER_NONE_LABEL
+    else
+      grant&.funder_name.presence || FUNDER_UNFUNDED_LABEL
+    end
+    FunderGroup.new(name: name, funder: funder, location: funder_location(funder), people: people)
+  end
+
+  # "City, State" from the funder's first active address — works for either an
+  # Organization or a Person funder (both are addressable). Nil when the funder
+  # has no address or isn't addressable.
+  def funder_location(funder)
+    return unless funder.respond_to?(:addresses)
+    address = funder.addresses.active.first
+    return unless address
+    [ address.city, address.state ].compact_blank.join(", ").presence
+  end
+
+  # Alphabetical by funder, with the unfunded and no-scholarship buckets last.
+  def funder_group_sort_key(label)
+    pinned = case label
+    when FUNDER_UNFUNDED_LABEL then 1
+    when FUNDER_NONE_LABEL then 2
+    else 0
+    end
+    [ pinned, label.to_s.downcase ]
   end
 
   # Registrant (Person) ids behind active registrations that opted into a
@@ -1092,9 +1243,35 @@ class EventDashboard
   end
 
   def scholarships
-    @scholarships ||= Scholarship
-      .joins(:allocation)
-      .where(allocations: { allocatable_type: "EventRegistration", allocatable_id: active_registration_ids })
+    @scholarships ||= begin
+      scope = Scholarship
+        .joins(:allocation)
+        .where(allocations: { allocatable_type: "EventRegistration", allocatable_id: active_registration_ids })
+      scope = scope.where(grant_id: funder_grant_ids) if @scholarship_funder
+      scope
+    end
+  end
+
+  # Ids of grants the scoped funder gave — used to narrow scholarships to one
+  # funder. Empty (so no scholarships match) when the funder gave none.
+  def funder_grant_ids
+    @funder_grant_ids ||= Grant.where(funder: @scholarship_funder).ids
+  end
+
+  # Externally funded = backed by a grant whose funder isn't the org itself.
+  def funded_scholarships
+    scholarships.externally_funded(self_funded_grant_ids)
+  end
+
+  # Org-subsidized = no grant, or a grant the org (AWBW) donated to itself.
+  def unfunded_scholarships
+    scholarships.org_subsidized(self_funded_grant_ids)
+  end
+
+  # Ids of grants the org donated to itself; memoized so the funded/unfunded split
+  # doesn't re-run Grant.self_funded_ids (an Organization.awbw + pluck) per call.
+  def self_funded_grant_ids
+    @self_funded_grant_ids ||= Grant.self_funded_ids
   end
 
   # [ [ organization_id, registrant_id ], ... ] from the organizations linked on
@@ -1139,6 +1316,16 @@ class EventDashboard
 
   def people_sorted(person_ids)
     Person.where(id: person_ids).sort_by(&:name)
+  end
+
+  # Recipient Person records for the given ids, name-sorted, drawn from the
+  # already-loaded scholarship_registrants so a funded/unfunded split reuses one query.
+  def recipients_for(recipient_ids)
+    recipient_ids.filter_map { |id| scholarship_recipients_by_id[id] }.sort_by(&:name)
+  end
+
+  def scholarship_recipients_by_id
+    @scholarship_recipients_by_id ||= scholarship_registrants.index_by(&:id)
   end
 
   def organization_ids

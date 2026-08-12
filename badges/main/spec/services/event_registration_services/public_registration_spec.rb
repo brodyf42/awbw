@@ -183,6 +183,52 @@ RSpec.describe EventRegistrationServices::PublicRegistration do
     end
   end
 
+  describe "someone else will pay" do
+    it "flags the registration when the registrant answers someone else will pay" do
+      params = base_form_params(first_name: "Pat", last_name: "Doe", email: "pat@example.com").merge(
+        field_id("someone_else_will_pay") => "Yes"
+      )
+
+      described_class.call(event: event, registration_form: form, form_params: params)
+
+      expect(EventRegistration.last.someone_else_will_pay).to be(true)
+    end
+
+    it "leaves the flag off when the registrant answers they will pay themselves" do
+      params = base_form_params(first_name: "Pat", last_name: "Doe", email: "pat@example.com").merge(
+        field_id("someone_else_will_pay") => "No"
+      )
+
+      described_class.call(event: event, registration_form: form, form_params: params)
+
+      expect(EventRegistration.last.someone_else_will_pay).to be(false)
+    end
+
+    it "updates the flag when an existing registrant re-registers" do
+      person = create(:person, first_name: "Pat", last_name: "Doe", email: "pat@example.com")
+      create(:event_registration, event: event, registrant: person, someone_else_will_pay: false)
+      params = base_form_params(first_name: "Pat", last_name: "Doe", email: "pat@example.com").merge(
+        field_id("someone_else_will_pay") => "Yes"
+      )
+
+      described_class.call(event: event, registration_form: form, form_params: params)
+
+      expect(event.event_registrations.find_by(registrant: person).someone_else_will_pay).to be(true)
+    end
+
+    it "does not clobber an existing flag when the answer is blank" do
+      person = create(:person, first_name: "Pat", last_name: "Doe", email: "pat@example.com")
+      create(:event_registration, event: event, registrant: person, someone_else_will_pay: true)
+      params = base_form_params(first_name: "Pat", last_name: "Doe", email: "pat@example.com").merge(
+        field_id("someone_else_will_pay") => ""
+      )
+
+      described_class.call(event: event, registration_form: form, form_params: params)
+
+      expect(event.event_registrations.find_by(registrant: person).someone_else_will_pay).to be(true)
+    end
+  end
+
   describe "mailing list consent" do
     it "stamps the consent time and source when the registrant opts in" do
       params = base_form_params(first_name: "Coco", last_name: "Lee", email: "coco@example.com").merge(
@@ -265,6 +311,29 @@ RSpec.describe EventRegistrationServices::PublicRegistration do
         expect(organization.addresses.find_by(primary: true).country).to eq("USA")
       end
 
+      # find_organization only ever finds, so a registrant always changes an org
+      # that already existed — the admin linking page shows what they changed.
+      it "records what the registrant's answers filled on the registration's org link" do
+        result = register_with_org(
+          field_id("agency_website") => "helpinghands.org",
+          field_id("agency_city") => "Reno",
+          field_id("agency_state") => "NV"
+        )
+
+        link = result.event_registration.event_registration_organizations.find_by!(organization: organization)
+        expect(link.form_autofill_changes.map(&:description)).to contain_exactly("Website", "Work address in Reno")
+      end
+
+      # The admin linking page pairs answers to orgs by this pin. Without it the
+      # pairing falls back to matching the org's current name against what the
+      # registrant typed, which an admin renaming the org would silently break.
+      it "pins the submission the registrant's answers came from on the org link" do
+        result = register_with_org(field_id("agency_website") => "helpinghands.org")
+
+        link = result.event_registration.event_registration_organizations.find_by!(organization: organization)
+        expect(link.form_submission).to eq(result.form_submission)
+      end
+
       it "overwrites an existing website with the latest answer" do
         organization.update!(website_url: "https://existing.org")
 
@@ -282,6 +351,28 @@ RSpec.describe EventRegistrationServices::PublicRegistration do
         )
 
         expect(organization.addresses.last.address_type).to eq("work")
+      end
+
+      # street/ZIP are NOT NULL columns, so passing a skipped answer straight
+      # through used to blow up the whole registration.
+      it "stores the org address when the registrant skipped the street and ZIP" do
+        result = register_with_org(
+          field_id("agency_city") => "Reno",
+          field_id("agency_state") => "NV"
+        )
+
+        expect(result).to be_success
+        expect(organization.addresses.find_by(city: "Reno")).to have_attributes(street_address: "", zip_code: "")
+      end
+
+      it "saves no org address when the registrant skipped the state, leaving the registration intact" do
+        result = register_with_org(
+          field_id("agency_street") => "5 Oak Ave",
+          field_id("agency_city") => "Reno"
+        )
+
+        expect(result).to be_success
+        expect(organization.addresses.find_by(city: "Reno")).to be_nil
       end
 
       it "makes the first org address primary" do
