@@ -100,6 +100,22 @@ module EventsHelper
       anchor: params[:return_anchor].presence)
   end
 
+  # A program status is only meaningful relative to a date, so the header names the
+  # event it was judged at — "Program status (TOS205)".
+  def program_status_column_label(event = nil)
+    return "Program status" if event.blank?
+
+    "Program status (#{event.decorate.compact_label})"
+  end
+
+  # Which date the column's verdicts were judged on. Must match how the data was
+  # actually anchored — see ADR-0001 D7.
+  def program_status_column_note(event = nil)
+    return "New / Ongoing / Reinstate as of #{event.start_date.strftime('%b %-d, %Y')}, this event's start date." if event&.start_date
+
+    "No single event in view, so each organization reads as of #{Date.current.beginning_of_year.strftime('%b %-d, %Y')} — the start of the current reporting year."
+  end
+
   # Ordered column descriptors for the event Onboarding matrix. The array index
   # is the table-sort column index, so the header row and every body row iterate
   # this same list — keeping header buttons and cell positions aligned no matter
@@ -113,10 +129,10 @@ module EventsHelper
     (1..event.day_count).each do |day|
       columns << { key: "completed_day_#{day}", label: "Day #{day}", kind: :checkbox, field: "completed_day_#{day}", sortable: true, align: "center", toggle: "days" }
     end
+    columns << { key: "attendance", label: "Event attendance", kind: :attendance, sortable: true, align: "center", toggle: "attendance" }
     columns += [
-      { key: "email", label: "Email", kind: :email, sortable: true, align: "left" },
       { key: "program", label: "Organization", kind: :program, sortable: true, align: "left", toggle: "program" },
-      { key: "program_type", label: "Program type", kind: :program_type, sortable: true, align: "center", toggle: "program_type" }
+      { key: "program_type", label: program_status_column_label(event), kind: :program_type, sortable: true, align: "center", toggle: "program_type", note: program_status_column_note(event) }
     ]
     if event.cost_cents.to_i > 0
       columns << { key: "payment", label: "Payment", kind: :payment, sortable: true, align: "center", toggle: "payment" }
@@ -139,7 +155,7 @@ module EventsHelper
     end
     columns << { key: "flagged_comments", label: "Flagged comments", kind: :flagged_comments, sortable: true, align: "center", toggle: "flagged_comments" }
     columns << { key: "comments", label: "Comments", kind: :comments, sortable: true, align: "left", toggle: "comments" }
-    columns << { key: "attendance", label: "Event attendance", kind: :attendance, sortable: true, align: "center", toggle: "attendance" }
+    columns << { key: "email", label: "Email", kind: :email, sortable: true, align: "left" }
     columns
   end
 
@@ -178,6 +194,18 @@ module EventsHelper
     }.compact
   end
 
+  # Reports hub filters → attendees index query params, plus the reports origin so
+  # the index's eyebrow comes back here. The index defaults its event-type filter
+  # to facilitator trainings, so a hub scoped to an event of any other type would
+  # drill in to an empty list — when one event is the scope it already answers the
+  # question the event-type filter asks, so pin that filter open.
+  def hub_to_attendees_params(extra = {})
+    attendees_params = hub_to_report_params.merge(return_to: "reports")
+    attendees_params[:event_type] ||= EventRegistration::FILTER_ALL if attendees_params[:event_id].present?
+    attendees_params[:event_year] = time_period_to_event_year(attendees_params.delete(:time_period))
+    attendees_params.compact.merge(extra)
+  end
+
   # Full report filters → reports hub query params.
   def report_to_hub_params
     {
@@ -186,6 +214,52 @@ module EventsHelper
       event_id: params[:event_id].presence,
       period: time_period_to_hub_period(@time_period)
     }.compact
+  end
+
+  # Report time_period → the attendees index's `event_year` filter. The index has
+  # no time_period vocabulary of its own — it narrows by the event's calendar year
+  # (the same translation the participation card's figure links already do) — so
+  # passing time_period through would silently drop the period. "all_time" is nil,
+  # which leaves the year filter open.
+  def time_period_to_event_year(time_period)
+    return Date.current.year.to_s if time_period == "this_year"
+    time_period if Integer(time_period, exception: false)
+  end
+
+  # Filter params the report sub-nav carries between angles, so switching from the
+  # figures to the people behind them (or to their logged time) never silently widens
+  # the population. Each destination reads the ones it knows and ignores the rest:
+  # the report pages and the attendees index share event_id/event_type but keep their
+  # own vocabularies for period (the reports narrow by time_period, the index by the
+  # event's calendar year) and funding source (funder_sgid names a specific funder;
+  # funder is grant-funded vs org-subsidized).
+  REPORT_SUBNAV_PARAMS = %i[
+    event_id event_type search funder_sgid time_period view registrant_ids
+    attendance_status payment_status funder scholarship
+    sector contact_info affiliation_status organization_id org_city state county
+    age_group life_experience setting country school_district program_status
+  ].freeze
+
+  # Those of the above that are actually set, ready to merge into a sub-nav link.
+  def report_subnav_params
+    params.permit(*REPORT_SUBNAV_PARAMS).to_h.symbolize_keys.compact_blank
+  end
+
+  # How many events the sign-ins header names before trailing off — enough to read
+  # the scope at a glance without running the header onto three lines.
+  SIGNINS_LABEL_LIMIT = 6
+
+  # What the cross-event sign-ins page is scoped to, for the header's event slot.
+  # With no filter applied it reads "All events"; a narrowed set names its events by
+  # abbreviation (falling back to the title), so the scope is legible without counting
+  # the sections below. The single-event case never reaches here — the header's own
+  # `event:` slot renders that one linked to the event.
+  def signins_scope_label(events, narrowed:)
+    return "All events" unless narrowed && events.present?
+
+    labels = events.map { |event| event.decorate.compact_label }
+    shown = labels.first(SIGNINS_LABEL_LIMIT).join(", ")
+    labels.size > SIGNINS_LABEL_LIMIT ? "#{shown} +#{labels.size - SIGNINS_LABEL_LIMIT} more" : shown
   end
 
   # "last_year" becomes the prior calendar year (reports name specific years

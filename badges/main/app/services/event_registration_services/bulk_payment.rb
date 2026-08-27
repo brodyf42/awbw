@@ -134,6 +134,7 @@ module EventRegistrationServices
       submission = FormSubmission.create!(person: person, form: @form, event: @event, role: "bulk_payment")
       save_form_answers(submission)
       OtherResponses::CaptureFromSubmission.call(submission)
+      Quotes::CaptureFromSubmission.call(submission)
       submission
     end
 
@@ -143,14 +144,7 @@ module EventRegistrationServices
         next unless field
         next if field.group_header?
 
-        text = if raw_value.is_a?(Array)
-          raw_value.reject(&:blank?).join(", ")
-        else
-          raw_value.to_s
-        end
-
-        record = submission.form_answers.find_or_initialize_by(form_field: field)
-        record.update!(submitted_answer: text, question_name_when_answered: field.name)
+        submission.persist_answer(field, raw_value)
       end
     end
   end

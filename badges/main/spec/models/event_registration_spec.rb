@@ -41,24 +41,209 @@ RSpec.describe EventRegistration, type: :model do
       reg = create(:event_registration, status: "transferred_out")
       expect(reg).not_to be_active
     end
-
-    it "returns true for transferred_in status" do
-      reg = create(:event_registration, status: "transferred_in")
-      expect(reg).to be_active
-    end
   end
 
   describe ".active" do
     it "returns only registrations with active statuses" do
       active_reg = create(:event_registration, status: "registered")
-      transferred_in_reg = create(:event_registration, status: "transferred_in")
       cancelled_reg = create(:event_registration, status: "cancelled")
       no_show_reg = create(:event_registration, status: "no_show")
       transferred_out_reg = create(:event_registration, status: "transferred_out")
 
       results = EventRegistration.active
-      expect(results).to include(active_reg, transferred_in_reg)
+      expect(results).to include(active_reg)
       expect(results).not_to include(cancelled_reg, no_show_reg, transferred_out_reg)
+    end
+
+    it "includes a transferred-in registration, which keeps its own active status" do
+      source = create(:event_registration, status: "transferred_out")
+      incoming = create(:event_registration, status: "registered", transferred_from_registration: source)
+
+      expect(EventRegistration.active).to include(incoming)
+    end
+  end
+
+  describe "transfer trail" do
+    let(:source) { create(:event_registration, status: "transferred_out") }
+    let!(:incoming) { create(:event_registration, status: "registered", transferred_from_registration: source) }
+
+    it "links the incoming registration back to the one it came from" do
+      expect(incoming.transferred_from_registration).to eq(source)
+      expect(source.reload.transferred_to_registration).to eq(incoming)
+    end
+
+    it "identifies an in by the back-link, not by status" do
+      expect(incoming).to be_transferred_in
+      expect(incoming).not_to be_transferred_out
+      expect(create(:event_registration, status: "registered")).not_to be_transferred_in
+    end
+
+    it "identifies an out by its terminal status" do
+      expect(source).to be_transferred_out
+      expect(source).not_to be_transferred_in
+    end
+
+    it "reports a pending destination only while an out has no incoming record" do
+      pending = create(:event_registration, status: "transferred_out")
+      expect(pending).to be_transfer_destination_pending
+      expect(source).not_to be_transfer_destination_pending
+      expect(incoming).not_to be_transfer_destination_pending
+    end
+
+    it "locks editing only once transferred out" do
+      expect(source).to be_editing_locked
+      expect(incoming).not_to be_editing_locked
+      expect(create(:event_registration, status: "registered")).not_to be_editing_locked
+    end
+
+    it "records the prior status when a reg is transferred out, so it can be restored" do
+      reg = create(:event_registration, status: "attended")
+      expect { reg.update!(status: "transferred_out") }
+        .to change { reg.status_before_transfer }.from(nil).to("attended")
+    end
+
+    it "nullifies the back-link if the source is destroyed" do
+      source.update_column(:status, "registered") # bypass the deletion guard for the test
+      source.destroy
+      expect(incoming.reload.transferred_from_registration_id).to be_nil
+    end
+
+    it "scopes .transferred_in to registrations with a back-link" do
+      plain = create(:event_registration, status: "registered")
+      expect(EventRegistration.transferred_in).to include(incoming)
+      expect(EventRegistration.transferred_in).not_to include(plain, source)
+    end
+
+    it "routes the transferred_in filter value through .attendance_status to the FK" do
+      plain = create(:event_registration, status: "registered")
+      results = EventRegistration.attendance_status("transferred_in")
+      expect(results).to include(incoming)
+      expect(results).not_to include(plain, source)
+    end
+
+    it "still filters real statuses through .attendance_status" do
+      expect(EventRegistration.attendance_status("transferred_out")).to include(source)
+      expect(EventRegistration.attendance_status("transferred_out")).not_to include(incoming)
+    end
+
+    it "annotates the reporting label for an incoming registration" do
+      expect(incoming.attendance_status_report_label).to eq("Registered (transferred in)")
+      expect(source.attendance_status_report_label).to eq("Transferred out")
+    end
+
+    it "offers a Transferred in filter option backed by the FK value" do
+      expect(EventRegistration::ATTENDANCE_FILTER_OPTIONS).to include([ "Transferred in", "transferred_in" ])
+    end
+
+    it "scopes .not_transferred_in to registrations without a back-link" do
+      plain = create(:event_registration, status: "registered")
+      expect(EventRegistration.not_transferred_in).to include(plain, source)
+      expect(EventRegistration.not_transferred_in).not_to include(incoming)
+    end
+
+    describe "financials live on the source" do
+      let(:paid_event) { create(:event, cost_cents: 10_000) }
+      let(:source) { create(:event_registration, event: paid_event, status: "transferred_out") }
+      let!(:incoming) do
+        create(:event_registration, event: create(:event, cost_cents: 10_000),
+          status: "registered", transferred_from_registration: source)
+      end
+
+      it "labels payment status as transferred in rather than Due" do
+        expect(incoming.payment_status_label).to eq("Transferred in")
+      end
+
+      it "derives payment access from the source registration" do
+        expect(incoming.payment_access_granted?).to be(false)
+
+        create(:allocation, allocatable: source, amount: 10_000,
+          source: create(:payment, person: source.registrant, amount_cents: 10_000, amount_cents_remaining: nil))
+        expect(incoming.reload.payment_access_granted?).to be(true)
+      end
+    end
+
+    describe "scholarship recognition across a transfer" do
+      let(:source) { create(:event_registration, event: create(:event, cost_cents: 5_000), status: "transferred_out") }
+      let!(:incoming) { create(:event_registration, status: "registered", transferred_from_registration: source) }
+
+      it "designates a transferred-in reg a scholarship recipient via the source award" do
+        scholarship = create(:scholarship, recipient: source.registrant, amount_cents: 5_000)
+        create(:allocation, source: scholarship, allocatable: source, amount: 5_000)
+
+        expect(incoming.effective_scholarship).to eq(scholarship)
+        expect(incoming).to be_scholarship_recipient
+        # ...without the award becoming one of its own (dollars stay on the source).
+        expect(incoming.scholarship?).to be(false)
+      end
+
+      it "is not a recipient when the source has no scholarship" do
+        expect(incoming.effective_scholarship).to be_nil
+        expect(incoming).not_to be_scholarship_recipient
+      end
+
+      it "uses a reg's own scholarship when present" do
+        own = create(:event_registration, event: create(:event, cost_cents: 3_000), status: "registered")
+        scholarship = create(:scholarship, recipient: own.registrant, amount_cents: 3_000)
+        create(:allocation, source: scholarship, allocatable: own, amount: 3_000)
+
+        expect(own.effective_scholarship).to eq(scholarship)
+        expect(own).to be_scholarship_recipient
+      end
+    end
+  end
+
+  describe ".registrant_name" do
+    it "matches a registrant by their legal first name and last name" do
+      match = create(:event_registration,
+        registrant: create(:person, first_name: "Bob", legal_first_name: "Robert", last_name: "Smith"))
+      other = create(:event_registration,
+        registrant: create(:person, first_name: "Jane", last_name: "Doe"))
+
+      results = EventRegistration.registrant_name("robertsmith")
+      expect(results).to include(match)
+      expect(results).not_to include(other)
+    end
+  end
+
+  describe ".keyword" do
+    it "matches a registrant by their legal first name and last name" do
+      match = create(:event_registration,
+        registrant: create(:person, first_name: "Bob", legal_first_name: "Robert", last_name: "Smith"))
+      other = create(:event_registration,
+        registrant: create(:person, first_name: "Jane", last_name: "Doe"))
+
+      results = EventRegistration.keyword("robert smith")
+      expect(results).to include(match)
+      expect(results).not_to include(other)
+    end
+  end
+
+  describe "CE certification (two-record model, #1944)" do
+    let(:origin_event) { create(:event, ce_hours_offered: 6, start_date: 3.days.ago, end_date: 1.day.ago) }
+    let(:dest_event) { create(:event, ce_hours_offered: 6, start_date: 3.days.ago, end_date: 1.day.ago) }
+    let(:person) { create(:person) }
+    let(:license) { create(:professional_license, person: person) }
+    let!(:source) { create(:event_registration, event: origin_event, registrant: person, status: "transferred_out") }
+    let!(:destination) { create(:event_registration, event: dest_event, registrant: person, status: "attended", transferred_from_registration: source) }
+
+    it "certifies each registration's own CE records" do
+      dest_ce = destination.continuing_education_registrations.create!(
+        professional_license: license, hours: 6, cost_cents: 0, skip_event_defaults: true)
+
+      destination.mark_certificate_issued!(true)
+      expect(dest_ce.reload.certificate_sent?).to be(true)
+      expect(destination.reload.certificate_issued?).to be(true)
+    end
+
+    it "does not reach across the transfer link to the other reg's CE" do
+      source_stub = source.continuing_education_registrations.create!(
+        professional_license: license, hours: 0, cost_cents: 0, skip_event_defaults: true)
+      dest_ce = destination.continuing_education_registrations.create!(
+        professional_license: license, hours: 6, cost_cents: 0, skip_event_defaults: true)
+
+      destination.mark_certificate_issued!(true)
+      expect(dest_ce.reload.certificate_sent?).to be(true)
+      expect(source_stub.reload.certificate_sent?).to be(false)
     end
   end
 
@@ -107,6 +292,33 @@ RSpec.describe EventRegistration, type: :model do
     end
   end
 
+  describe "#day_completion_carried_to" do
+    let(:three_day) { create(:event, start_date: 12.days.from_now, end_date: 14.days.from_now) }  # day_count == 3
+    let(:two_day)   { create(:event, start_date: 12.days.from_now, end_date: 13.days.from_now) }   # day_count == 2
+
+    it "carries each day forward per-index when the destination has at least as many days" do
+      reg = create(:event_registration, event: two_day, completed_day_1: true, completed_day_2: false)
+      carried = reg.day_completion_carried_to(three_day.day_count)
+      expect(carried).to include("completed_day_1" => true, "completed_day_2" => false, "completed_day_3" => false)
+    end
+
+    it "compresses to the front so no completion is lost when the source had more days than the destination" do
+      reg = create(:event_registration, event: three_day,
+        completed_day_1: true, completed_day_2: true, completed_day_3: true)
+      carried = reg.day_completion_carried_to(two_day.day_count)
+      # Three complete days, only two slots → both destination days marked.
+      expect(carried).to include("completed_day_1" => true, "completed_day_2" => true, "completed_day_3" => false)
+    end
+
+    it "compresses the completed count even when the source's completed days had gaps" do
+      reg = create(:event_registration, event: three_day,
+        completed_day_1: false, completed_day_2: true, completed_day_3: true)
+      carried = reg.day_completion_carried_to(two_day.day_count)
+      # Two complete days out of three → the destination's two days both fill.
+      expect(carried).to include("completed_day_1" => true, "completed_day_2" => true, "completed_day_3" => false)
+    end
+  end
+
   describe "#deletable?" do
     it "returns true for a plain registration with no allocations or attendance" do
       reg = create(:event_registration, status: "registered")
@@ -146,7 +358,9 @@ RSpec.describe EventRegistration, type: :model do
     it "returns true for a transferred-in registration with no allocations" do
       # Transferred-in is an ordinary active registration here; the source event's
       # transferred_out record preserves the transfer history.
-      expect(create(:event_registration, status: "transferred_in")).to be_deletable
+      source = create(:event_registration, status: "transferred_out")
+      incoming = create(:event_registration, status: "registered", transferred_from_registration: source)
+      expect(incoming).to be_deletable
     end
   end
 
@@ -300,6 +514,27 @@ RSpec.describe EventRegistration, type: :model do
     end
   end
 
+  describe ".registered_between" do
+    let!(:early) { create(:event_registration).tap { |r| r.update_column(:created_at, Time.zone.parse("2026-01-10 09:00")) } }
+    let!(:mid) { create(:event_registration).tap { |r| r.update_column(:created_at, Time.zone.parse("2026-02-15 09:00")) } }
+    let!(:late) { create(:event_registration).tap { |r| r.update_column(:created_at, Time.zone.parse("2026-03-20 09:00")) } }
+
+    it "filters to registrations created within an inclusive date range" do
+      results = EventRegistration.registered_between("2026-02-01", "2026-02-28")
+      expect(results).to contain_exactly(mid)
+    end
+
+    it "includes registrations created on the end date (end of day)" do
+      results = EventRegistration.registered_between(nil, "2026-02-15")
+      expect(results).to contain_exactly(early, mid)
+    end
+
+    it "treats a blank or unparseable bound as open-ended" do
+      expect(EventRegistration.registered_between("2026-02-01", "")).to contain_exactly(mid, late)
+      expect(EventRegistration.registered_between("not-a-date", "not-a-date")).to contain_exactly(early, mid, late)
+    end
+  end
+
   describe ".comment_text" do
     it "matches registrations whose comment topic or body contains the term" do
       reg_body = create(:event_registration)
@@ -367,11 +602,11 @@ RSpec.describe EventRegistration, type: :model do
   describe ".scholarship_status agreed" do
     it "matches registrations with an agreement-signed scholarship" do
       agreed_reg = create(:event_registration)
-      agreed = create(:scholarship, recipient: agreed_reg.registrant, agreement_signed_at: Time.current)
+      agreed = create(:scholarship, recipient: agreed_reg.registrant, agreement_signed: true)
       create(:allocation, source: agreed, allocatable: agreed_reg, amount: 0)
 
       pending_reg = create(:event_registration)
-      pending = create(:scholarship, recipient: pending_reg.registrant, agreement_signed_at: nil)
+      pending = create(:scholarship, recipient: pending_reg.registrant, agreement_signed: false)
       create(:allocation, source: pending, allocatable: pending_reg, amount: 0)
 
       results = EventRegistration.scholarship_status("agreed")
@@ -414,11 +649,37 @@ RSpec.describe EventRegistration, type: :model do
       end
     end
 
+    describe "payment-status scopes for a transferred-in reg" do
+      let(:new_event) { create(:event, cost_cents: 5000) }
+
+      it "reads a transferred-in reg's paid status from its source, not its own event" do
+        # The new event costs $50 and the transfer holds no allocations, but its
+        # paid-in-full source means it belongs in .paid_in_full, not .not_paid_in_full.
+        from_paid = create(:event_registration, event: new_event, registrant: paid_reg.registrant,
+          transferred_from_registration: paid_reg)
+        from_unpaid = create(:event_registration, event: new_event, registrant: unpaid_reg.registrant,
+          transferred_from_registration: unpaid_reg)
+
+        expect(EventRegistration.paid_in_full).to include(from_paid)
+        expect(EventRegistration.paid_in_full).not_to include(from_unpaid)
+        expect(EventRegistration.not_paid_in_full).to include(from_unpaid)
+        expect(EventRegistration.not_paid_in_full).not_to include(from_paid)
+      end
+    end
+
     describe ".with_scholarship" do
       it "returns only registrations funded by a scholarship" do
         results = EventRegistration.with_scholarship
         expect(results).to include(scholarship_reg, incomplete_scholarship_reg)
         expect(results).not_to include(paid_reg, unpaid_reg)
+      end
+    end
+
+    describe ".without_scholarship" do
+      it "returns only registrations with no scholarship" do
+        results = EventRegistration.without_scholarship
+        expect(results).to include(paid_reg, unpaid_reg)
+        expect(results).not_to include(scholarship_reg, incomplete_scholarship_reg)
       end
     end
 
@@ -442,6 +703,11 @@ RSpec.describe EventRegistration, type: :model do
       it "maps 'yes' to all recipients" do
         expect(EventRegistration.scholarship_status("yes")).to include(scholarship_reg, incomplete_scholarship_reg)
         expect(EventRegistration.scholarship_status("yes")).not_to include(paid_reg, unpaid_reg)
+      end
+
+      it "maps 'no' to registrations without a scholarship" do
+        expect(EventRegistration.scholarship_status("no")).to include(paid_reg, unpaid_reg)
+        expect(EventRegistration.scholarship_status("no")).not_to include(scholarship_reg, incomplete_scholarship_reg)
       end
 
       it "maps 'complete' to completed-task recipients" do
@@ -578,6 +844,23 @@ RSpec.describe EventRegistration, type: :model do
         expect(results).not_to include(issued_ce, no_ce)
       end
 
+      it "maps 'none' to registrations that never signed up for CE" do
+        results = EventRegistration.ce_status(EventRegistration::NO_CE)
+        expect(results).to include(no_ce)
+        expect(results).not_to include(paid_ce, requested_ce, needs_license_ce, issued_ce)
+      end
+
+      # The license join is an inner join, so this only holds because
+      # professional_license_id is NOT NULL — every CE row has one.
+      it "makes 'none' the exact complement of 'registered'" do
+        all_ids = EventRegistration.where(event: event).ids
+        registered = EventRegistration.where(event: event).ce_status("registered").ids
+        none = EventRegistration.where(event: event).ce_status(EventRegistration::NO_CE).ids
+
+        expect(registered & none).to be_empty
+        expect((registered + none).sort).to eq(all_ids.sort)
+      end
+
       it "returns an unfiltered relation for unknown values" do
         expect(EventRegistration.ce_status("bogus")).to include(paid_ce, requested_ce, no_ce)
       end
@@ -706,6 +989,37 @@ RSpec.describe EventRegistration, type: :model do
       scholarship = create(:scholarship, tasks_completed: true, amount_cents: 1099)
       create(:allocation, source: scholarship, allocatable: reg, amount: 1099)
       expect(reg.scholarship_tasks_met?).to be true
+    end
+
+    it "ignores a declined award, which carries no tasks" do
+      reg = create(:event_registration)
+      scholarship = create(:scholarship, recipient: reg.registrant, tasks_completed: false, amount_cents: 1099)
+      create(:allocation, source: scholarship, allocatable: reg, amount: 1099)
+      scholarship.reload.decline_agreement!("Timing no longer works")
+
+      expect(reg.reload.scholarship_tasks_met?).to be true
+      expect(reg.scholarship_declined?).to be true
+    end
+  end
+
+  describe "#remaining_cost_without" do
+    let(:event) { create(:event, cost_cents: 10_000) }
+    let(:reg) { create(:event_registration, event: event) }
+    let(:scholarship) { create(:scholarship, recipient: reg.registrant, amount_cents: 5_000) }
+
+    before { create(:allocation, source: scholarship, allocatable: reg, amount: 5_000) }
+
+    it "adds the source's allocation back onto the balance" do
+      expect(reg.reload.remaining_cost).to eq(5_000)
+      expect(reg.remaining_cost_without(scholarship)).to eq(10_000)
+    end
+
+    it "leaves the other allocations in place" do
+      create(:allocation, source: create(:payment, amount_cents: 5_000, amount_cents_remaining: 5_000),
+                          allocatable: reg, amount: 5_000)
+
+      expect(reg.reload.remaining_cost).to eq(0)
+      expect(reg.remaining_cost_without(scholarship)).to eq(5_000)
     end
   end
 
@@ -896,8 +1210,27 @@ RSpec.describe EventRegistration, type: :model do
       create(:event_registration_organization, event_registration: linked)
       unlinked = create(:event_registration, event: event)
 
-      expect(EventRegistration.organization_status("linked", event)).to contain_exactly(linked)
-      expect(EventRegistration.organization_status("unlinked", event)).to contain_exactly(unlinked)
+      expect(EventRegistration.organization_linking_status("linked", event)).to contain_exactly(linked)
+      expect(EventRegistration.organization_linking_status("unlinked", event)).to contain_exactly(unlinked)
+    end
+
+    it "filters pending: a submitted organization name with nothing linked yet" do
+      form = create(:form)
+      create(:event_form, :registration, event: event, form: form)
+      field = create(:form_field, form: form, field_identifier: "organization_name")
+
+      pending = create(:event_registration, event: event)
+      pending_submission = create(:form_submission, person: pending.registrant, form: form)
+      create(:form_answer, form_submission: pending_submission, form_field: field, submitted_answer: "Unlisted Org")
+
+      linked = create(:event_registration, event: event)
+      linked_submission = create(:form_submission, person: linked.registrant, form: form)
+      create(:form_answer, form_submission: linked_submission, form_field: field, submitted_answer: "Linked Org")
+      create(:event_registration_organization, event_registration: linked)
+
+      create(:event_registration, event: event)
+
+      expect(EventRegistration.organization_linking_status("pending", event)).to contain_exactly(pending)
     end
   end
 
@@ -1188,6 +1521,7 @@ RSpec.describe EventRegistration, type: :model do
 
   describe "#program_statuses" do
     let(:registration) { create(:event_registration) }
+    let(:training_date) { registration.event.start_date.to_date }
     let(:linked_org) { create(:organization, name: "Registration Org") }
     let(:other_org) { create(:organization, name: "Other Org") }
 
@@ -1195,19 +1529,52 @@ RSpec.describe EventRegistration, type: :model do
       create(:event_registration_organization, event_registration: registration, organization: linked_org)
       # An unrelated facilitator affiliation to a different org must be ignored.
       create(:affiliation, organization: other_org, person: registration.registrant,
-             title: "Facilitator", start_date: Date.current)
+             title: "Facilitator", start_date: training_date)
 
-      expect(registration.reload.program_statuses).to eq([ :new ])
+      expect(registration.reload.program_statuses.map(&:status)).to eq([ :new ])
     end
 
-    it "is ongoing when the linked org already had an active facilitator, excluding the registrant's own" do
+    # The registrant's own affiliation is dated to the training, so it isn't prior
+    # history — no exclusion needed to read New (ADR-0001 D5).
+    it "is new when the registrant's own affiliation is the org's first, dated to the training" do
+      create(:event_registration_organization, event_registration: registration, organization: linked_org)
+      create(:affiliation, organization: linked_org, person: registration.registrant,
+             title: "Facilitator", start_date: training_date)
+
+      expect(registration.reload.program_statuses.map(&:status)).to eq([ :new ])
+    end
+
+    it "is ongoing when the linked org already had an active facilitator" do
       create(:event_registration_organization, event_registration: registration, organization: linked_org)
       create(:affiliation, organization: linked_org, title: "Facilitator",
              start_date: 2.years.ago, end_date: nil)
       create(:affiliation, organization: linked_org, person: registration.registrant,
-             title: "Facilitator", start_date: Date.current)
+             title: "Facilitator", start_date: training_date)
 
-      expect(registration.reload.program_statuses).to eq([ :ongoing ])
+      expect(registration.reload.program_statuses.map(&:status)).to eq([ :ongoing ])
+    end
+
+    it "counts a facilitator affiliation started earlier the same month as the training" do
+      event = create(:event, start_date: Date.new(2026, 6, 20))
+      reg = create(:event_registration, event: event)
+      create(:event_registration_organization, event_registration: reg, organization: linked_org)
+      # Earlier that same month, before the training date — still counts as ongoing.
+      create(:affiliation, organization: linked_org, title: "Facilitator",
+             start_date: Date.new(2026, 6, 5), end_date: nil)
+      create(:affiliation, organization: linked_org, person: reg.registrant,
+             title: "Facilitator", start_date: Date.new(2026, 6, 20))
+
+      expect(reg.reload.program_statuses.map(&:status)).to eq([ :ongoing ])
+    end
+
+    it "anchors on the training date and explains itself" do
+      create(:event_registration_organization, event_registration: registration, organization: linked_org)
+
+      status = registration.reload.program_statuses.first
+
+      expect(status.as_of).to eq(training_date)
+      expect(status.label).to eq("New")
+      expect(status.explanation).to include("No facilitator affiliation started before this date")
     end
   end
 
@@ -1289,6 +1656,18 @@ RSpec.describe EventRegistration, type: :model do
 
       expect(reg.reload.receipt_available?).to be(false)
     end
+
+    it "mirrors the source for a transferred-in reg (no re-billing here)" do
+      payment = create(:payment, type: "CashPayment", amount_cents: 10_000, amount_cents_remaining: nil)
+      create(:allocation, source: payment, allocatable: reg, amount: 10_000)
+      transferred_in = create(:event_registration, event: create(:event, cost_cents: 20_000),
+        registrant: reg.registrant, transferred_from_registration: reg)
+
+      # The new event costs $200, but the source paid its balance in full, so the
+      # transfer owes nothing here — remaining is zero and the receipt is available.
+      expect(transferred_in.remaining_cost).to eq(0)
+      expect(transferred_in.receipt_available?).to be(true)
+    end
   end
 
   describe "#w9_available?" do
@@ -1344,6 +1723,101 @@ RSpec.describe EventRegistration, type: :model do
 
       expect(queries).to be_empty
       expect(preloaded.paid_in_full?).to be(true)
+    end
+  end
+
+  describe "attendance time entries" do
+    let(:registration) { create(:event_registration) }
+
+    describe "#signed_in? / #open_attendance_entry" do
+      it "is signed in while today's entry has no sign-out" do
+        entry = create(:event_attendance_time_entry, :open, event_registration: registration,
+          signed_in_at: Time.zone.now.change(hour: 9))
+        expect(registration.signed_in?).to be(true)
+        expect(registration.open_attendance_entry).to eq(entry)
+      end
+
+      it "is not signed in once every entry is closed" do
+        create(:event_attendance_time_entry, event_registration: registration)
+        expect(registration.signed_in?).to be(false)
+        expect(registration.open_attendance_entry).to be_nil
+      end
+
+      # A forgotten sign-out must not follow the registrant into the next training
+      # day, where it would block the new day's sign-in and, once closed, bank a
+      # ~24-hour session. Staff close it from the attendance report instead.
+      it "ignores an entry left open on an earlier day" do
+        stale = create(:event_attendance_time_entry, :open, event_registration: registration,
+          signed_in_at: 1.day.ago.change(hour: 9))
+        expect(registration.signed_in?).to be(false)
+        expect(registration.open_attendance_entry).to be_nil
+        expect(registration.open_attendance_entry(1.day.ago.to_date)).to eq(stale)
+      end
+    end
+
+    describe "#attendance_entries_on" do
+      it "returns that day's entries in sign-in order" do
+        second = create(:event_attendance_time_entry, event_registration: registration,
+          signed_in_at: Time.zone.local(2026, 7, 23, 11, 0), signed_out_at: Time.zone.local(2026, 7, 23, 12, 0))
+        first = create(:event_attendance_time_entry, event_registration: registration,
+          signed_in_at: Time.zone.local(2026, 7, 23, 8, 50), signed_out_at: Time.zone.local(2026, 7, 23, 10, 34))
+        create(:event_attendance_time_entry, event_registration: registration,
+          signed_in_at: Time.zone.local(2026, 7, 24, 8, 50), signed_out_at: Time.zone.local(2026, 7, 24, 10, 0))
+
+        expect(registration.attendance_entries_on(Date.new(2026, 7, 23))).to eq([ first, second ])
+      end
+    end
+
+    describe "#forgotten_sign_out_entry / #forgotten_sign_out_at" do
+      # A two-day training running 9:00–16:00 each day.
+      let(:event) do
+        create(:event, start_date: Time.zone.local(2026, 7, 23, 9, 0), end_date: Time.zone.local(2026, 7, 24, 16, 0))
+      end
+      let(:registration) { create(:event_registration, event: event) }
+
+      around { |example| travel_to(Time.zone.local(2026, 7, 24, 10, 0)) { example.run } }
+
+      it "stamps an earlier day's forgotten sign-out with that day's scheduled end" do
+        stale = create(:event_attendance_time_entry, :open, event_registration: registration,
+          signed_in_at: Time.zone.local(2026, 7, 23, 9, 5))
+
+        expect(registration.forgotten_sign_out_entry).to eq(stale)
+        expect(registration.forgotten_sign_out_at(stale)).to eq(Time.zone.local(2026, 7, 23, 16, 0))
+      end
+
+      it "ignores today's open entry — that one is closed by the ordinary Sign out" do
+        create(:event_attendance_time_entry, :open, event_registration: registration,
+          signed_in_at: Time.zone.local(2026, 7, 24, 9, 5))
+
+        expect(registration.forgotten_sign_out_entry).to be_nil
+      end
+
+      it "ignores earlier days that were closed properly" do
+        create(:event_attendance_time_entry, event_registration: registration,
+          signed_in_at: Time.zone.local(2026, 7, 23, 9, 0), signed_out_at: Time.zone.local(2026, 7, 23, 16, 0))
+
+        expect(registration.forgotten_sign_out_entry).to be_nil
+      end
+
+      # With no end time on the event there's no scheduled end to stamp, so the
+      # one-click close isn't offered either.
+      it "declines when the event has no end time" do
+        event.update!(end_date: Time.zone.local(2026, 7, 24))
+        create(:event_attendance_time_entry, :open, event_registration: registration,
+          signed_in_at: Time.zone.local(2026, 7, 23, 9, 5))
+
+        expect(registration.forgotten_sign_out_entry).to be_nil
+      end
+
+      # Nothing sensible to stamp, so it isn't offered as a one-click close — staff
+      # correct it on the attendance report instead.
+      it "declines a sign-in recorded after that day had already ended" do
+        late = create(:event_attendance_time_entry, :open, event_registration: registration,
+          signed_in_at: Time.zone.local(2026, 7, 23, 18, 0))
+
+        expect(registration.forgotten_sign_out_at(late)).to be_nil
+        expect(registration.forgotten_sign_out_entry).to be_nil
+      end
     end
   end
 end

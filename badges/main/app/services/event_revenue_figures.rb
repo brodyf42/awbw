@@ -186,10 +186,13 @@ class EventRevenueFigures
 
   # [ event_id, registration_id, registrant_id ] for every active registration in
   # the report — the basis for both the per-event grouping and the drilldowns'
-  # registrant lookup, loaded in one query.
+  # registrant lookup, loaded in one query. Transferred-in regs are excluded:
+  # their money lives on the source event, so counting them here would inflate the
+  # new event's totals (mirrors EventDashboard#billable_registration_ids). (#1944)
   def registration_rows
     @registration_rows ||= EventRegistration
       .active
+      .not_transferred_in
       .where(event_id: @events.map(&:id))
       .pluck(:event_id, :id, :registrant_id)
   end
@@ -222,6 +225,7 @@ class EventRevenueFigures
   # recipient id feeds the scholarship drilldowns; #build reads only the first two.
   def scholarship_rows_by_registration
     @scholarship_rows_by_registration ||= Scholarship
+      .not_declined
       .joins(:allocation)
       .where(allocations: { allocatable_type: "EventRegistration", allocatable_id: registration_ids })
       .pluck(Arel.sql("allocations.allocatable_id"), :grant_id, :amount_cents, :recipient_id)

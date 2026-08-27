@@ -74,6 +74,14 @@ RSpec.describe ReminderRecipientFilter do
       expect(matched({ funder_name: "acme" }, [ reg, ungranted ])).to eq([ reg.id ].to_set)
     end
 
+    it "filters by registration date range" do
+      early = registration(first_name: "Early").tap { |r| r.update_column(:created_at, Time.zone.parse("2026-01-10")) }
+      mid = registration(first_name: "Mid").tap { |r| r.update_column(:created_at, Time.zone.parse("2026-02-15")) }
+      late = registration(first_name: "Late").tap { |r| r.update_column(:created_at, Time.zone.parse("2026-03-20")) }
+      params = { registered_from: "2026-02-01", registered_to: "2026-02-28" }
+      expect(matched(params, [ early, mid, late ])).to eq([ mid.id ].to_set)
+    end
+
     it "filters by email address" do
       amy = registration(first_name: "Amy", email: "amy@example.com", user: nil)
       sam = registration(first_name: "Sam", email: "sam@example.com", user: nil)
@@ -227,6 +235,27 @@ RSpec.describe ReminderRecipientFilter do
 
       it "filters CE paid (CE balance paid in full)" do
         expect(matched({ ce_status: "paid" }, regs)).to eq([ complete.id ].to_set)
+      end
+    end
+
+    context "topic subscription" do
+      let(:topic) { create(:topic_subscription_type) }
+      let(:other_topic) { create(:topic_subscription_type) }
+      let!(:subscribed) do
+        registration(first_name: "Sub").tap { |r| create(:topic_subscription, person: r.registrant, topic_subscription_type: topic) }
+      end
+      let!(:other) do
+        registration(first_name: "Other").tap { |r| create(:topic_subscription, person: r.registrant, topic_subscription_type: other_topic) }
+      end
+      let!(:none) { registration(first_name: "None") }
+
+      it "filters registrants with an active subscription to the chosen topic" do
+        expect(matched({ topic_subscription: topic.id }, [ subscribed, other, none ])).to eq([ subscribed.id ].to_set)
+      end
+
+      it "ignores unsubscribed subscriptions" do
+        create(:topic_subscription, :unsubscribed, person: none.registrant, topic_subscription_type: topic)
+        expect(matched({ topic_subscription: topic.id }, [ subscribed, other, none ])).to eq([ subscribed.id ].to_set)
       end
     end
 

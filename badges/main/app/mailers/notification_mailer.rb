@@ -78,6 +78,27 @@ class NotificationMailer < ApplicationMailer
     )
   end
 
+  def story_promoted(notification)
+    @story = notification.noticeable.decorate
+    @story_idea = @story.story_idea
+    @user = @story_idea&.created_by || @story.created_by
+
+    mail(
+      to: notification.recipient_email,
+      subject: "#{SUBJECT_PREFIX} Your story idea is now a story"
+    )
+  end
+
+  def story_promoted_fyi(notification)
+    @story = notification.noticeable.decorate
+    @story_idea = @story.story_idea
+    @user = @story_idea&.created_by || @story.created_by
+
+    mail(
+      subject: "#{FYI_PREFIX} Story idea promoted to a story: #{@story.title}"
+    )
+  end
+
   def report_submitted_fyi(notification)
     @notification = notification
     @noticeable   = notification.noticeable
@@ -143,6 +164,43 @@ class NotificationMailer < ApplicationMailer
 
     mail(
       subject: "#{FYI_PREFIX} New WorkshopLog submission by #{@user.full_name}"
+    )
+  end
+
+  def form_submission_confirmation(notification)
+    @submission = notification.noticeable
+    @form = @submission.form
+    @person = @submission.person
+
+    mail(
+      to: notification.recipient_email,
+      subject: "#{SUBJECT_PREFIX} We received your response to #{@form.display_name}"
+    )
+  end
+
+  # A staff member sent this person the public link to one of the agreement
+  # forms (see Form.agreement_forms). The notification carries what was sent: the
+  # form name in custom_subject and the public form URL in custom_message.
+  def form_link_request(notification)
+    @person = notification.noticeable
+    @form_name = notification.custom_subject
+    @url = notification.custom_message
+    @sender = notification.sender
+
+    mail(
+      to: notification.recipient_email,
+      subject: "#{SUBJECT_PREFIX} Link to complete #{@form_name}"
+    )
+  end
+
+  def form_submission_confirmation_fyi(notification)
+    @submission = notification.noticeable
+    @form = @submission.form
+    @person = @submission.person
+    @answers = @submission.form_answers.includes(:form_field)
+
+    mail(
+      subject: "#{FYI_PREFIX} New form submission: #{@form.display_name} by #{@person.full_name}"
     )
   end
 

@@ -114,15 +114,40 @@ RSpec.describe "Events::Callouts", type: :request do
     end
   end
 
+  describe "transfer banner across callout pages (#1944)" do
+    let(:destination) { create(:event_registration, event: create(:event), registrant: registration.registrant) }
+
+    before do
+      registration.update!(status: "transferred_out")
+      destination.update!(transferred_from_registration: registration)
+    end
+
+    it "shows the transfer banner and new-reg link on a page that had no explicit render (handouts)" do
+      create(:registration_ticket_callout, event:, builtin_key: "handouts", hidden: false)
+
+      get registration_handouts_path(registration.slug)
+
+      expect(response.body).to include("You transferred out")
+      expect(response.body).to include(registration_ticket_path(destination.slug))
+    end
+
+    it "shows the banner exactly once on the payment page (no duplication after consolidating into the wrapper)" do
+      get registration_payment_path(registration.slug)
+
+      expect(response.body.scan("You transferred out").size).to eq(1)
+    end
+  end
+
   describe "callout page header" do
     let(:event) { create(:event, title: "Windows workshop", start_date: Date.new(2020, 1, 12), end_date: Date.new(2099, 12, 12)) }
 
-    it "shows the event title and short date range under the callout title" do
+    it "shows the event title with the date range and daily times on the line below" do
       create(:registration_ticket_callout, event:, builtin_key: "staff", hidden: false)
       get registration_staff_path(registration.slug)
-      # title · "<Mon D, 2020> - <Mon D, 2099>" — the short_date_range format
-      # (no weekday, with year); the exact day depends on the request time zone.
-      expect(response.body).to match(/Windows workshop · \w{3} \d{1,2}, 2020 - \w{3} \d{1,2}, 2099/)
+      expect(response.body).to include("Windows workshop")
+      # "<Mon D, 2020> - <Mon D, 2099> · <times>" — the short_date_range format
+      # (no weekday, with year); the exact day/time depend on the request time zone.
+      expect(response.body).to match(/\w{3} \d{1,2}, 2020 - \w{3} \d{1,2}, 2099 · .+m [A-Z]{3}/)
     end
   end
 
@@ -180,6 +205,20 @@ RSpec.describe "Events::Callouts", type: :request do
       staffer.update!(profile_show_age_ranges: false)
       get registration_staff_path(registration.slug)
       expect(response.body).not_to include("Youth")
+    end
+
+    it "shows a staff member's license credentials, gated by their profile toggle" do
+      staffer = create(:person)
+      create(:professional_license, person: staffer, kind: "LMFT", number: "44556")
+      create(:registration_ticket_callout, event:, builtin_key: "staff", hidden: false)
+      create(:event_staff, event:, person: staffer)
+
+      get registration_staff_path(registration.slug)
+      expect(response.body).to include("LMFT")
+
+      staffer.update!(profile_show_credentials: false)
+      get registration_staff_path(registration.slug)
+      expect(response.body).not_to include("LMFT")
     end
 
     it "shows an admin-only Edit staff button to admins" do
@@ -568,6 +607,70 @@ RSpec.describe "Events::Callouts", type: :request do
         expect(response.body).to include("Agreement signed")
         expect(response.body).not_to include("Pending agreement")
       end
+
+      it "frames the balance as the accept/decline choice while unsigned" do
+        get registration_scholarship_path(registration.slug)
+
+        # $100 event cost − $50 scholarship allocation = $50 owed if accepted,
+        # the full $100 if declined.
+        expect(response.body).to include("Accept and you'll owe")
+        expect(response.body).to include("$50")
+        expect(response.body).to match(/Decline and\s*<strong>\$100<\/strong> is due/)
+      end
+
+      it "states the balance plainly once the agreement is signed" do
+        scholarship.update!(agreement_signed: true)
+        get registration_scholarship_path(registration.slug)
+
+        expect(response.body).to match(/You'll owe\s*<strong>\$50<\/strong>/)
+        expect(response.body).not_to include("Accept and you'll owe")
+        expect(response.body).not_to include("Decline and")
+      end
+
+      it "prices the decline off this award alone, not the whole registration" do
+        create(:allocation, source: create(:payment, amount_cents: 5_000, amount_cents_remaining: 5_000),
+                            allocatable: registration, amount: 5_000)
+        get registration_scholarship_path(registration.slug)
+
+        # The $50 already paid stays paid, so declining leaves $50 due, not $100.
+        expect(response.body).to include("registration is fully covered")
+        expect(response.body).to match(/Decline and\s*<strong>\$50<\/strong> is due/)
+      end
+
+      it "offers a Decline option with a reason box while unsigned" do
+        get registration_scholarship_path(registration.slug)
+
+        expect(response.body).to include("Decline")
+        expect(response.body).to match(/name="decline_reason"/)
+      end
+
+      it "shows the declined state instead of the buttons once declined" do
+        scholarship.decline_agreement!("Timing no longer works")
+        get registration_scholarship_path(registration.slug)
+
+        expect(response.body).to include("You declined this scholarship")
+        expect(response.body).not_to match(/name="agreement" value="yes"/)
+      end
+
+      it "hides the agreement history from a registrant (public view)" do
+        scholarship.decline_agreement!("Timing no longer works")
+        get registration_scholarship_path(registration.slug)
+
+        expect(response.body).not_to include("Agreement history")
+      end
+
+      context "when an admin is viewing" do
+        let(:admin) { create(:user, :with_person, super_user: true) }
+        before { sign_in admin }
+
+        it "shows the admin-only agreement history once there are responses" do
+          scholarship.decline_agreement!("Timing no longer works")
+          get registration_scholarship_path(registration.slug)
+
+          expect(response.body).to include("Agreement history")
+          expect(response.body).to include("Admin only")
+        end
+      end
     end
 
     describe "POST /registration/:slug/scholarship/agreement" do
@@ -578,7 +681,7 @@ RSpec.describe "Events::Callouts", type: :request do
 
         expect(response).to redirect_to(registration_scholarship_path(registration.slug))
         expect(scholarship.reload.agreement_signed?).to be(true)
-        expect(scholarship.agreement_signed_at).to be_present
+        expect(scholarship.latest_agreement_response.responded_at).to be_present
       end
 
       it "does not sign the agreement without an affirmative submission" do
@@ -596,10 +699,51 @@ RSpec.describe "Events::Callouts", type: :request do
         expect(response).to redirect_to(registration_scholarship_path(other.slug))
       end
     end
+
+    describe "POST /registration/:slug/scholarship/decline" do
+      it "records the decline with the reason and clears any signed state" do
+        scholarship.update!(agreement_signed: true)
+
+        post registration_scholarship_decline_path(registration.slug), params: { decline_reason: "Timing no longer works" }
+
+        expect(response).to redirect_to(registration_scholarship_path(registration.slug))
+        scholarship.reload
+        expect(scholarship.agreement_declined?).to be(true)
+        expect(scholarship.latest_agreement_response.reason).to eq("Timing no longer works")
+        expect(scholarship.agreement_signed?).to be(false)
+      end
+
+      it "zeroes the scholarship allocation so it stops counting toward the balance" do
+        expect(registration.reload.remaining_cost).to eq(5_000)
+
+        post registration_scholarship_decline_path(registration.slug), params: { decline_reason: "No thanks" }
+
+        expect(allocation.reload.amount).to eq(0)
+        expect(registration.reload.remaining_cost).to eq(10_000)
+      end
+
+      it "is a no-op when already declined (no duplicate response row)" do
+        scholarship.decline_agreement!("first")
+
+        expect {
+          post registration_scholarship_decline_path(registration.slug), params: { decline_reason: "second" }
+        }.not_to change { scholarship.agreement_responses.count }
+
+        expect(response).to redirect_to(registration_scholarship_path(registration.slug))
+      end
+
+      it "redirects to the scholarship page when there is no awarded scholarship" do
+        other = create(:event_registration, event: event, scholarship_requested: true)
+
+        post registration_scholarship_decline_path(other.slug), params: { decline_reason: "n/a" }
+
+        expect(response).to redirect_to(registration_scholarship_path(other.slug))
+      end
+    end
   end
 
   describe "GET /registration/:slug/certificate" do
-    let(:event) { create(:event, end_date: 2.days.ago) }
+    let(:event) { create(:event, :ended) }
     let(:registration) { create(:event_registration, event: event, status: "attended") }
 
     it "renders the certificate once it is unlocked" do
@@ -617,6 +761,26 @@ RSpec.describe "Events::Callouts", type: :request do
       expect(response.body).to include("unlocks once these are met")
       expect(response.body).to include("Your attendance is confirmed")
       expect(response.body).not_to include("This certifies that")
+    end
+
+    # An obligation on the registrant, not an unlock condition — so it sits below
+    # the checklist rather than in it, where a tick would imply it was already met.
+    it "states the completion deadline on the pending page when the event has one" do
+      registration.update!(status: "registered")
+      event.update!(completion_deadline: Date.new(2026, 8, 30))
+
+      get registration_certificate_path(registration.slug)
+
+      expect(response.body).to include("Complete this training by")
+      expect(response.body).to include("August 30, 2026")
+    end
+
+    it "says nothing about a deadline on the pending page when the event has none" do
+      registration.update!(status: "registered")
+
+      get registration_certificate_path(registration.slug)
+
+      expect(response.body).not_to include("Complete this training by")
     end
 
     it "adds the CE accreditation clause once CE credit is registered and paid" do

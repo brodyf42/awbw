@@ -24,6 +24,26 @@ RSpec.describe "Person notifications", type: :request do
       expect(notification.noticeable).to eq(person)
     end
 
+    it "logs an incoming communication when the direction is set" do
+      patch person_path(person), params: {
+        person: {
+          notifications_attributes: { "0" => { channel: "phone", email_subject: "They called us", direction: "incoming" } }
+        }
+      }
+
+      expect(person.notifications.order(:created_at).last).to be_incoming
+    end
+
+    it "records the responded flag on an incoming communication" do
+      patch person_path(person), params: {
+        person: {
+          notifications_attributes: { "0" => { channel: "phone", email_subject: "They called, we replied", direction: "incoming", responded: "1" } }
+        }
+      }
+
+      expect(person.notifications.order(:created_at).last).to be_responded
+    end
+
     it "ignores a blank notification with no note" do
       expect {
         patch person_path(person), params: {
@@ -111,6 +131,22 @@ RSpec.describe "Person notifications", type: :request do
         .map { |input| input["value"] }
       expect(id_fields).to include(hand_noted.id.to_s)
       expect(id_fields).not_to include(autoemail.id.to_s)
+    end
+
+    it "flags the add buttons admin-only but leaves the comment cards untinted" do
+      create(:comment, commentable: person, body: "Internal staff note", created_by: admin)
+
+      get edit_person_path(person)
+
+      doc = Nokogiri::HTML(response.body)
+      # The buttons carry the staff-only signal...
+      buttons = doc.css("#comments-section a").select { |a| a["class"].to_s.include?("admin-only") }
+      expect(buttons.map(&:text).map(&:strip)).to include(a_string_matching(/Add comment/))
+      # ...while the cards stay on the comments theme, so the page isn't a wall of blue.
+      card = doc.at_css("#comments-section .nested-fields > div")
+      expect(card["class"]).not_to include("admin-only")
+      expect(card["class"]).not_to include("bg-blue-100")
+      expect(response.body).to include("Internal staff note")
     end
   end
 end

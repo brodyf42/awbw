@@ -30,14 +30,17 @@ module DomainTheme
 
     banners:                  :yellow,
     users:                    :rose,
+    notifications:            :sky,
     comments:                 :purple,
     topic_subscriptions:      :stone,
     topic_subscription_types: :stone,
+    memberships:              :orange,
 
     # Event dashboard cards
     payments:                 :green,
     scholarships:             :fuchsia,
     continuing_education:     :teal,
+    continuing_education_registrations: :teal,
     bulk_payments:            :amber,
     event_dashboard:          :indigo,
     addresses:                :slate,
@@ -46,10 +49,17 @@ module DomainTheme
     user_only:                :amber,
     person_bio:               :purple,
 
-    # Organization program status badges (amber is reserved for warnings)
-    program_new:              :green,
+    # Per-event program status badges — New is indigo (not green) so it never
+    # collides with the org-wide "Active" status (amber is reserved for warnings).
+    program_new:              :indigo,
     program_ongoing:          :blue,
     program_reinstated:       :purple,
+
+    # Org-wide program status (the stored organization_status): Active is the
+    # positive current state, Formerly active a lapsed one, Never active neutral.
+    org_active:               :green,
+    org_formerly_active:      :orange,
+    org_never_active:         :gray,
 
     # Badges (non-model-specific)
     legacy_facilitator:       :yellow,
@@ -108,8 +118,9 @@ module DomainTheme
     "#{prefix}-#{color}-#{intensity}"
   end
 
-  def self.text_class_for(key, intensity: 800)
-    "text-#{color_for(key)}-#{intensity}"
+  def self.text_class_for(key, intensity: 800, hover: false)
+    prefix = hover ? "hover:text" : "text"
+    "#{prefix}-#{color_for(key)}-#{intensity}"
   end
 
   def self.border_class_for(key, intensity: 300)

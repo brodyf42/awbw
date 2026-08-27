@@ -18,12 +18,20 @@ class ReminderRecipientFilter
     attendance_status payment_status payment_method ce_status scholarship
     submission_status comment_status org_status account_status state county
   ].freeze
-  FILTER_KEYS = (TEXT_KEYS + DROPDOWN_KEYS).freeze
+  # Picker-only dropdowns that don't map to a shared roster scope. `topic_subscription`
+  # keeps registrants whose person holds an active subscription to the chosen topic
+  # subscription list; matched in memory against the registrant's topic_subscriptions.
+  PICKER_KEYS = %i[ topic_subscription ].freeze
+  # Registration date-range filters shared with the roster. Backed by the
+  # EventRegistration.registered_between scope (run once as a query), so the same
+  # range narrows both pages identically.
+  DATE_KEYS = %i[ registered_from registered_to ].freeze
+  FILTER_KEYS = (TEXT_KEYS + DROPDOWN_KEYS + PICKER_KEYS + DATE_KEYS).freeze
   # Every key above that is also a registrants-roster param, so the roster's
   # "Send bulk emails" link can carry the active filters straight into the picker
   # (see EventHelper#reminder_recipient_filters). The remaining text keys (name,
   # reg_org, email) exist only here.
-  SHARED_ROSTER_KEYS = (DROPDOWN_KEYS + %i[ funder_name comment city ]).freeze
+  SHARED_ROSTER_KEYS = (DROPDOWN_KEYS + DATE_KEYS + %i[ funder_name comment city ]).freeze
 
   def initialize(event_registrations, params, event: nil)
     @event_registrations = event_registrations
@@ -33,7 +41,7 @@ class ReminderRecipientFilter
 
   def matched_ids
     text_matched = @event_registrations.select { |reg| matches_text?(reg) }.map(&:id).to_set
-    text_matched & dropdown_matched_ids
+    text_matched & dropdown_matched_ids & topic_matched_ids
   end
 
   # True when at least one filter is narrowing the list. The view uses this to
@@ -54,25 +62,40 @@ class ReminderRecipientFilter
       matches_city?(reg)
   end
 
-  # Apply the registrants-roster scopes for whichever dropdowns are set, then
-  # return the matching ids. With no dropdown filter this is every registration,
-  # so the text-match set passes through unchanged.
+  # Apply the registrants-roster scopes for whichever dropdowns / date-range
+  # filters are set, then return the matching ids. With none set this is every
+  # registration, so the text-match set passes through unchanged.
   def dropdown_matched_ids
     return @event_registrations.map(&:id).to_set if @event.nil?
 
     scope = @event.event_registrations
+    scope = scope.registered_between(@params[:registered_from], @params[:registered_to])
     scope = scope.attendance_status(@params[:attendance_status]) if @params[:attendance_status].present?
     scope = scope.payment_status(@params[:payment_status]) if @params[:payment_status].present?
     scope = scope.payment_method(@params[:payment_method]) if @params[:payment_method].present?
     scope = scope.ce_status(@params[:ce_status]) if @params[:ce_status].present?
     scope = scope.scholarship_status(@params[:scholarship]) if @params[:scholarship].present?
     scope = scope.comment_status(@params[:comment_status]) if @params[:comment_status].present?
-    scope = scope.organization_status(@params[:org_status], @event) if @params[:org_status].present?
+    scope = scope.organization_linking_status(@params[:org_status], @event) if @params[:org_status].present?
     scope = scope.account_status(@params[:account_status]) if @params[:account_status].present?
     scope = scope.submission_status(@params[:submission_status], @event) if @params[:submission_status].present?
     scope = scope.registrant_state(@params[:state]) if @params[:state].present?
     scope = scope.registrant_county(@params[:county]) if @params[:county].present?
     scope.pluck(:id).to_set
+  end
+
+  # Keeps registrants whose person holds an active subscription to the chosen topic
+  # subscription list. With no topic set this is every registration, so it passes
+  # the other matches through unchanged.
+  def topic_matched_ids
+    return @event_registrations.map(&:id).to_set if @params[:topic_subscription].blank?
+
+    type_id = @params[:topic_subscription].to_i
+    @event_registrations.select do |reg|
+      reg.registrant.topic_subscriptions.any? do |sub|
+        sub.active? && sub.topic_subscription_type_id == type_id
+      end
+    end.map(&:id).to_set
   end
 
   def matches_name?(reg)

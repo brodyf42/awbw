@@ -84,17 +84,19 @@
 
     <%# Scholarship agreement, then tasks — the recipient agrees first, then
         completes the tasks. Both shown in either layout. %>
-    <div class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
-      <div>
-        <p class="text-xs font-medium text-gray-600">Scholarship agreement</p>
-        <p class="text-xs text-gray-400">Signed agreement on file from the recipient</p>
+    <div class="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p class="text-xs font-medium text-gray-600">Scholarship agreement</p>
+          <p class="text-xs text-gray-400">Signed agreement on file from the recipient</p>
+        </div>
+        <label class="flex items-center gap-2.5 cursor-pointer">
+          <%= f.check_box :agreement_signed, class: "sr-only peer" %>
+          <span class="text-sm text-gray-400 peer-checked:hidden">Not signed</span>
+          <span class="hidden text-sm font-medium text-fuchsia-700 peer-checked:inline">Signed</span>
+          <span class="relative h-6 w-11 shrink-0 rounded-full bg-gray-200 transition-colors after:absolute after:left-0.5 after:top-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow after:transition-all after:content-[''] peer-checked:bg-fuchsia-500 peer-checked:after:translate-x-5 peer-focus-visible:ring-2 peer-focus-visible:ring-fuchsia-300"></span>
+        </label>
       </div>
-      <label class="flex items-center gap-2.5 cursor-pointer">
-        <%= f.check_box :agreement_signed, class: "sr-only peer" %>
-        <span class="text-sm text-gray-400 peer-checked:hidden">Not signed</span>
-        <span class="hidden text-sm font-medium text-fuchsia-700 peer-checked:inline">Signed</span>
-        <span class="relative h-6 w-11 shrink-0 rounded-full bg-gray-200 transition-colors after:absolute after:left-0.5 after:top-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow after:transition-all after:content-[''] peer-checked:bg-fuchsia-500 peer-checked:after:translate-x-5 peer-focus-visible:ring-2 peer-focus-visible:ring-fuchsia-300"></span>
-      </label>
     </div>
 
     <div class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
@@ -124,9 +126,9 @@
     <h2 class="text-sm font-semibold text-gray-700">Grant</h2>
     <%# from_scholarship lets the grants index show a "← Scholarship" back link
         returning here (omitted for an unsaved scholarship, which has no id yet). %>
-    <%= link_to grants_path(from_scholarship: f.object.id), class: "ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 hover:underline", target: "_blank", rel: "noopener" do %>
+    <%= link_to grants_path(from_scholarship: f.object.id), class: "ml-auto inline-flex items-center gap-1.5 text-xs font-medium #{eyebrow_link_class} hover:underline", target: "_blank", rel: "noopener" do %>
       View all
-      <i class="fa-solid fa-arrow-up-right-from-square text-[0.6rem]"></i>
+      <i class="fa-solid fa-arrow-up-right-from-square text-2xs"></i>
     <% end %>
   </div>
 
@@ -134,8 +136,8 @@
     <% if grant_funded %>
       <% funder_icon = grant.funder.is_a?(Person) ? "fa-user #{DomainTheme.text_class_for(:people)}" : "fa-building #{DomainTheme.text_class_for(:organizations)}" %>
       <div>
-        <dt class="text-xs font-medium uppercase tracking-wide text-gray-400">Funder</dt>
-        <dd class="mt-1 text-sm text-gray-900 flex items-center gap-2">
+        <dt class="text-xs font-medium tracking-wide text-gray-400 uppercase">Funder</dt>
+        <dd class="mt-1 flex items-center gap-2 text-sm text-gray-900">
           <i class="fa-solid <%= funder_icon %>" aria-hidden="true"></i>
           <%= link_to grant.funder_name, grant_path(grant), class: "text-blue-700 hover:underline" %>
         </dd>
@@ -190,60 +192,9 @@
 </section>
 
 <% if f.object.persisted? %>
-  <%# ---- Communications + comments — same boxes as the registration edit page,
-      shown once the scholarship exists so there's a record to attach them to. ---- %>
-  <% if allowed_to?(:index?, with: NotificationPolicy) %>
-    <%= render "notifications/communications", f: f,
-          title_key: "communications.scholarship_title", none_key: "communications.none_for_scholarship" %>
-  <% end %>
-
-  <%# ---- Comments ---- %>
-  <section class="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm" id="comments-section" data-controller="edit-toggle">
-    <div class="flex items-center gap-3 border-b border-gray-100 px-4 py-3">
-      <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg <%= DomainTheme.bg_class_for(:quotes, intensity: 100) %> <%= DomainTheme.text_class_for(:quotes, intensity: 600) %>">
-        <i class="fa-solid fa-comments"></i>
-      </span>
-      <h2 class="text-sm font-semibold text-gray-700">Scholarship comments</h2>
-      <% if f.object.recipient %>
-        <%= link_to all_comments_person_path(f.object.recipient),
-                    class: "ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-transparent hover:text-gray-600 hover:underline",
-                    target: "_blank", rel: "noopener" do %>
-          View all
-          <i class="fa-solid fa-arrow-up-right-from-square text-[0.6rem]"></i>
-        <% end %>
-      <% end %>
-    </div>
-
-    <div class="space-y-4 p-4" data-controller="paginated-fields" data-paginated-fields-per-page-value="5">
-      <div id="comment-list" class="space-y-4">
-        <%= f.simple_fields_for :comments do |cf| %>
-          <%= render "comments/comment_fields", f: cf %>
-        <% end %>
-      </div>
-
-      <div data-paginated-fields-target="nav"></div>
-
-      <div class="flex items-center justify-between gap-2">
-        <%= link_to_add_association f, :comments,
-              partial: "comments/comment_fields",
-              data: { association_insertion_node: "#comment-list", association_insertion_method: "append" },
-              class: "inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 cursor-pointer" do %>
-          <i class="fa-solid fa-plus text-[0.6rem]"></i>
-          Add comment
-        <% end %>
-
-        <button
-          type="button"
-          class="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 cursor-pointer"
-          data-action="edit-toggle#toggle"
-        >
-          <i class="fa-solid fa-pen text-[0.6rem]"></i>
-          <span data-edit-toggle-target="editLabel">Edit comments</span>
-          <span data-edit-toggle-target="viewLabel" class="hidden">Done editing</span>
-        </button>
-      </div>
-    </div>
-  </section>
+  <%# ---- Combined comments & communications — shown once the scholarship exists
+      so there's a record to attach them to. ---- %>
+  <%= render "shared/comments_and_communications", f: f, view_all_person: f.object.recipient %>
 <% end %>
 
 <%# ---- Footer actions ---- %>

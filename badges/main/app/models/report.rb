@@ -6,7 +6,7 @@ class Report < ApplicationRecord
   belongs_to :workshop, optional: true
   has_one :form, as: :owner
   has_many :bookmarks, as: :bookmarkable, dependent: :destroy
-  has_many :notifications, as: :noticeable, dependent: :destroy, autosave: false
+  has_many :notifications, as: :noticeable, dependent: :nullify, autosave: false
   has_many :quotable_item_quotes, as: :quotable, dependent: :nullify, inverse_of: :quotable
   has_many :report_form_field_answers,
            foreign_key: :report_id, inverse_of: :report,
@@ -47,6 +47,8 @@ class Report < ApplicationRecord
     application/vnd.openxmlformats-officedocument.wordprocessingml.document application/vnd.ms-excel
     application/vnd.openxmlformats-officedocument.spreadsheetml.sheet]
   validates :form_file, content_type: FORM_FILE_CONTENT_TYPES
+  validates :other_description, length: { maximum: 255 }
+  validates :workshop_name, length: { maximum: 255 }
 
   before_save :set_has_attachment # TODO verify set_has_attachment works as expected once this feature is enabled in the UI
   after_create :set_windows_type

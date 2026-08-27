@@ -264,13 +264,39 @@ RSpec.describe "/stories", type: :request do
 
         expect(Story.last.author).to eq(facilitator)
       end
+
+      context "when promoting a story idea into a story" do
+        let(:submitter) { create(:user, email: "submitter@example.com") }
+        let(:story_idea) { create(:story_idea, created_by: submitter) }
+
+        it "notifies the idea's submitter and an admin" do
+          expect {
+            post stories_url, params: { story: base_attributes.merge(story_idea_id: story_idea.id) }
+          }.to change(Notification, :count).by(2)
+
+          person_note = Notification.find_by(kind: "story_promoted")
+          expect(person_note.recipient_role).to eq("person")
+          expect(person_note.recipient_email).to eq(submitter.email)
+
+          admin_note = Notification.find_by(kind: "story_promoted_fyi")
+          expect(admin_note.recipient_role).to eq("admin")
+          expect(admin_note.recipient_email).to eq(ENV.fetch("REPLY_TO_EMAIL", "programs@awbw.org"))
+        end
+      end
+
+      it "does not send promotion emails when no story idea is linked" do
+        expect {
+          post stories_url, params: { story: base_attributes }
+        }.not_to change(Notification, :count)
+      end
     end
 
     describe "comments and communications on the edit page" do
-      it "renders the comments section" do
+      it "renders the combined comments and communications section" do
         get edit_story_url(published_story)
-        expect(response.body).to include("Story comments")
+        expect(response.body).to include("Comments &amp; communications")
         expect(response.body).to include("Add comment")
+        expect(response.body).to include("Add communication")
       end
 
       it "saves a new comment with its topic, authored by the current user" do

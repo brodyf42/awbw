@@ -2,10 +2,63 @@ require "rails_helper"
 
 RSpec.describe Grant, type: :model do
   describe "associations" do
-    it { is_expected.to belong_to(:funder) }
+    it { is_expected.to belong_to(:funder).optional }
     it { is_expected.to belong_to(:created_by).class_name("User").optional }
     it { is_expected.to belong_to(:updated_by).class_name("User").optional }
     it { is_expected.to have_many(:scholarships).dependent(:restrict_with_error) }
+    it { is_expected.to have_many(:sectorable_items).dependent(:destroy) }
+    it { is_expected.to have_many(:sectors).through(:sectorable_items) }
+    it { is_expected.to have_many(:categorizable_items).dependent(:destroy) }
+    it { is_expected.to have_many(:categories).through(:categorizable_items) }
+  end
+
+  describe "tagging" do
+    let(:sector) { create(:sector) }
+    let(:category) { create(:category) }
+
+    it "attaches sectors and categories assigned by id on a new record" do
+      grant = create(:grant, sector_ids: [ sector.id ], category_ids: [ category.id ])
+
+      expect(grant.reload.sectors).to contain_exactly(sector)
+      expect(grant.categories).to contain_exactly(category)
+    end
+
+    it "updates sectors and categories by id on an existing record" do
+      grant = create(:grant, sectors: [ sector ])
+      other_sector = create(:sector)
+
+      grant.update!(sector_ids: [ other_sector.id ], category_ids: [ category.id ])
+
+      expect(grant.reload.sectors).to contain_exactly(other_sector)
+      expect(grant.categories).to contain_exactly(category)
+    end
+
+    describe ".sector_names_all / .category_names_all" do
+      it "finds grants carrying the given tags" do
+        tagged = create(:grant, sectors: [ sector ], categories: [ category ])
+        create(:grant)
+
+        expect(Grant.sector_names_all(sector.name)).to contain_exactly(tagged)
+        expect(Grant.category_names_all(category.name)).to contain_exactly(tagged)
+      end
+    end
+
+    it "responds to a no-op published scope covering every grant" do
+      grant = create(:grant)
+      expect(Grant.published).to include(grant)
+    end
+  end
+
+  describe "planned_giving" do
+    it "defaults to false" do
+      expect(Grant.new.planned_giving).to be(false)
+    end
+  end
+
+  describe "in_memoriam" do
+    it "defaults to false" do
+      expect(Grant.new.in_memoriam).to be(false)
+    end
   end
 
   describe "validations" do
@@ -18,6 +71,14 @@ RSpec.describe Grant, type: :model do
 
     it "is valid with a person funder" do
       expect(build(:grant, :donated_by_person)).to be_valid
+    end
+
+    it "attaches the missing-funder error to funder_sgid so the form field shows it" do
+      grant = build(:grant, funder: nil)
+
+      expect(grant).not_to be_valid
+      expect(grant.errors[:funder_sgid]).to include("must be selected")
+      expect(grant.errors.full_messages).to include("Funder must be selected")
     end
 
     describe "amount cannot drop below scholarships already issued" do
@@ -129,6 +190,23 @@ RSpec.describe Grant, type: :model do
       create(:scholarship, grant:, amount_cents: 40_000)
       expect(grant.remaining_cents).to eq(60_000)
       expect(grant.remaining_dollars).to eq(600)
+    end
+
+    it "excludes declined scholarships from the total and frees their funds" do
+      create(:scholarship, grant:, amount_cents: 30_000)
+      declined = create(:scholarship, grant:, amount_cents: 20_000)
+      declined.decline_agreement!("Not this year")
+
+      expect(grant.scholarships_total_cents).to eq(30_000)
+      expect(grant.remaining_cents).to eq(70_000)
+    end
+
+    it "excludes declined scholarships from the preloaded (in-memory) total too" do
+      create(:scholarship, grant:, amount_cents: 30_000)
+      create(:scholarship, grant:, amount_cents: 20_000).decline_agreement!("out")
+      preloaded = Grant.includes(:scholarships).find(grant.id)
+
+      expect(preloaded.scholarships_total_cents).to eq(30_000)
     end
   end
 

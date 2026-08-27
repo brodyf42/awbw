@@ -258,19 +258,23 @@ RSpec.describe "Event registration edit page", type: :system do
     end
   end
 
-  describe "notifications box" do
-    it "lists notifications sent to the registrant" do
+  describe "communications in the combined section" do
+    it "lists communications filed against this registration" do
       create(:notification,
+             noticeable: registration,
              recipient_email: registration.registrant.preferred_email,
              email_subject: "Event registration confirmed")
 
       sign_in(admin)
       visit edit_event_registration_path(registration)
 
-      within("section", text: "Registration communications") do
+      notification = Notification.find_by!(email_subject: "Event registration confirmed")
+
+      within("#comments-section") do
         expect(page).to have_text("Event registration confirmed")
-        expect(page).to have_no_link("Event registration confirmed")
-        expect(page).to have_link("View all")
+        # The whole row links through to the communication's detail page.
+        expect(page).to have_link("Event registration confirmed", href: notification_path(notification))
+        expect(page).to have_link("All comments & communications")
       end
     end
 
@@ -278,8 +282,12 @@ RSpec.describe "Event registration edit page", type: :system do
       sign_in(admin)
       visit edit_event_registration_path(registration)
 
-      within("section", text: "Registration communications") do
+      within("#comments-section") do
         click_on "Add communication"
+        # Wait for cocoon to insert the field and the paginated-fields controller
+        # to finish its re-render before typing, so the input node isn't swapped
+        # mid-fill (which raced as a stale-node error).
+        expect(page).to have_field("Subject")
         fill_in "Subject", with: "Called about parking"
       end
 
@@ -292,6 +300,34 @@ RSpec.describe "Event registration edit page", type: :system do
       notification = registration.notifications.find_by(email_subject: "Called about parking")
       expect(notification).to be_present
       expect(notification.channel).to eq("email")
+    end
+
+    it "reveals and saves the responded flag once a logged communication is incoming" do
+      sign_in(admin)
+      visit edit_event_registration_path(registration)
+
+      within("#comments-section") do
+        click_on "Add communication"
+        # Wait for cocoon to insert the field and the paginated-fields controller
+        # to finish its re-render before typing, so the input node isn't swapped
+        # mid-fill (which raced as a stale-node error).
+        expect(page).to have_field("Subject")
+        fill_in "Subject", with: "They emailed us"
+        # Confirm the field registered its value before touching the direction
+        # toggle, so the DOM has settled and the label/checkbox nodes are stable.
+        expect(page).to have_field("Subject", with: "They emailed us")
+
+        expect(page).not_to have_field("Already responded")
+        find("label", text: "Incoming").click
+        check "Already responded"
+      end
+
+      click_on "Save changes"
+      expect(page).to have_text("successfully updated")
+
+      notification = registration.notifications.find_by(email_subject: "They emailed us")
+      expect(notification).to be_incoming
+      expect(notification).to be_responded
     end
   end
 

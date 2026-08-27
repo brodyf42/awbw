@@ -31,6 +31,16 @@ RSpec.describe BuiltinCalloutCards do
       expect(card_titles(registration)).not_to include("Payment")
     end
 
+    it "hides participation cards but keeps financial ones once transferred out" do
+      event.update!(videoconference_url: "https://example.zoom.us/j/1")
+      create(:event_staff, event:)
+      registration.update!(status: "transferred_out")
+
+      titles = card_titles(registration)
+      expect(titles).to include("Make your payment")
+      expect(titles).not_to include("Videoconference", "Meet the staff")
+    end
+
     it "never surfaces the row-driven Handouts or FAQ cards in the code fallback" do
       # These are admin-published now — there's no code fallback for them, even on
       # a facilitator training.
@@ -235,6 +245,20 @@ RSpec.describe BuiltinCalloutCards do
       expect(scholarship_card.badge_classes).to include("fuchsia")
     end
 
+    it "stops prompting for the agreement once the recipient declines" do
+      add_scholarship_form(event)
+      registration.update!(scholarship_requested: true)
+      scholarship = create(:scholarship, recipient: registration.registrant, amount_cents: 1000)
+      create(:allocation, source: scholarship, allocatable: registration, amount: 1000)
+      scholarship.reload.decline_agreement!("Timing no longer works")
+
+      scholarship_card = card(registration.reload, "Scholarship")
+      expect(scholarship_card.subtitle).to eq("You declined this award")
+      expect(scholarship_card.badge).to eq("Declined")
+      expect(scholarship_card.badge_classes).to include("red")
+      expect(scholarship_card.theme).to eq(DomainTheme.swatch(DomainTheme.color_for(:scholarships)))
+    end
+
     it "orders the code-fallback cards from payment downward" do
       # Handouts/FAQ/art supplies are row-driven, so they never appear in this fallback.
       event.update!(facilitator_training: true, ce_hours_offered: 6,
@@ -291,6 +315,17 @@ RSpec.describe BuiltinCalloutCards do
       expect(card.badge).to eq("Available after the event")
     end
 
+    # The deadline goes in the badge, not the subtitle: card_for overwrites title
+    # and subtitle with the admin row's values, so a subtitle would be discarded.
+    it "badges the pending certificate with the completion deadline when the event has one" do
+      event.update!(completion_deadline: Date.new(2026, 8, 30))
+      callout = create(:registration_ticket_callout, event:, builtin_key: "certificate",
+        title: "Certificate of completion", subtitle: "View and download your certificate")
+
+      card = described_class.new(registration).card_for(callout)
+      expect(card.badge).to eq("Complete by Aug 30")
+    end
+
     it "returns nil for a behavioral card that truly can't apply (no videoconference URL)" do
       callout = create(:registration_ticket_callout, event:, builtin_key: "videoconference",
         title: "Videoconference")
@@ -324,6 +359,59 @@ RSpec.describe BuiltinCalloutCards do
       card = described_class.new(registration.reload).card_for(callout)
       expect(card.title).to eq("CE credit")            # row owns the text
       expect(card.badge).to eq("$150 due by Aug 15")   # app keeps the live deadline badge
+    end
+  end
+
+  describe "CE card attendance reminder" do
+    # Paid CE registration on a training day so the sign-in nudge is live.
+    let(:event) do
+      create(:event, ce_hours_offered: 6, ce_hours_cost_cents: 15_000,
+        start_date: Time.zone.local(2026, 7, 23, 9, 0),
+        end_date: Time.zone.local(2026, 7, 23, 16, 0),
+        registration_close_date: Time.zone.local(2026, 7, 20, 9, 0))
+    end
+
+    before { travel_to Time.zone.local(2026, 7, 23, 10, 0) }
+    after { travel_back }
+
+    def pay_ce!
+      license = create(:professional_license, person: registration.registrant, number: "LIC123")
+      ce = create(:continuing_education_registration, event_registration: registration, professional_license: license)
+      create(:allocation, source: create(:payment), allocatable: ce, amount: ce.cost_cents)
+      registration.reload
+    end
+
+    it "nudges to sign in during the window once paid, in orange" do
+      pay_ce!
+      ce_card = card(registration, event.ce_hours_label)
+      expect(ce_card.badge).to eq("Sign in for today")
+      expect(ce_card.theme).to eq(DomainTheme.swatch("orange"))
+    end
+
+    # The sheet opens on any paid licence, so the nudge has to as well — someone
+    # part-way through paying for a second licence still signs in for the first.
+    it "nudges when only one of two licences is paid" do
+      pay_ce!
+      create(:continuing_education_registration, event_registration: registration,
+        professional_license: create(:professional_license, person: registration.registrant, number: "LIC999"))
+
+      expect(card(registration.reload, event.ce_hours_label).badge).to eq("Sign in for today")
+    end
+
+    it "shows a signed-in chip while an entry is open, in teal" do
+      pay_ce!
+      create(:event_attendance_time_entry, :open, event_registration: registration)
+      ce_card = card(registration.reload, event.ce_hours_label)
+      expect(ce_card.badge).to eq("Signed in")
+      expect(ce_card.theme).to eq(DomainTheme.swatch("teal"))
+      expect(ce_card.badge_classes).to include("teal")
+    end
+
+    it "falls back to the resting CE status badge outside the sign-in window" do
+      pay_ce!
+      travel_to Time.zone.local(2026, 7, 23, 20, 0)
+      # Fully paid with no license number needed → no resting badge, and no nudge.
+      expect(card(registration.reload, event.ce_hours_label).badge).to be_nil
     end
   end
 end

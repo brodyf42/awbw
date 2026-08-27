@@ -8,7 +8,10 @@ module NotificationServices
       notification_type:,
       custom_message: nil,
       custom_subject: nil,
+      hide_event_card: false,
+      hide_ticket_button: false,
       sender: nil,
+      bulk: false,
       deliver: true,
       persist_delivered_email: true
     )
@@ -21,7 +24,10 @@ module NotificationServices
         recipient_email: recipient_email,
         custom_message: custom_message,
         custom_subject: custom_subject,
-        sender: sender
+        hide_event_card: hide_event_card,
+        hide_ticket_button: hide_ticket_button,
+        sender: sender,
+        bulk: bulk
       )
       Rails.logger.info({
                           event: "notification.created",

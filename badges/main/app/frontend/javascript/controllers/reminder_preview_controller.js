@@ -7,7 +7,7 @@ import { Controller } from "@hotwired/stimulus"
 // above the rendered email. The actual send re-sanitizes the message server-side,
 // so injecting the raw values here is only for the on-page preview.
 export default class extends Controller {
-  static targets = ["input", "message", "subjectInput", "subjectPreview"]
+  static targets = ["input", "message", "subjectInput", "subjectPreview", "eventCard", "eventCardToggle", "cardStatus", "ticketButton", "ticketButtonToggle", "ticketStatus"]
 
   inputTargetConnected() {
     this.update()
@@ -25,6 +25,22 @@ export default class extends Controller {
     this.updateSubject()
   }
 
+  eventCardTargetConnected() {
+    this.syncEventCard()
+  }
+
+  eventCardToggleTargetConnected() {
+    this.syncEventCard()
+  }
+
+  ticketButtonTargetConnected() {
+    this.syncTicketButton()
+  }
+
+  ticketButtonToggleTargetConnected() {
+    this.syncTicketButton()
+  }
+
   update() {
     if (!this.hasMessageTarget || !this.hasInputTarget) return
 
@@ -37,5 +53,41 @@ export default class extends Controller {
     if (!this.hasSubjectPreviewTarget || !this.hasSubjectInputTarget) return
 
     this.subjectPreviewTarget.textContent = this.subjectInputTarget.value.trim()
+  }
+
+  // Action handler. Announces as well as syncing — the connect callbacks use
+  // syncEventCard directly so the live region stays silent on page load.
+  toggleEventCard() {
+    this.syncEventCard()
+
+    if (!this.hasCardStatusTarget || !this.hasEventCardToggleTarget) return
+
+    this.cardStatusTarget.textContent = this.eventCardToggleTarget.checked
+      ? "Event details box hidden from the email."
+      : "Event details box shown in the email."
+  }
+
+  syncEventCard() {
+    if (!this.hasEventCardTarget || !this.hasEventCardToggleTarget) return
+
+    this.eventCardTarget.style.display = this.eventCardToggleTarget.checked ? "none" : ""
+  }
+
+  // Action handler. Announces as well as syncing — the connect callbacks use
+  // syncTicketButton directly so the live region stays silent on page load.
+  toggleTicketButton() {
+    this.syncTicketButton()
+
+    if (!this.hasTicketStatusTarget || !this.hasTicketButtonToggleTarget) return
+
+    this.ticketStatusTarget.textContent = this.ticketButtonToggleTarget.checked
+      ? "View ticket button hidden from the email."
+      : "View ticket button shown in the email."
+  }
+
+  syncTicketButton() {
+    if (!this.hasTicketButtonTarget || !this.hasTicketButtonToggleTarget) return
+
+    this.ticketButtonTarget.style.display = this.ticketButtonToggleTarget.checked ? "none" : ""
   }
 }

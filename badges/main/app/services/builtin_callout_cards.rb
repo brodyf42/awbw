@@ -221,22 +221,35 @@ class BuiltinCalloutCards
              subtitle: "Unlocks after the training",
              href: registration_certificate_path(registration.slug),
              target: nil, trailing_icon: "fa-solid fa-arrow-right",
-             badge: "Available after the event",
+             badge: certificate_pending_badge,
              badge_classes: "bg-gray-100 text-gray-600 border border-gray-300")
+  end
+
+  # A completion deadline is the more actionable thing to badge — it tells the
+  # registrant what they owe, not just when the certificate turns up. Only the
+  # badge survives #card_for, which overwrites title and subtitle from the row.
+  def certificate_pending_badge
+    return "Available after the event" if event.completion_deadline.blank?
+
+    "Complete by #{ce_deadline_text(event.completion_deadline)}"
   end
 
   # Shown only when the registrant requested a scholarship. Its page surfaces the
   # award amount, funder, and tasks once awarded. Awarded but with tasks still
   # pending shows an amber "$X · Tasks outstanding" badge (action needed); fully
-  # met shows a fuchsia amount badge.
+  # met shows a fuchsia amount badge. A declined award keeps the card — the page
+  # behind it holds the decline confirmation — but with nothing left to act on.
   def scholarship_status_card
     return if config_gap?("scholarship")
-    return unless registration.scholarship_requested?
+    # A transferred-in recipient's award lives on the source; keep the card so they
+    # can reach it (the page routes to the original registration). (#1944)
+    return unless registration.scholarship_requested? || registration.scholarship_recipient?
     # Awarded is display-only: the scholarship record exists earlier, but the award
     # is only shown as awarded once the recipient signs the agreement. Until then
     # the card prompts them to accept.
     awarded = registration.scholarship_awarded?
-    needs_agreement = registration.scholarship? && !awarded
+    declined = registration.scholarships.any?(&:agreement_declined?)
+    needs_agreement = registration.scholarship? && !awarded && !declined
     tasks_outstanding = awarded && !registration.scholarship_tasks_met?
     action_needed = needs_agreement || tasks_outstanding
     Card.new(icon_class: "fa-solid fa-award",
@@ -244,22 +257,28 @@ class BuiltinCalloutCards
              # tasks), otherwise the scholarship colour.
              color: action_needed ? "amber" : DomainTheme.color_for(:scholarships).to_s,
              title: "Scholarship",
-             subtitle: scholarship_subtitle(awarded, needs_agreement),
+             subtitle: scholarship_subtitle(awarded, needs_agreement, declined),
              href: registration_scholarship_path(registration.slug),
              target: nil, trailing_icon: "fa-solid fa-arrow-right",
-             badge: scholarship_badge(awarded, tasks_outstanding),
-             badge_classes: tasks_outstanding ? nil : "bg-fuchsia-100 text-fuchsia-800 border border-fuchsia-300")
+             badge: declined ? "Declined" : scholarship_badge(awarded, tasks_outstanding),
+             badge_classes: scholarship_badge_classes(declined, tasks_outstanding))
   end
 
-  def scholarship_subtitle(awarded, needs_agreement)
+  def scholarship_subtitle(awarded, needs_agreement, declined)
+    return "You declined this award" if declined
     return "Your award — amount, funder, and tasks" if awarded
     return "Review and accept your scholarship agreement" if needs_agreement
     "Your scholarship request status"
   end
 
+  def scholarship_badge_classes(declined, tasks_outstanding)
+    return "bg-red-100 text-red-800 border border-red-300" if declined
+    tasks_outstanding ? nil : "bg-fuchsia-100 text-fuchsia-800 border border-fuchsia-300"
+  end
+
   def scholarship_badge(awarded, tasks_outstanding)
     return unless awarded
-    amount = MoneyFormatter.dollars_from_cents(registration.scholarships.sum(:amount_cents))
+    amount = MoneyFormatter.dollars_from_cents(registration.scholarships.not_declined.sum(:amount_cents))
     tasks_outstanding ? "#{amount} · Tasks outstanding" : amount
   end
 
@@ -280,16 +299,50 @@ class BuiltinCalloutCards
     # An outstanding CE balance turns the card orange (an action card), matching
     # the payment card, rather than the resting teal.
     due = registration.continuing_education_registrations.first&.remaining_cost.to_i.positive?
-    Card.new(icon_class: "fa-solid fa-graduation-cap", color: due ? "orange" : "teal",
+    # Once CE is paid, on a training day the badge becomes a live sign-in nudge
+    # (like the payment card's "$X due"), overriding the resting CE status chip.
+    reminder = ce_attendance_reminder
+    Card.new(icon_class: "fa-solid fa-graduation-cap", color: ce_card_color(due, reminder),
              title: event.ce_hours_label,
              subtitle: ce_hours_subtitle,
              href: registration_ce_path(registration.slug),
              target: nil, trailing_icon: "fa-solid fa-arrow-right",
-             badge: ce_hours_badge(complete),
-             # Amber while money is due or hours/license are still needed (nil
-             # badge_classes falls back to amber in _callout_card); teal once it's
-             # complete and paid.
-             badge_classes: complete && !due ? "bg-teal-100 text-teal-800 border border-teal-300" : nil)
+             badge: ce_hours_reminder_badge(reminder) || ce_hours_badge(complete),
+             # Amber while money is due, hours/license are still needed, or it's time
+             # to sign in (nil badge_classes falls back to amber in _callout_card);
+             # teal once complete and paid, or while currently signed in.
+             badge_classes: ce_card_badge_classes(complete, due, reminder))
+  end
+
+  # The live attendance nudge for the CE card on a training day, once CE is paid —
+  # :signed_in while an entry is open, :sign_in while sign-in is open and they're
+  # not signed in, nil otherwise (so the resting CE status chip shows instead).
+  # Gated on the same any-paid-licence rule as the sheet itself, not the all-of
+  # ce_paid_in_full? — otherwise a second licence still being paid for silently
+  # takes the nudge away from someone who can, and should, be signing in.
+  def ce_attendance_reminder
+    return unless registration.ce_attendance_offered?
+    return :signed_in if registration.signed_in?
+
+    :sign_in if event.attendance_sign_in_open?
+  end
+
+  def ce_hours_reminder_badge(reminder)
+    { signed_in: "Signed in", sign_in: "Sign in for today" }[reminder]
+  end
+
+  def ce_card_color(due, reminder)
+    return "teal" if reminder == :signed_in
+    return "orange" if reminder == :sign_in || due
+
+    "teal"
+  end
+
+  def ce_card_badge_classes(complete, due, reminder)
+    return "bg-teal-100 text-teal-800 border border-teal-300" if reminder == :signed_in
+    return if reminder == :sign_in # amber default (action) via _callout_card
+
+    complete && !due ? "bg-teal-100 text-teal-800 border border-teal-300" : nil
   end
 
   # Before the registrant has requested CE, an invite card linking to the CE page
@@ -367,6 +420,7 @@ class BuiltinCalloutCards
   # so the card only appears once someone's been connected in the Event staff section.
   def staff_card
     return if config_gap?("staff")
+    return if registration.transferred_out?
     Card.new(icon_class: "fa-solid fa-people-group", color: "blue",
              title: "Meet the staff",
              subtitle: "The team for this event",
@@ -374,9 +428,11 @@ class BuiltinCalloutCards
              target: nil, trailing_icon: "fa-solid fa-arrow-right")
   end
 
-  # Shown only when the event has a videoconference URL set.
+  # Shown only when the event has a videoconference URL set. Hidden once the
+  # registrant has transferred out — they no longer attend this event. (#1944)
   def videoconference_card
     return if config_gap?("videoconference")
+    return if registration.transferred_out?
     Card.new(icon_class: "fa-solid fa-video", color: "blue",
              title: "Videoconference",
              subtitle: "Join details and add to calendar links",

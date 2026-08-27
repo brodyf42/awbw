@@ -5,11 +5,11 @@
 <div class="<%= DomainTheme.bg_class_for(:stories) %> border border-gray-200 rounded-xl shadow p-6">
       <!-- Top Right Utility Links -->
       <div class="flex flex-wrap justify-end gap-2 mb-4">
-        <%= link_to "Home", root_path, class: "text-sm text-gray-500 hover:text-gray-700 px-2 py-1" %>
-        <%= link_to "Stories", stories_path, class: "text-sm text-gray-500 hover:text-gray-700 px-2 py-1" %>
+        <%= link_to "Home", root_path, class: "text-sm #{eyebrow_link_class} px-2 py-1" %>
+        <%= link_to "Stories", stories_path, class: "text-sm #{eyebrow_link_class} px-2 py-1" %>
         <% if allowed_to?(:edit?, @story) %>
           <%= link_to "Edit", edit_story_path(@story.id),
-                      class: "admin-only bg-blue-100 text-sm text-gray-500 hover:text-gray-700 px-2 py-1" %>
+                      class: "admin-only bg-blue-100 text-sm #{eyebrow_link_class} px-2 py-1" %>
         <% end %>
         <span class="inline-block text-sm">
           <%= render "bookmarks/editable_bookmark_button", resource: @story %>
@@ -49,14 +49,14 @@
           <% end %>
         </div>
 
-        <div class="flex justify-end">
-          <%= render "assets/primary_image_picker", owner: @story %>
-        </div>
         <div id="upload-progress" class="mt-2 h-1 w-full bg-gray-200 rounded overflow-hidden hidden">
           <div id="upload-progress-bar" class="h-full w-0 bg-blue-500 transition-[width] duration-200 ease-out"></div>
         </div>
-        <div id="hero-image">
-          <%= render "assets/display_assets", resource: @story, link: true %>
+        <div id="hero-image" class="relative">
+          <%= render "assets/display_assets_carousel", resource: @story %>
+          <div class="absolute top-8 right-2 z-40">
+            <%= render "assets/primary_image_picker", owner: @story %>
+          </div>
         </div>
 
         <!-- Story Body Text -->

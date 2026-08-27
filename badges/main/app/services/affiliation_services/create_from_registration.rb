@@ -4,7 +4,12 @@ module AffiliationServices
   #
   #   1. a "job affiliation" with the title the person typed on their form, when
   #      one was provided, and
-  #   2. a standing "facilitator affiliation" titled "Facilitator".
+  #   2. a standing "facilitator affiliation" titled "Facilitator" — but ONLY for
+  #      facilitator-training events (`facilitator_training: true`). A non-training
+  #      registration still gets its job affiliation; we don't mint a facilitator
+  #      affiliation off it, because being a facilitator is conferred by a training,
+  #      not by any org-linked event. (Manual/historical facilitator affiliations
+  #      are created directly, not through this service, so they're unaffected.)
   #
   # The facilitator affiliation is skipped only when the person already has an
   # active-or-pending affiliation titled exactly "Facilitator" with the
@@ -16,40 +21,46 @@ module AffiliationServices
   # facilitator-ish job title that isn't exactly "Facilitator" (e.g. "Lead
   # Facilitator") still gets its own standing "Facilitator" affiliation alongside it.
   #
-  # Start dates: the facilitator affiliation begins on the first day of the
-  # training's month (that's when they become a facilitator). The job affiliation
-  # is left without a start date — we don't know when the person began that role
-  # (they may have been with the org for years before this training), and dating it
-  # to registration would misrepresent that.
+  # Start dates: the facilitator affiliation begins on the training date itself
+  # (that's when they become a facilitator). The job affiliation is left without a
+  # start date — we don't know when the person began that role (they may have been
+  # with the org for years before this training), and dating it to registration
+  # would misrepresent that.
   class CreateFromRegistration
-    def self.call(person:, organization:, job_title: nil, training_date: nil, organization_address: nil)
-      new(person:, organization:, job_title:, training_date:, organization_address:).call
+    def self.call(person:, organization:, job_title: nil, training_date: nil, organization_address: nil, facilitator_training: true, event_registration: nil, job_start_date: nil)
+      new(person:, organization:, job_title:, training_date:, organization_address:, facilitator_training:, event_registration:, job_start_date:).call
     end
 
-    def initialize(person:, organization:, job_title: nil, training_date: nil, organization_address: nil)
+    def initialize(person:, organization:, job_title: nil, training_date: nil, organization_address: nil, facilitator_training: true, event_registration: nil, job_start_date: nil)
       @person = person
       @organization = organization
       @job_title = job_title.presence&.strip
       @training_date = training_date
       @organization_address = organization_address
+      @facilitator_training = facilitator_training
+      @event_registration = event_registration
+      @job_start_date = job_start_date
     end
 
     def call
       ActiveRecord::Base.transaction do
         create_job_affiliation
-        create_facilitator_affiliation
+        create_facilitator_affiliation if @facilitator_training
       end
     end
 
     private
 
+    # The job affiliation normally carries no start date (we don't know when
+    # the person began that role); a new-job agreement is the exception — the
+    # caller passes `job_start_date:` because the job demonstrably starts then.
     def create_job_affiliation
       return unless @job_title
 
       existing = active_or_pending_affiliations_with_title(@job_title)
       return backfill_address(existing) if existing.exists?
 
-      create_affiliation(@job_title, start_date: nil)
+      create_affiliation(@job_title, start_date: @job_start_date)
     end
 
     def create_facilitator_affiliation
@@ -77,12 +88,13 @@ module AffiliationServices
         organization: @organization,
         title: title,
         start_date: start_date,
-        organization_address: @organization_address
+        organization_address: @organization_address,
+        event_registration: @event_registration
       )
     end
 
     def facilitator_start_date
-      (@training_date || Date.current).to_date.beginning_of_month
+      (@training_date || Date.current).to_date
     end
 
     def active_or_pending_affiliations_with_title(title)

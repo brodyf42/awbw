@@ -45,24 +45,24 @@
               class: "inline-flex items-center gap-1 text-gray-700 hover:text-gray-900 hover:underline",
               data: { turbo_frame: "_top" } do %>
           <%= org_names.any? ? truncate(org_names.join(", "), length: 40) : content_tag(:span, "None", class: "text-gray-400") %>
-          <i class="fa-solid fa-arrow-up-right-from-square text-[0.6rem] opacity-60"></i>
+          <i class="fa-solid fa-arrow-up-right-from-square text-2xs opacity-60"></i>
         <% end %>
       </td>
 
     <% when :program_type %>
       <% statuses = registration.program_statuses %>
       <% org = registration.organizations.first %>
-      <td class="<%= td_classes.join(" ") %>" data-sort-value="<%= statuses.map(&:to_s).sort.join %>">
+      <td class="<%= td_classes.join(" ") %>" data-sort-value="<%= statuses.map(&:label).sort.join %>">
         <% if statuses.any? && org %>
           <%= link_to edit_organization_path(org, anchor: "affiliations", **onboarding_back), class: "inline-flex flex-col items-center gap-1 hover:opacity-80", title: "Edit #{org.name} affiliations", data: { turbo_frame: "_top" } do %>
             <% statuses.each do |status| %>
-              <%= render "shared/badge", label: status.to_s.titleize, classes: OrganizationDecorator.program_status_classes(status) %>
+              <%= render "shared/badge", label: status.label, classes: OrganizationDecorator.program_status_classes(status.status), title: status.explanation %>
             <% end %>
           <% end %>
         <% elsif statuses.any? %>
           <div class="flex flex-col items-center gap-1">
             <% statuses.each do |status| %>
-              <%= render "shared/badge", label: status.to_s.titleize, classes: OrganizationDecorator.program_status_classes(status) %>
+              <%= render "shared/badge", label: status.label, classes: OrganizationDecorator.program_status_classes(status.status), title: status.explanation %>
             <% end %>
           </div>
         <% else %>
@@ -112,7 +112,7 @@
               href: allocations_path(allocatable_sgid: registration.to_sgid.to_s, return_to: "onboarding"),
               title: badge_title %>
         <% if !is_paid && registration.intends_to_pay? %>
-          <div class="mt-1 inline-flex items-center gap-1 whitespace-nowrap text-[0.65rem] font-medium text-blue-600">
+          <div class="mt-1 inline-flex items-center gap-1 whitespace-nowrap text-2xs font-medium text-blue-600">
             <i class="fa-solid fa-hand-holding-dollar"></i>
             <span>Intends to pay</span>
           </div>
@@ -135,7 +135,9 @@
       <td class="<%= td_classes.join(" ") %>" data-sort-value="<%= scholarship ? scholarship.amount_cents : -1 %>">
         <% if scholarship %>
           <%= link_to edit_scholarship_path(scholarship, return_to: "onboarding"), class: "hover:underline", data: { turbo_frame: "_top" } do %>
-            <% if scholarship.amount_cents.to_i.positive? %>
+            <% if scholarship.agreement_declined? %>
+              <%= scholarship.decorate.agreement_status_badge %>
+            <% elsif scholarship.amount_cents.to_i.positive? %>
               <span class="font-medium text-gray-800"><%= dollars_from_cents(scholarship.amount_cents) %></span>
             <% else %>
               <%= render "shared/badge", label: "TBD", classes: "bg-gray-50 text-gray-500 border-gray-200" %>
@@ -245,7 +247,7 @@
 
     <% when :attendance %>
       <td class="<%= td_classes.join(" ") %>" data-sort-value="<%= registration.status %>">
-        <%= render "event_registrations/attendance_status_badge", registration: registration %>
+        <%= render "event_registrations/attendance_status_badge", registration: registration, return_to: "onboarding" %>
       </td>
 
     <% when :flagged_comments %>

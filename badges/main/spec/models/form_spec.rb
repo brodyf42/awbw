@@ -28,6 +28,24 @@ RSpec.describe Form do
   #   pending("Requires functional owner factory and association uncommented")
   # end
 
+  describe ".agreement_forms (agreement scenarios by role)" do
+    it "returns publicly fillable forms with an agreement role" do
+      on_demand = create(:form, role: "registration", slug: "collab", published: true)
+      new_job = create(:form, role: "new_job", slug: "collab-new-job", published: true)
+
+      expect(Form.agreement_forms).to contain_exactly(on_demand, new_job)
+    end
+
+    it "excludes unpublished, event-connected, and non-agreement-role forms" do
+      create(:form, role: "new_job", slug: "draft", published: false)
+      create(:form, role: "scholarship", slug: "scholarship", published: true)
+      connected = create(:form, role: "registration", slug: "event-reg")
+      create(:event_form, form: connected)
+
+      expect(Form.agreement_forms).to be_empty
+    end
+  end
+
   describe ".where(role: 'scholarship')" do
     it "returns only forms with scholarship role" do
       regular_form = create(:form)
@@ -64,6 +82,83 @@ RSpec.describe Form do
         form.name = nil
         form.owner = nil
         expect(form.display_name).to eq('New Form')
+      end
+    end
+  end
+
+  describe 'slug + publishing' do
+    it 'normalizes a slug to url-safe form' do
+      form = create(:form, slug: 'Volunteer Interest!')
+      expect(form.slug).to eq('volunteer-interest')
+    end
+
+    it 'stores a blank slug as nil so the uniqueness index tolerates many' do
+      form = create(:form, slug: '')
+      expect(form.slug).to be_nil
+    end
+
+    it 'stores a whitespace-only slug as nil' do
+      form = create(:form, slug: '   ')
+      expect(form.slug).to be_nil
+    end
+
+    it 'rejects a slug with no url-safe characters rather than blanking it' do
+      form = build(:form, slug: '!!!')
+
+      expect(form).not_to be_valid
+      expect(form.errors[:slug]).to include('may only contain lowercase letters, numbers, and hyphens')
+    end
+
+    it 'rejects a duplicate slug' do
+      create(:form, slug: 'apply')
+      dup = build(:form, slug: 'apply')
+      expect(dup).not_to be_valid
+    end
+
+    it 'requires a slug to publish' do
+      form = build(:form, published: true, slug: nil)
+      expect(form).not_to be_valid
+      expect(form.errors[:slug]).to include('is required to publish a form')
+    end
+
+    describe '#publicly_fillable?' do
+      it 'is true for a standalone, published, slugged form' do
+        form = create(:form, slug: 'apply', published: true)
+        expect(form).to be_publicly_fillable
+      end
+
+      it 'is false when not published' do
+        form = create(:form, slug: 'apply', published: false)
+        expect(form).not_to be_publicly_fillable
+      end
+
+      it 'is false when owned by an event/other record' do
+        form = create(:form, :with_owner, slug: 'apply')
+        form.update_column(:published, true)
+        expect(form).not_to be_publicly_fillable
+      end
+
+      it 'is false when connected to an event' do
+        form = create(:form, slug: 'apply', published: true)
+        create(:event_form, form: form)
+        expect(form.reload).not_to be_publicly_fillable
+      end
+    end
+
+    it 'rejects publishing a form connected to an event' do
+      form = create(:form, slug: 'apply')
+      create(:event_form, form: form)
+      form.published = true
+
+      expect(form).not_to be_valid
+      expect(form.errors[:published]).to include("can't be enabled for a form connected to an event")
+    end
+
+    describe '.published scope' do
+      it 'returns only published forms' do
+        published = create(:form, slug: 'a', published: true)
+        create(:form, slug: 'b', published: false)
+        expect(Form.published).to contain_exactly(published)
       end
     end
   end

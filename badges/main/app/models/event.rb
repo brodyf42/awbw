@@ -60,6 +60,17 @@ class Event < ApplicationRecord
   validates_presence_of :title, :start_date, :end_date
   validates_inclusion_of :published, in: [ true, false ]
   validates_numericality_of :cost_cents, greater_than_or_equal_to: 0, allow_nil: true
+  validates :title, length: { maximum: 255 }
+  validates :abbreviation, length: { maximum: 255 }
+  validates :pre_title, length: { maximum: 255 }
+  validates :pre_date_text, length: { maximum: 255 }
+  validates :videoconference_url, length: { maximum: 255 }
+  validates :videoconference_label, length: { maximum: 255 }
+  validates :videoconference_passcode, length: { maximum: 255 }
+  validates :hint_dates, length: { maximum: 255 }
+  validates :hint_times, length: { maximum: 255 }
+  validates :hint_registration_cost, length: { maximum: 255 }
+  validate :end_date_not_before_start_date
   validate :registration_form_required_when_publicly_registerable, on: :update
   validate :staff_members_are_unique, on: :update
 
@@ -100,6 +111,23 @@ class Event < ApplicationRecord
   # start_date is a date column, so compare against a date — a Time would be cast
   # to midnight and drop events starting today.
   scope :upcoming, -> { where("start_date >= ?", Date.current) }
+
+  # The on-demand facilitator training an on-demand agreement submission
+  # registers the person for (ADR-0002): the published, not-yet-ended on-demand
+  # training that started most recently — "this year's" — falling back to the
+  # next upcoming one when none has started yet. Never an ended training.
+  def self.current_on_demand_facilitator_training
+    trainings = where(published: true).facilitator_trainings.on_demand.where(end_date: Time.current..)
+    trainings.where(start_date: ..Date.current).order(start_date: :desc).first ||
+      trainings.upcoming.order(:start_date).first
+  end
+
+  # People are invited to an on-demand facilitator training only after they've
+  # completed the external LMS course, so registering here means the training
+  # is already done — registrations flip straight to "attended".
+  def on_demand_facilitator_training?
+    on_demand? && facilitator_training?
+  end
   # Events that charge a registration fee (cost_cents may be nil for free ones).
   scope :paid, -> { where("cost_cents > 0") }
   # Events whose start date falls in the given calendar year. Keyed off the year
@@ -200,6 +228,74 @@ class Event < ApplicationRecord
     last_day = (end_date.presence || start_date).to_date
     span = (last_day - start_date.to_date).to_i + 1
     span.clamp(1, 5)
+  end
+
+  # Attendance sign-in opens this long before a training day's start, so early
+  # arrivals can sign in (the CE sheet shows people arriving ~10 min early). Sign-out
+  # isn't windowed — an open entry can always be closed, since forgetting to sign out
+  # is the common failure.
+  ATTENDANCE_SIGN_IN_LEAD = 30.minutes
+
+  # The calendar dates this event runs, inclusive, capped to day_count. Events store
+  # only one start_date/end_date, so multi-day events are assumed to run on
+  # consecutive days — the same assumption day_count already makes.
+  def event_dates
+    return [] if start_date.blank?
+
+    first = start_date.in_time_zone(Time.zone).to_date
+    (0...day_count).map { |offset| first + offset }
+  end
+
+  # Whether the event actually runs past the last day #event_dates covers — day_count
+  # is clamped to 5, so a longer event has no sign-in window, no report column and no
+  # sheet row past day 5. Both the attendance report (for staff) and the registrant's
+  # own sign-in sheet say so rather than silently stopping.
+  def event_dates_truncated?
+    last_day = end_date&.in_time_zone(Time.zone)&.to_date
+    dates = event_dates
+    return false unless last_day && dates.any?
+
+    last_day > dates.last
+  end
+
+  # A day's start datetime: that date at start_date's time-of-day, in the app zone.
+  # Every event day is assumed to start at the same time (the only time we have).
+  def daily_start_at(date)
+    combine_date_and_time(date, start_date)
+  end
+
+  # A day's scheduled end datetime: that date at end_date's time-of-day, in the app
+  # zone. Nil when no end time was entered (the form's End time is optional, so
+  # end_date lands at midnight) — there's no scheduled end to work from, and each
+  # caller decides what to do without one.
+  def daily_end_at(date)
+    source = end_date.presence || start_date
+    return nil if source.blank?
+
+    time = source.in_time_zone(Time.zone)
+    return nil if time.hour.zero? && time.min.zero?
+
+    combine_date_and_time(date, source)
+  end
+
+  # Whether a registrant may start a new sign-in right now: it's an event day and
+  # now falls within [day start − lead, day end]. Sign-out is deliberately not
+  # gated by this (see ATTENDANCE_SIGN_IN_LEAD). With no end time on the event the
+  # day stays open to its end rather than never opening at all.
+  def attendance_sign_in_open?(at = Time.current)
+    date = event_dates.find { |d| d == at.in_time_zone(Time.zone).to_date }
+    return false unless date
+
+    closes_at = daily_end_at(date) || daily_start_at(date).end_of_day
+    at.between?(daily_start_at(date) - ATTENDANCE_SIGN_IN_LEAD, closes_at)
+  end
+
+  # When sign-in next becomes available — the earliest upcoming day's window opening
+  # (day start − lead). Nil once the last day's window has already opened (or passed).
+  def next_attendance_sign_in_opens_at(at = Time.current)
+    event_dates
+      .map { |date| daily_start_at(date) - ATTENDANCE_SIGN_IN_LEAD }
+      .find { |opens_at| opens_at > at }
   end
 
   def time_title
@@ -351,11 +447,27 @@ class Event < ApplicationRecord
     self[field] = build_datetime(date_val, time_val)
   end
 
+  # Combine a Date with the time-of-day of a datetime source, in the app zone —
+  # e.g. "day 2's date" + "the event's 9:00am start" → that day at 9:00am.
+  def combine_date_and_time(date, source)
+    time = source.in_time_zone(Time.zone)
+    Time.zone.local(date.year, date.month, date.day, time.hour, time.min)
+  end
+
   def build_datetime(date_str, time_str)
     return nil if date_str.blank? && time_str.blank?
     return Time.zone.parse(date_str) if date_str.present? && time_str.blank?
     return Time.zone.parse("2000-01-01 #{time_str}") if date_str.blank? && time_str.present?
     Time.zone.parse("#{date_str} #{time_str}")
+  end
+
+  # Compared by calendar day so an event that starts and ends the same day passes
+  # even when no end time was entered (end_date lands at midnight, before the start).
+  def end_date_not_before_start_date
+    return if start_date.blank? || end_date.blank?
+    return if end_date.to_date >= start_date.to_date
+
+    errors.add(:end_date, "can't be before the start date")
   end
 
   def registration_form_required_when_publicly_registerable

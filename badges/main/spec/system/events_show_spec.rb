@@ -112,7 +112,7 @@ RSpec.describe "Event show page", type: :system do
       visit event_path(event)
 
       expect(page).to have_link("Dashboard", href: dashboard_event_path(event))
-      expect(page).to have_link("Manage", href: registrants_event_path(event))
+      expect(page).to have_link("Registrations", href: registrants_event_path(event))
     end
 
     it "hides admin controls for regular users" do
@@ -120,7 +120,7 @@ RSpec.describe "Event show page", type: :system do
       visit event_path(event)
 
       expect(page).not_to have_link("Dashboard")
-      expect(page).not_to have_link("Manage")
+      expect(page).not_to have_link("Registrations")
     end
   end
 
@@ -172,7 +172,7 @@ RSpec.describe "Event show page", type: :system do
 
     context "event ended" do
       before do
-        event.update!(end_date: 1.day.ago)
+        event.update!(start_date: 3.days.ago, end_date: 1.day.ago)
         create(:event_registration, event: event, registrant: user.person, status: "registered")
       end
 

@@ -42,10 +42,44 @@ class EventDecorator < ApplicationDecorator
     start_date.strftime("%B %d, %Y")
   end
 
+  # Month + year alone (e.g. "October 2026"), to disambiguate same-titled events.
+  def month_year
+    start_date&.strftime("%B %Y")
+  end
+
+  # The canonical "which occurrence" label: title with its month and year
+  # appended (e.g. "AWBW Facilitator Training (October 2026)"). Falls back to
+  # the bare title when the event has no start date — and for on-demand events,
+  # whose year-long span makes a start month meaningless (their titles carry
+  # the year themselves, e.g. "On-Demand Training 2026").
+  def title_with_month_year
+    return title if start_date.blank? || on_demand?
+
+    "#{title} (#{month_year})"
+  end
+
+  # Subject pre-filled on the bulk reminder page and used as the send-time
+  # fallback, so the preview and the delivered email always agree. An on-demand
+  # event's start date bounds enrollment rather than naming a session, so putting
+  # it in the subject reads as "be there on August 7".
+  def default_reminder_subject(time_zone: Time.zone.name)
+    return "AWBW Portal: Reminder: #{title}" if on_demand? || start_date.blank?
+
+    "AWBW Portal: Reminder: #{title} – #{start_date.in_time_zone(time_zone).strftime("%B %-d, %Y")}"
+  end
+
   # Display in the viewer's TZ. Returns nil when no deadline is set.
   def ce_payment_due_deadline_display
     return if ce_payment_due_deadline.blank?
     ce_payment_due_deadline.in_time_zone(Time.zone).strftime("%-l:%M %p %Z on %B %-d, %Y")
+  end
+
+  # The date the training must be finished by (e.g. "August 30, 2026"). Nil when
+  # unset. Date-only, so no time or zone is applied — unlike the two payment
+  # deadlines below.
+  def completion_deadline_display
+    return if completion_deadline.blank?
+    completion_deadline.strftime("%B %-d, %Y")
   end
 
   # The ticket payment deadline in the viewer's TZ (e.g. "5:00 PM UTC on April 9,

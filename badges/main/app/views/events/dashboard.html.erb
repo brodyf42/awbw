@@ -6,7 +6,7 @@
 <div class="<%= DomainTheme.bg_class_for(:events) %> border border-gray-200 rounded-xl shadow p-4 sm:p-6">
   <%# Top bar: back link + sub-nav, matching the other event pages %>
   <div class="flex flex-wrap items-center justify-between gap-2 sm:gap-4 mb-6 print:hidden">
-    <%= link_to "← Events", events_path, class: "text-sm text-gray-500 hover:text-gray-700" %>
+    <%= link_to "← Events", events_path, class: "text-sm #{eyebrow_link_class} px-2 py-1" %>
     <%= render "events/subnav", event: @event, current: :dashboard %>
   </div>
   <%# Title block with the action buttons pinned top-right so they share the
@@ -81,7 +81,7 @@
                     class: "text-3xl sm:text-4xl font-bold #{DomainTheme.text_class_for(:event_dashboard, intensity: 700)} tabular-nums #{addend_class.call(:event_dashboard)}",
                     title: "View the event revenue report" %>
               <span class="text-2xl font-light text-gray-300 select-none">=</span>
-              <%= link_to registrants_event_path(@event), class: addend_class.call(:payments), title: "Manage registrants" do %>
+              <%= link_to registrants_event_path(@event), class: addend_class.call(:payments), title: "Manage registrations" do %>
                 <p class="text-lg sm:text-xl font-semibold <%= DomainTheme.text_class_for(:payments, intensity: 600) %> tabular-nums"><%= dollars_from_cents(@dashboard.registration_subtotal_cents) %></p>
                 <p class="hidden lg:block text-xs text-gray-500">Registration fees</p>
               <% end %>
@@ -300,7 +300,7 @@
                       title: [ registrant.name, *@dashboard.organization_names_by_registrant[registrant.id] ].join(" · "),
                       class: "group/rowlink flex items-center justify-between gap-2 rounded px-1 -mx-1 py-0.5 hover:bg-gray-50" do %>
                   <span class="truncate min-w-0 group-hover/rowlink:underline"><%= registrant.name %></span>
-                  <i class="fa-solid fa-arrow-up-right-from-square text-[10px] text-white shrink-0 group-hover/rowlink:text-gray-500"></i>
+                  <i class="fa-solid fa-arrow-up-right-from-square text-2xs text-white shrink-0 group-hover/rowlink:text-gray-500"></i>
                 <% end %>
               </li>
             <% end %>
@@ -331,17 +331,27 @@
              [ "incomplete_attendance", "fa-circle-half-stroke", "text-amber-500" ],
              [ "no_show", "fa-circle-xmark", "text-red-500" ],
              [ "cancelled", "fa-ban", nil ],
-             [ "transferred_in", "fa-arrow-right-to-bracket", nil ],
              [ "transferred_out", "fa-arrow-right-from-bracket", nil ],
+             [ "transferred_in", "fa-arrow-right-to-bracket", "text-teal-600" ],
              [ "registered", "fa-hourglass-half", nil ]
            ].each do |status, icon, active_color| %>
-          <% count = @dashboard.attendance_count_for(status) %>
+          <%# Transferred in is FK-based (an incoming reg keeps its own status), so
+              it's counted via the transfer link, not the status column. %>
+          <% if status == EventRegistration::TRANSFERRED_IN_FILTER %>
+            <% count = @dashboard.transferred_in_count %>
+            <% registrants = @dashboard.transferred_in_registrants %>
+            <% label = "Transferred in" %>
+          <% else %>
+            <% count = @dashboard.attendance_count_for(status) %>
+            <% registrants = @dashboard.attendance_registrants(status) %>
+            <% label = EventRegistration::ATTENDANCE_STATUS_LABELS.fetch(status) %>
+          <% end %>
           <%= render "attendance_stat_row",
-                label: EventRegistration::ATTENDANCE_STATUS_LABELS.fetch(status),
+                label: label,
                 icon: icon,
                 icon_color: (count.positive? && active_color) || "text-gray-400",
                 count: count,
-                registrants: @dashboard.attendance_registrants(status),
+                registrants: registrants,
                 filter_path: registrants_event_path(@event, attendance_status: status) %>
         <% end %>
       </div>
@@ -373,7 +383,7 @@
                   <span class="text-xs text-gray-500 shrink-0"><%= @dashboard.organization_counts.fetch(organization.id, 0) %></span>
                 <% end %>
                 <%= link_to organization_path(organization), class: "shrink-0 flex h-7 items-center text-white group-hover/rowlink:text-gray-500", title: "View #{organization.name} profile" do %>
-                  <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
+                  <i class="fa-solid fa-arrow-up-right-from-square text-2xs"></i>
                 <% end %>
               </li>
             <% end %>
@@ -403,7 +413,7 @@
                   <span class="truncate min-w-0 group-hover/rowlink:underline"><%= sector.name %></span>
                   <span class="flex items-center gap-2 shrink-0">
                     <span class="text-xs text-gray-500"><%= @dashboard.sector_counts.fetch(sector.id, 0) %></span>
-                    <i class="fa-solid fa-arrow-up-right-from-square text-[10px] text-white group-hover/rowlink:text-gray-500"></i>
+                    <i class="fa-solid fa-arrow-up-right-from-square text-2xs text-white group-hover/rowlink:text-gray-500"></i>
                   </span>
                 <% end %>
               </li>
@@ -434,7 +444,7 @@
                   <span class="group-hover/rowlink:underline"><%= state %></span>
                   <span class="flex items-center gap-2 shrink-0">
                     <span class="text-xs text-gray-500"><%= @dashboard.state_counts.fetch(state, 0) %></span>
-                    <i class="fa-solid fa-arrow-up-right-from-square text-[10px] text-white group-hover/rowlink:text-gray-500"></i>
+                    <i class="fa-solid fa-arrow-up-right-from-square text-2xs text-white group-hover/rowlink:text-gray-500"></i>
                   </span>
                 <% end %>
               </li>

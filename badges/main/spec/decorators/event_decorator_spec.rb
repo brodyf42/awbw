@@ -35,6 +35,24 @@ RSpec.describe EventDecorator do
     end
   end
 
+  describe "#title_with_month_year" do
+    it "appends the start month and year in parentheses" do
+      event = build(:event, title: "Facilitator Training", start_date: Time.zone.local(2026, 10, 3)).decorate
+      expect(event.title_with_month_year).to eq("Facilitator Training (October 2026)")
+    end
+
+    it "falls back to the bare title when there is no start date" do
+      event = build(:event, title: "Facilitator Training", start_date: nil).decorate
+      expect(event.title_with_month_year).to eq("Facilitator Training")
+    end
+
+    it "skips the month for on-demand events, whose year-long span has no meaningful start month" do
+      event = build(:event, title: "On-Demand Training 2026", on_demand: true,
+                    start_date: Time.zone.local(2026, 1, 1)).decorate
+      expect(event.title_with_month_year).to eq("On-Demand Training 2026")
+    end
+  end
+
   describe "#archive_status_label" do
     it "reads as Draft for an unpublished event" do
       event = build(:event, :unpublished).decorate
@@ -482,6 +500,19 @@ RSpec.describe EventDecorator do
     it "is nil when no deadline is set" do
       event = build(:event, payment_due_deadline: nil).decorate
       expect(event.payment_due_deadline_display).to be_nil
+    end
+  end
+
+  describe "#completion_deadline_display" do
+    # Date-only, so no time or zone — unlike the two payment deadlines above.
+    it "renders the deadline as a plain date, e.g. 'August 30, 2026'" do
+      event = build(:event, completion_deadline: Date.new(2026, 8, 30)).decorate
+      expect(event.completion_deadline_display).to eq("August 30, 2026")
+    end
+
+    it "is nil when no deadline is set" do
+      event = build(:event, completion_deadline: nil).decorate
+      expect(event.completion_deadline_display).to be_nil
     end
   end
 

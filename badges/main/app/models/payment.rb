@@ -34,16 +34,49 @@ class Payment < ApplicationRecord
     when "no" then where("amount_cents_remaining = 0")
     end
   }
+  scope :created_between, ->(start_date, end_date) {
+    scope = all
+    scope = scope.where(created_at: start_date.beginning_of_day..) if start_date
+    scope = scope.where(created_at: ..end_date.end_of_day) if end_date
+    scope
+  }
 
   def self.search_by_params(params)
     results = all
     results = results.by_type(params[:type]) if params[:type].present?
     results = results.where(payer_type: params[:payer_type]) if params[:payer_type].present?
     results = results.where(person_id: params[:person_id]) if params[:person_id].present?
+    results = results.by_person_name(params[:person_name]) if params[:person_name].present?
     results = results.where(organization_id: params[:organization_id]) if params[:organization_id].present?
     results = results.has_remaining(params[:has_remaining]) if params[:has_remaining].present? && params[:has_remaining] != "all"
+    results = results.matching_search(params[:search]) if params[:search].present?
+    results = results.where("amount_cents >= ?", (params[:amount_min].to_d * 100).to_i) if params[:amount_min].present?
+    results = results.where("amount_cents <= ?", (params[:amount_max].to_d * 100).to_i) if params[:amount_max].present?
+    results = results.created_between(parse_date(params[:start_date]), parse_date(params[:end_date]))
     results
   end
+
+  def self.parse_date(value)
+    return if value.blank?
+    Date.parse(value)
+  rescue ArgumentError, TypeError
+    nil
+  end
+
+  # Free-text search across the JSON metadata blob and the Stripe charge id.
+  def self.matching_search(query)
+    pattern = "%#{sanitize_sql_like(query)}%"
+    where("CAST(metadata AS CHAR) LIKE :q OR stripe_charge_id LIKE :q", q: pattern)
+  end
+
+  scope :by_person_name, ->(query) {
+    return all if query.blank?
+    needle = "%#{sanitize_sql_like(query.to_s.strip.downcase)}%"
+    joins(:person).where(
+      "LOWER(CONCAT(people.first_name, ' ', people.last_name)) LIKE :needle " \
+      "OR LOWER(people.first_name) LIKE :needle OR LOWER(people.last_name) LIKE :needle",
+      needle: needle)
+  }
 
   def payer
     case payer_type

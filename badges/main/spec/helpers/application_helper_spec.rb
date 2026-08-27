@@ -23,12 +23,12 @@ RSpec.describe ApplicationHelper, type: :helper do
       expect(helper.credited_author_link(workshop)).to eq("Ada Lovelace")
     end
 
-    it "never links an anonymous credit, even to a searchable person" do
+    it "never links a suppressed credit, even to a searchable person" do
       allow(person).to receive(:profile_is_searchable).and_return(true)
       workshop = create(:workshop, author_credit_preference: "anonymous")
       allow(workshop).to receive(:author).and_return(person)
 
-      expect(helper.credited_author_link(workshop)).to eq("Anonymous")
+      expect(helper.credited_author_link(workshop)).to eq("AWBW Staff")
     end
 
     it "renders a legacy free-text author as plain text with no link" do
@@ -38,7 +38,7 @@ RSpec.describe ApplicationHelper, type: :helper do
       expect(helper.credited_author_link(workshop)).to eq("Jane Legacy")
     end
 
-    it "shows a creator-fallback credit as plain text, never linking the creator's profile" do
+    it "credits the org, not the creator, when no author is named" do
       creator_person = create(:person, first_name: "Cara", last_name: "Creator")
       allow(creator_person).to receive(:profile_is_searchable).and_return(true)
       creator = create(:user)
@@ -48,7 +48,7 @@ RSpec.describe ApplicationHelper, type: :helper do
       allow(workshop).to receive(:created_by).and_return(creator)
 
       result = helper.credited_author_link(workshop)
-      expect(result).to eq("Cara Creator")
+      expect(result).to eq("AWBW Staff")
       expect(result).not_to include("<a")
     end
   end
@@ -399,6 +399,58 @@ RSpec.describe ApplicationHelper, type: :helper do
       expect(helper.default_reminder_message(nil))
         .to eq("This is a reminder that you're registered for the following A Window Between Worlds event.")
     end
+
+    # Self-paced training has no session date, and admins hide the details box for
+    # it — so "the following event" would point at nothing. The copy carries the
+    # title itself instead, and drops the day count.
+    it "names an on-demand event inline instead of pointing at the details box" do
+      event = build(:event, title: "Trauma-Informed Basics", on_demand: true)
+      expect(helper.default_reminder_message(60, event: event))
+        .to eq("This is a reminder that you're registered for the A Window Between Worlds training <strong>Trauma-Informed Basics</strong>.")
+    end
+
+    # These titles already carry the format ("On-Demand Training 2026"), so the
+    # copy says "training" and lets the title speak for itself.
+    it "does not repeat 'on-demand' ahead of a title that already says it" do
+      event = build(:event, title: "On-Demand Training 2026", on_demand: true)
+      expect(helper.default_reminder_message(nil, event: event))
+        .to eq("This is a reminder that you're registered for the A Window Between Worlds training <strong>On-Demand Training 2026</strong>.")
+    end
+
+    it "escapes HTML in an on-demand event title" do
+      event = build(:event, title: "Art & <Healing>", on_demand: true)
+      expect(helper.default_reminder_message(nil, event: event)).to include("Art &amp; &lt;Healing&gt;")
+    end
+
+    it "keeps the live-event copy when the event is not on-demand" do
+      event = build(:event, title: "Healing Workshop", on_demand: false)
+      expect(helper.default_reminder_message(60, event: event))
+        .to eq("This is a reminder that you're registered for the following A Window Between Worlds event in <strong>60 days</strong>.")
+    end
+
+    # Every event with a deadline carries it in the editable copy, so admins can
+    # reword it. There is no standalone block in the email template.
+    it "adds the completion deadline to an on-demand event's copy" do
+      event = build(:event, title: "On-Demand Training 2026", on_demand: true, completion_deadline: Date.new(2026, 8, 30))
+      expect(helper.default_reminder_message(nil, event: event))
+        .to eq("This is a reminder that you're registered for the A Window Between Worlds training <strong>On-Demand Training 2026</strong>. Please complete it by <strong>August 30, 2026</strong>.")
+    end
+
+    it "leaves the deadline sentence out when an on-demand event has no deadline" do
+      event = build(:event, title: "On-Demand Training 2026", on_demand: true, completion_deadline: nil)
+      expect(helper.default_reminder_message(nil, event: event)).not_to include("Please complete it by")
+    end
+
+    it "adds the completion deadline to a live event's copy too" do
+      event = build(:event, title: "Healing Workshop", on_demand: false, completion_deadline: Date.new(2026, 8, 30))
+      expect(helper.default_reminder_message(60, event: event))
+        .to eq("This is a reminder that you're registered for the following A Window Between Worlds event in <strong>60 days</strong>. Please complete it by <strong>August 30, 2026</strong>.")
+    end
+
+    it "leaves the deadline sentence out when a live event has no deadline" do
+      event = build(:event, title: "Healing Workshop", on_demand: false, completion_deadline: nil)
+      expect(helper.default_reminder_message(60, event: event)).not_to include("Please complete it by")
+    end
   end
 
   describe "#default_reminder_subject" do
@@ -410,6 +462,14 @@ RSpec.describe ApplicationHelper, type: :helper do
 
     it "omits the date suffix when the event has no start date" do
       event = build(:event, title: "Healing Workshop", start_date: nil)
+      expect(helper.default_reminder_subject(event))
+        .to eq("AWBW Portal: Reminder: Healing Workshop")
+    end
+
+    # A start date on self-paced training is an enrollment boundary, not a session
+    # time — putting it in the subject reads as "be there on August 7".
+    it "omits the date suffix for an on-demand event that has a start date" do
+      event = build(:event, title: "Healing Workshop", start_date: Time.zone.local(2026, 8, 7, 18, 0), on_demand: true)
       expect(helper.default_reminder_subject(event))
         .to eq("AWBW Portal: Reminder: Healing Workshop")
     end
@@ -501,12 +561,12 @@ RSpec.describe ApplicationHelper, type: :helper do
   end
 
   describe "#noticeable_label" do
-    it "describes a registration by registrant and event" do
+    it "describes a registration by registrant and event, with the event's month and year" do
       person = create(:person, first_name: "Jane", last_name: "Doe")
-      event = create(:event, title: "Summer Workshop")
+      event = create(:event, title: "Summer Workshop", start_date: Time.zone.local(2026, 8, 14))
       registration = create(:event_registration, registrant: person, event: event)
 
-      expect(helper.noticeable_label(registration)).to eq("#{person.name} · Summer Workshop")
+      expect(helper.noticeable_label(registration)).to eq("#{person.name} · Summer Workshop (August 2026)")
     end
 
     it "describes a form submission by submitter and form" do
@@ -527,19 +587,19 @@ RSpec.describe ApplicationHelper, type: :helper do
   describe "#dynamic_form_field_options" do
     let(:form) { create(:form) }
 
-    it "omits the Other sector for the primary service-area dropdown" do
+    it "omits the Other sector for the primary sector dropdown" do
       create(:sector, :published, name: "Domestic Violence")
       create(:sector, :published, name: "Other")
-      field = create(:form_field, form: form, answer_type: :single_select_dropdown, field_identifier: "primary_service_area_single")
+      field = create(:form_field, form: form, answer_type: :single_select_dropdown, field_identifier: "primary_sector")
 
       labels = helper.dynamic_form_field_options(field).map(&:first)
       expect(labels).to include("Domestic Violence")
       expect(labels).not_to include("Other")
     end
 
-    it "includes the Other sector for the additional service-areas field" do
+    it "includes the Other sector for the additional sectors field" do
       create(:sector, :published, name: "Other")
-      field = create(:form_field, form: form, answer_type: :multi_select_checkbox, field_identifier: "primary_service_area")
+      field = create(:form_field, form: form, answer_type: :multi_select_checkbox, field_identifier: "additional_sectors")
 
       labels = helper.dynamic_form_field_options(field).map(&:first)
       expect(labels).to include("Other")
@@ -548,7 +608,7 @@ RSpec.describe ApplicationHelper, type: :helper do
     it "carries each sector's description as the third tuple element" do
       create(:sector, :published, name: "Domestic Violence", description: "DV services")
       create(:sector, :published, name: "Mental Health", description: nil)
-      field = create(:form_field, form: form, answer_type: :multi_select_checkbox, field_identifier: "primary_service_area")
+      field = create(:form_field, form: form, answer_type: :multi_select_checkbox, field_identifier: "additional_sectors")
 
       descriptions = helper.dynamic_form_field_options(field).to_h { |name, _id, desc| [ name, desc ] }
       expect(descriptions["Domestic Violence"]).to eq("DV services")
@@ -564,6 +624,25 @@ RSpec.describe ApplicationHelper, type: :helper do
       labels = helper.dynamic_form_field_options(field).map(&:first)
       expect(labels).to include("Children (0-12)")
       expect(labels).not_to include("Retired range")
+    end
+  end
+
+  describe "#index_button" do
+    it "renders no count badge for a zero count" do
+      html = helper.index_button(Story.all)
+
+      expect(Story.count).to eq(0)
+      expect(html).not_to include("None")
+      expect(html).not_to include(">0<")
+    end
+
+    it "renders the delimited count when records exist" do
+      create_list(:story, 2)
+
+      html = helper.index_button(Story.all)
+
+      expect(html).to include(">2<")
+      expect(html).not_to include("None")
     end
   end
 

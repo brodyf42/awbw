@@ -1,0 +1,2303 @@
+# Seed for the "Features & tips" page (/features).
+#
+# This file is the STARTER content only. The live page is database-backed and
+# edited in-app by super-admins (rich descriptions with screenshots, external
+# doc links, etc.). An admin clicks "Sync latest updates" on /features to pull any
+# entries here that aren't in the database yet — it NEVER overwrites an existing
+# feature (matched by name), so admin edits are safe. See CLAUDE.md
+# "Features & tips page" and FeatureCatalog#import!.
+#
+# WHEN YOU SHIP A USER-FACING FEATURE, add an entry here:
+#   name:           Short, sentence-case name.
+#   area:           One of Feature::AREA_KEYS (events, registration, scholarships,
+#                   payments, people, content, stories, communications, reporting).
+#   display_status: Who it's for AND who may see it on the page:
+#                   public_facing | user_facing | admin_facing
+#                   (admin_facing is visible to super-admins only).
+#   summary:        One or two plain-language sentences (shown on the card).
+#   released_on:    Ship date (YYYY-MM-DD).
+#   action_path:    In-app path for the "Check out this feature" link (e.g. /events).
+#                   Use "/registration/sample" for ticket/callout features — it
+#                   resolves to a real registrant's ticket, else a sample ticket.
+#   pr_number:      GitHub PR number it shipped in (adds a "View the pull request" link).
+#   pro_tips:       Optional list of short, practical tips (0–2 is plenty).
+#   description:    Optional longer write-up (plain text or HTML). Admins usually
+#                   expand this in the WYSIWYG with screenshots.
+#   external_url:   Optional link to a full process doc (e.g. a Google/Word doc).
+
+# ── 2026-08 ─────────────────────────────────────────────────────────────────
+
+- name: "Bulk payments index across all events"
+  area: payments
+  display_status: admin_facing
+  released_on: 2026-08-25
+  action_path: /bulk_payments
+  summary: >-
+    The "Bulk payments" card on Admin home now opens a filterable list of every "Pay for Other(s)"
+    submission across events. Search by payer or event, then jump straight to that submission's row
+    on its event's bulk payments page — it scrolls to and highlights the card, ready to allocate.
+
+- name: "Filter form submissions by several forms at once"
+  area: content
+  display_status: admin_facing
+  released_on: 2026-08-25
+  action_path: /form_submissions
+  summary: >-
+    The Form filter on the form submissions list is now multi-select, so you can view submissions
+    across several forms together — e.g. a collaboration agreement alongside its new-job and
+    reinstatement copies.
+
+- name: "Comments & communications on a staff tag"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-24
+  summary: >-
+    Each staff tag on a person now opens its own page (the gear on the tag chip, or "Comments"
+    from the staff tag's people list) with the combined "Comments & communications" section, so
+    you can record why someone carries a tag and log calls or emails about it.
+
+- name: "Comments & communications on every record that had comments"
+  area: communications
+  display_status: admin_facing
+  released_on: 2026-08-24
+  summary: >-
+    Affiliations, CE registrations, organizations, subscriptions, user accounts, and workshops
+    now show the same combined "Comments & communications" section as people, registrations,
+    scholarships, and stories — so a call or email can be logged wherever the record lives.
+  pro_tips:
+    - "Logging a communication addresses it to whoever the record is about, so you never type the email."
+    - "An organization has no person behind it, so its communications go to the organization's own email."
+
+- name: "Comments and communications in one section"
+  area: communications
+  display_status: admin_facing
+  released_on: 2026-08-23
+  pr_number: 2355
+  summary: >-
+    The separate Comments and Communications boxes on record edit pages are now one
+    "Comments & communications" section: a single newest-first feed of both, each in its own
+    card (comments purple, communications blue), with an add button for each.
+  pro_tips:
+    - "Communications now show the ones logged about the record you're viewing; a person's own page still shows their full history."
+    - "An incoming communication's pill shows a checkbox — checked once it's been responded to."
+    - "On a person's own page the comment cards carry the blue admin-only wash, since comments are staff-only and the person can view that page."
+
+- name: "All comments & communications in one feed"
+  area: communications
+  display_status: admin_facing
+  released_on: 2026-08-23
+  action_path: "/people/1/comments_and_communications"
+  pr_number: 2355
+  summary: >-
+    One filterable page per person merging every comment and every communication, reached
+    from the "All comments & communications" link on any record. Same cards as the section
+    but with full bodies, plus composers for adding either against any of their records.
+  pro_tips:
+    - "Most filters search both kinds at once: \"Subject or topic\" matches a comment's topic and an email's subject line, \"From or author\" matches who wrote the comment and who sent (or sent in) the message, and \"Attached to\" matches the record either one hangs off."
+    - "\"Follow-up: Needed\" gathers flagged comments and incoming messages nobody has answered yet."
+    - "\"Responded\" and \"Email topic\" return communications only — a comment records no reply and has no email subject."
+    - "Add comment / Add communication at the top right each open a composer with a picker for which of the person's records to file it against."
+    - "Every row's chip opens that record's edit page; a communication's subject opens the communication itself."
+    - "The back link returns to whichever record you opened the feed from."
+
+- name: "Copy email addresses from the people list"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-23
+  action_path: "/people"
+  summary: >-
+    The people index has an "Email addresses" link that opens a copy-paste list of every unique
+    email address for the people your current filters narrow to.
+  pro_tips:
+    - "Filter the people list first — the email list always matches whatever the list is showing."
+
+- name: "Search workshop ideas, story ideas, and workshop logs by author"
+  area: content
+  display_status: admin_facing
+  released_on: 2026-08-23
+  summary: >-
+    Workshop ideas, story ideas, workshop variation ideas, workshop logs, and monthly
+    reports now have an "Author name" search box that finds records by their credited author.
+  description: >-
+    The "Author name" box matches the credited author on file, and falls back to whoever
+    submitted the record when no author is named — so older entries, from before content
+    carried an author, are still findable under the submitter's name. It follows the same
+    credit and anonymity rules as the rest of the site: a name someone's profile hides
+    from their credit won't surface their content, and anonymous work isn't findable by
+    name. Workshop variations and monthly reports search the same way now. Lists show the
+    credit they match: the story ideas list credits the author rather than the account
+    that entered the idea, and the workshop logs and monthly reports lists swap their
+    submitter column for "Author". Each page shows its author credit too. The filters for
+    who turned a log or report in are still there, now labeled "Submitted by".
+  pro_tips:
+    - "The Author name box searches the credited author — on a workshop log or monthly report that can differ from whoever submitted it."
+    - "The people list's \"Workshop log authors\" and \"Workshop variation authors\" roles cover anyone credited, including records that only name who submitted them."
+
+- name: "Hide the View ticket button in a bulk email"
+  area: communications
+  display_status: admin_facing
+  released_on: 2026-08-22
+  action_path: "/events/1/preview_reminder"
+  pr_number: 2344
+  summary: >-
+    When composing a bulk email, tick "Hide the View ticket button" to send a plain
+    informational message with no link to a registrant's ticket — the same way you can
+    already hide the event details box.
+
+- name: "Mailing-list interest moved to topic subscriptions"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-23
+  action_path: "/people/1"
+  pr_number: 2358
+  summary: >-
+    The person editor's old "mailing list consent" checkbox is gone; it now links to that
+    person's News subscriptions, where mailing-list interest is tracked. Registration and
+    public form consent answers now create a News subscription, sourced to the event or form.
+
+- name: "Turn form answers into quotes automatically"
+  area: content
+  display_status: admin_facing
+  released_on: 2026-08-22
+  action_path: "/quotes"
+  summary: >-
+    Give a question the "quote" smart field and its answer becomes an unpublished quote on
+    submission, sourced from the submission. Optional "quote_speaker_name" and "quote_age_range"
+    fields fill in the speaker and age; with no speaker the quote credits "Anonymous".
+  pro_tips:
+    - "Set a question's smart field to \"quote\" (the text), plus optional \"quote_speaker_name\" and \"quote_age_range\"."
+    - "New quotes start unpublished, so nothing appears publicly until you review and publish it."
+
+- name: "Affiliation editor: FileMaker code"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-22
+  pr_number: 2332
+  summary: >-
+    The affiliation editor now surfaces the FileMaker code so it can be viewed and edited
+    alongside the affiliation's other details.
+
+- name: "Affiliation editor: relink the source registration"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-22
+  pr_number: 2332
+  summary: >-
+    In admin mode the affiliation editor adds a picker of that person's registrations — each
+    labelled with its linked organization — to link, change, or clear the registration an
+    affiliation came from, with a link straight to that registration.
+  pro_tips:
+    - "Add ?admin=true to the affiliation editor URL to reveal the registration picker."
+
+- name: "Scholarship program status is judged at its own training"
+  area: scholarships
+  display_status: admin_facing
+  released_on: 2026-08-23
+  action_path: "/scholarships"
+  summary: >-
+    The New / Ongoing / Reinstated column on the scholarship index is now judged
+    as of the training each award paid for, so two awards on the same page can
+    read differently. It uses the same rule as the event reports and org profile
+    chips, and hovering explains the verdict and the date it judged.
+  pro_tips:
+    - "An award with no registration behind it falls back to the start of the current year — the hover text says so."
+
+- name: "Activity log: readable details column"
+  area: reporting
+  display_status: admin_facing
+  released_on: 2026-08-22
+  action_path: "/admin/activities/events"
+  summary: >-
+    The activity log's properties column is now a plain-language "Details" column: edits show
+    what changed as before/after, searches list the sectors and categories by name, and any
+    records involved link straight to their pages.
+  pr_number: 2316
+  pro_tips:
+    - "Use the Details search box to find activity by what's inside it (a name, a search term)."
+  description: >-
+    Each row's Details column now reads like a sentence instead of a raw property dump. For an
+    edit, every changed field shows its before and after value. For a search or filter, the
+    sectors, categories, and windows types are listed by name and the total results found. When
+    an activity touches other records, those records link straight to their show pages.
+
+- name: "Quotes: standout flag, linked author, and preserved original"
+  area: content
+  display_status: admin_facing
+  released_on: 2026-08-22
+  action_path: "/quotes"
+  summary: >-
+    Mark especially good quotes as "Standout" and filter the list to just those. Quotes can
+    now link to a person as the author, keep the original submission separate from the
+    published wording, and search across all of it.
+  description: >-
+    The quote form has a new "Standout" flag for calling out the best quotes, with an
+    admin-only "Standout" filter on the quotes list to pull them up quickly. Quotes can now
+    link to a person on file as the author; the free-text speaker name stays as the fallback
+    for the many participants who aren't in the system. Each quote also stores the original
+    submission separately from the published wording, so editing what's shown never loses
+    what was received. Quote search now matches the published text, the original submission,
+    the linked author's name, and the legacy speaker name.
+  pro_tips:
+    - "Edit the \"Published quote\" to clean up wording for display — the \"Original submission\" is preserved automatically."
+    - "Link an author when the speaker is a person on file; otherwise just type their name in \"Speaker name\"."
+
+- name: "Filter form submissions by date, event, person, organization, and role"
+  area: reporting
+  display_status: admin_facing
+  released_on: 2026-08-22
+  action_path: "/form_submissions"
+  summary: >-
+    The form submissions index now has a full filter bar — narrow submissions by submission
+    date range, event, person, organization, and role, on top of the existing form filter.
+  description: >-
+    The admin form submissions index used to filter by form only. It now has a filter bar
+    matching the other index pages: a submitted-from / submitted-to date range, searchable
+    Event, Person, and Organization pickers, and a Role dropdown. Filters stack, and a
+    "Clear filters" button appears once any is set. The chosen filters carry over when you
+    open a submission and come back, so you land on the same filtered list.
+  pro_tips:
+    - "The Organization filter matches a submission only when that organization is linked directly to it in the org-linking editor."
+    - "Set the organization-linking filter to \"Pending\" for a work queue of submissions that named an org but haven't been linked yet."
+    - "Use the column toggles above the table to show or hide the Role, Event, Submitted date, and User account columns; your choices stick as you filter."
+- name: "On-demand training agreement"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-22
+  action_path: "/forms"
+  pr_number: 2304
+  summary: >-
+    Someone finishing the on-demand training signs up on the on-demand training
+    event's public registration form, like any other training. Linking their
+    organization creates their job affiliation and a Facilitator affiliation
+    dated to their sign-up.
+  pro_tips:
+    - Email the registration link from their person edit page — the "Email form
+      links" section lists the current on-demand training and every upcoming
+      one, with how many times each link has been sent and by whom.
+
+- name: "Reinstatement agreement"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-22
+  action_path: "/forms"
+  pr_number: 2304
+  summary: >-
+    A returning facilitator signs the reinstatement agreement at its public
+    form link. Linking their organization adds a fresh Facilitator affiliation
+    dated to the submission (and a job affiliation from their position) only
+    where no active one exists — nothing is ended, history is kept.
+  pro_tips:
+    - Each submission shows a processing panel with the person's affiliations
+      and portal account status, so reinstating and re-inviting happens in one
+      place.
+
+- name: "New job agreement"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-22
+  action_path: "/forms"
+  pr_number: 2304
+  summary: >-
+    A facilitator moving to a new organization signs the new job agreement at
+    its public form link. Linking the new organization ends their affiliations
+    at other organizations and starts fresh job and Facilitator affiliations on
+    the submission date.
+  pro_tips:
+    - Anything the agreement ended is flagged on the submission's processing
+      panel ("Ended by this agreement") with an edit link, so a wrongly-ended
+      affiliation is easy to correct.
+    - Filter the form submissions list by scenario, organization linking, or
+      account status to work the queue end to end.
+
+- name: "Form results: charts and answer lists per form"
+  area: reporting
+  display_status: user_facing
+  released_on: 2026-08-22
+  action_path: "/forms"
+  summary: >-
+    Every form now has a Results page that rolls up all of its submissions —
+    multiple-choice and dropdown questions become charts with counts and
+    percentages, and written answers become lists you can read at a glance.
+  description: >-
+    Open a form's Results page from the Forms list (the new "Results" link). It
+    aggregates every submission question by question, in form order: single- and
+    multiple-select questions render as pie or bar charts with a legend showing each
+    option's count and share, "Other / please specify" write-ins are broken out into
+    their own list, and free-text questions list the actual answers with who
+    submitted them and when. A summary up top shows the submission count, number of
+    respondents, question count, and the date range covered. From there, "View
+    responses" jumps to the full, filterable list of individual submissions for that
+    form.
+  pro_tips:
+    - "Selects with just a few options show a pie chart; longer lists switch to a bar chart automatically."
+
+- name: "Filter registrants by registration date"
+  area: events
+  display_status: user_facing
+  released_on: 2026-08-21
+  action_path: "/events"
+  summary: >-
+    Narrow the registrants roster to people who registered within a date range, using new
+    "Registered from" and "Registered to" filters.
+  description: >-
+    The registrants roster now has a registration date range in its filters — set a
+    "Registered from" date, a "Registered to" date, or both, to show only the people who
+    signed up in that window. It works alongside every other filter, so you can combine it
+    with attendance, payment, scholarship and the rest. The same range carries over when
+    you open "Send bulk emails" from the roster, so a date-filtered roster pre-selects the
+    matching recipients for a reminder.
+  pro_tips:
+    - "Leave one end blank for an open-ended range — e.g. just \"Registered from\" for everyone who signed up on or after a date."
+
+- name: "Portal colors aligned with the AWBW brand"
+  area: content
+  display_status: public_facing
+  released_on: 2026-08-21
+  pr_number: 2282
+  external_url: "https://github.com/rubyforgood/awbw/blob/main/app/assets/images/brand/awbw-brand-guide.pdf"
+  summary: >-
+    The portal's core colors now match AWBW's official brand palette, so it looks like
+    the rest of AWBW. The primary blue, the green on action buttons, and the orange
+    accent all use the exact brand values.
+  description: >-
+    We reconciled the portal's theme with the official AWBW brand guide. The primary
+    color moved from a darker navy to the true brand blue (#24479E), the green on
+    "registered" and confirmation buttons is now the brand green (#4E8324), and the
+    orange accent is the brand orange (#D56027). These carry across buttons, links,
+    banners, and highlights throughout the portal. The brand guide is linked below for
+    reference.
+
+- name: "Smart field name on every form field"
+  area: content
+  display_status: admin_facing
+  released_on: 2026-08-21
+  action_path: "/forms"
+  pr_number: 2273
+  summary: >-
+    Every form field now shows its "smart field name" — the identifier that wires a
+    field to backend logic — with a "What's this?" link to a reference page, instead
+    of hiding it behind a URL flag.
+
+- name: "Name pronunciation on profiles"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-20
+  action_path: "/people/1"
+  pr_number: 2271
+  summary: >-
+    A person's edit form has a name-pronunciation field, so you can record how to say
+    someone's name alongside their pronouns.
+
+- name: "License credentials on staff cards"
+  area: people
+  display_status: public_facing
+  released_on: 2026-08-19
+  action_path: "/events/1/staff"
+  pr_number: 2263
+  summary: >-
+    Staff flip-cards — on the event staff page and the registrant staff callout — show
+    a person's license-derived credentials after their name, matching their profile,
+    when their profile is set to display credentials.
+
+- name: "Choose how you're credited on what you share"
+  area: people
+  display_status: user_facing
+  released_on: 2026-08-18
+  pr_number: 2093
+  summary: >-
+    Your profile decides how your name appears on every story, workshop, variation and
+    resource credited to you — one setting for all of them, instead of a question on each
+    submission.
+  description: >-
+    Your profile has two settings that control your name, and both apply to everything you
+    share. The display preference picks the format — full name, first name and last
+    initial, first name only, or last name only — and it applies everywhere at once: the
+    people index, your profile header, and every credit on your content. Change it and all
+    of them update together. "Contribute anonymously" is the second setting, and it's
+    all-or-nothing: either your contributions are credited to you, or they're all credited
+    to "AWBW Facilitator" instead. It hides your name from credits only — you stay listed
+    normally on the people index. It's for people who want to share their work without
+    their name attached to it. Search follows the same rules, so if your credit shows only
+    your first name, searching your last name won't surface your content, and anonymous
+    work isn't findable by your name at all.
+  pro_tips:
+    - "Ask an admin to change these for you — profile editing is admin-only for now."
+    - "Anonymous content still appears on your own profile and to admins, so you can find it; it's hidden from everyone else."
+
+- name: "Reconcile author credits"
+  area: reporting
+  display_status: admin_facing
+  released_on: 2026-08-18
+  action_path: "/author_credit_divergences"
+  pr_number: 2093
+  summary: >-
+    An admin worklist of content whose credit doesn't resolve cleanly through someone's
+    profile, in four sections, each fixable in place.
+  description: >-
+    Credits come from the credited person's profile. This page lists everything that
+    doesn't, grouped so it can be worked top to bottom. Section one is content whose
+    stored record of what the submitter consented to has drifted from their profile —
+    apply one preference to the whole person, or correct a single item. Section two is
+    content credited by an old free-text name typed in before people had profiles, listed
+    per column so clearing one is a visible milestone. Section three is content with no
+    author named, credited generically, grouped under whoever entered it as the likeliest
+    author. Section four is content with nobody to credit at all. The last three are all
+    fixed the same way — pick a real person — because naming an author is the only credit
+    that follows their profile, links to it, and lists the content there. Filter by person,
+    content type, stored preference, or whether they've already been reconciled. When a
+    section is clear it says which now-unused code the developers can retire. Where we're
+    headed: anonymity is a single profile setting covering all of someone's contributions.
+    Per-item anonymity is a legacy state this page exists to drain, not a choice
+    facilitators make.
+  pro_tips:
+    - "The suggested person on legacy rows is a name match — confirm it before saving, since two people can share a name."
+    - "Clearing a single item's stored preference hands it back to the person's profile, which is the end state we want."
+
+- name: "Decline a scholarship award"
+  area: scholarships
+  display_status: public_facing
+  released_on: 2026-08-18
+  action_path: "/scholarships"
+  pr_number: 2178
+  summary: >-
+    A recipient can decline their award from their scholarship page, with a reason.
+    A declined award drops out of every total and frees the grant funds back up, and
+    staff can re-offer it.
+  pro_tips:
+    - "The whole accept/decline back-and-forth is kept as an admin-only agreement history on the award."
+    - "To re-offer at new terms, change the amount and save first, then click Re-offer."
+  description: |
+    <p>The recipient's scholarship page spells out what each choice costs them, so
+    they are deciding against a real number rather than a promise. Example: a $100
+    registration with a $50 award.</p>
+    <table>
+      <thead>
+        <tr><th>State</th><th>Copy</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Pending, balance left</td>
+          <td>"Accept and you'll owe $50 of the $100 registration cost." + "Decline and $100 is due."</td>
+        </tr>
+        <tr>
+          <td>Pending, no balance left</td>
+          <td>"Accept and your $100 registration is fully covered — you'll owe nothing." + "Decline and $50 is due."</td>
+        </tr>
+        <tr>
+          <td>Signed, balance left</td>
+          <td>"You'll owe $50 of the $100 registration cost."</td>
+        </tr>
+        <tr>
+          <td>Signed, no balance left</td>
+          <td>"Your $100 registration is fully covered — you'll owe nothing."</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>The decline figure is priced off that award alone, so anything already paid
+    stays paid. A declined award hides the box entirely.</p>
+
+- name: "Program status report for annual reporting"
+  area: reporting
+  display_status: admin_facing
+  released_on: 2026-08-18
+  action_path: "/events/program_statuses"
+  pr_number: 1993
+  summary: >-
+    A cross-event report counting how many organizations were New, Ongoing or
+    Reinstated at each facilitator training, with year totals for annual reporting.
+  pro_tips:
+    - The table counts an organization once per training it attended; the
+      distinct-organization table below counts each one once for the period.
+    - Filter by year or event type, then read the year total row.
+
+- name: "One program status, explained on hover"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-18
+  action_path: "/organizations"
+  pr_number: 1993
+  summary: >-
+    New / Ongoing / Reinstated now means the same thing everywhere and is judged on
+    the event's own date, so the dashboard, roster, onboarding matrix and
+    organization pages always agree. Hover any badge to see why it says what it says.
+  pro_tips:
+    - The hover names the date the status was judged on and the facilitator periods
+      behind it.
+    - An organization's overall status comes from its facilitator affiliations, not
+      the old status field — the edit form flags where the two disagree.
+    - A first-time organization reads New at its own training, not Ongoing.
+
+- name: "Sector, age group and program-status filters on the organization index"
+  area: people
+  display_status: user_facing
+  released_on: 2026-08-18
+  action_path: "/organizations"
+  pr_number: 1993
+  summary: >-
+    The organization list gains Sectors and Age group columns, filterable by sector,
+    age group and program status.
+  pro_tips:
+    - Sector and age group match the organization's own tags plus its affiliated
+      people's primary tags.
+
+- name: "\"Facilitators since\" on organizations"
+  area: people
+  display_status: user_facing
+  released_on: 2026-08-18
+  action_path: "/organizations"
+  pr_number: 1993
+  summary: >-
+    Each organization shows how long it has been facilitating — a "Facilitators since"
+    chip on the organization index, profile, and edit form, at month precision. This is
+    about tenure, separate from the New / Ongoing / Reinstated program status.
+  pro_tips:
+    - The chip shows each stretch of facilitating separately, so a lapse and a return
+      read as two periods.
+    - A grey "Affiliated since" line appears underneath only when the org's first
+      affiliation predates its first facilitator affiliation, so the two aren't
+      redundant.
+
+- name: "\"In memoriam\" designation on legacy grants"
+  area: scholarships
+  display_status: admin_facing
+  released_on: 2026-08-17
+  action_path: "/grants"
+  pr_number: 2244
+  summary: >-
+    Legacy Circle grants can be flagged "in memoriam" so memorial gifts are
+    distinguishable from other legacy scholarships, with a chip on the grant.
+  pro_tips:
+    - "The designation is for recognizing memorial gifts on the Story Share pages."
+
+- name: "Features & tips page"
+  area: content
+  display_status: user_facing
+  released_on: 2026-08-16
+  action_path: "/features"
+  pr_number: 2170
+  summary: >-
+    A login-gated page listing the portal's shipped features — newest first, filterable
+    by area, audience, and date — so facilitators and admins can see what the portal does.
+  pro_tips:
+    - "Super-admins can edit any feature in place (rich descriptions with screenshots) and click \"Sync latest updates\" to pull in newly-shipped ones."
+
+- name: "Edit an affiliation's details and comments"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-16
+  pr_number: 2235
+  summary: >-
+    Each affiliation row on an organization or person edit page has a gear that opens
+    a full editor — reassign the person or organization, adjust the title and dates,
+    and leave comments on the affiliation.
+
+- name: "File-upload questions on forms"
+  area: content
+  display_status: admin_facing
+  released_on: 2026-08-16
+  action_path: "/forms"
+  pr_number: 2136
+  summary: >-
+    Forms can include a file-upload question, so a registrant can attach a document
+    as part of their answer.
+
+- name: "Add and edit professional licenses"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-16
+  action_path: "/professional_licenses"
+  pr_number: 2218
+  summary: >-
+    The professional-licenses index gains new/edit flows, richer filtering, and deep
+    links to a license's CE hours.
+
+- name: "Person history and activity filter"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-16
+  action_path: "/people"
+  pr_number: 2207
+  summary: >-
+    A person's profile shows a history card, and the portal activity log can be
+    filtered down to a single person.
+
+- name: "Planned-giving flag on grants"
+  area: scholarships
+  display_status: admin_facing
+  released_on: 2026-08-16
+  action_path: "/grants"
+  pr_number: 2203
+  summary: >-
+    Mark a grant as planned giving so it stands apart from other funding.
+
+- name: "Story image carousel"
+  area: stories
+  display_status: public_facing
+  released_on: 2026-08-16
+  action_path: "/stories"
+  pr_number: 2221
+  summary: >-
+    Story pages show their images as a hero-first carousel.
+
+- name: "Email when a story idea becomes a story"
+  area: stories
+  display_status: admin_facing
+  released_on: 2026-08-16
+  action_path: "/story_ideas"
+  pr_number: 2213
+  summary: >-
+    When a story idea is promoted to a full story, the submitter is emailed and
+    admins get an FYI.
+
+- name: "Payments default to a recent period"
+  area: payments
+  display_status: admin_facing
+  released_on: 2026-08-16
+  action_path: "/payments"
+  pr_number: 2216
+  summary: >-
+    The payments index opens to a recent time period by default, so it loads the most
+    relevant records first.
+
+- name: "Sign-in and sign-out attendance tracking"
+  area: events
+  display_status: admin_facing
+  released_on: 2026-08-15
+  action_path: "/events/1/attendance"
+  pr_number: 2075
+  summary: >-
+    Track each registrant's sign-in and sign-out times per day of an event, with a
+    per-day attendance report totaling the minutes — used for continuing-education
+    hours.
+  pro_tips:
+    - "Registrants can record their own times on their CE ticket; staff can adjust them on the report."
+
+- name: "Browse continuing-education registrations"
+  area: registration
+  display_status: admin_facing
+  released_on: 2026-08-15
+  action_path: "/continuing_education_registrations"
+  pr_number: 2208
+  summary: >-
+    A new admin index to browse every continuing-education registration on file,
+    across all events.
+
+- name: "Browse professional licenses"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-15
+  action_path: "/professional_licenses"
+  pr_number: 2208
+  summary: >-
+    A new admin index to browse every professional license people have on file.
+
+- name: "Search payments by Stripe id, metadata, and amount"
+  area: payments
+  display_status: admin_facing
+  released_on: 2026-08-15
+  action_path: "/payments"
+  pr_number: 2210
+  summary: >-
+    The payments list now searches by Stripe charge id and metadata, and filters by
+    an amount range.
+
+- name: "Tag grants with sectors and categories"
+  area: scholarships
+  display_status: admin_facing
+  released_on: 2026-08-14
+  action_path: "/grants"
+  pr_number: 2199
+  summary: >-
+    Grants can be tagged with sectors and categories, like other records, so they're
+    easier to group and find.
+
+- name: "Richer communications log with delivery flags"
+  area: communications
+  display_status: admin_facing
+  released_on: 2026-08-13
+  action_path: "/communications"
+  pr_number: 2177
+  summary: >-
+    The communications log now marks each message's direction and audience, flags
+    bulk sends, and highlights undelivered emails with warning styling.
+
+- name: "Filter bulk-email recipients by topic subscription"
+  area: communications
+  display_status: admin_facing
+  released_on: 2026-08-13
+  action_path: "/events/1/preview_reminder"
+  pr_number: 2179
+  summary: >-
+    When picking who gets a bulk email, filter the recipients by the topics people
+    have subscribed to.
+
+- name: "Payment due date on the ticket"
+  area: registration
+  display_status: public_facing
+  released_on: 2026-08-11
+  action_path: "/registration/sample"
+  pr_number: 2173
+  summary: >-
+    Events can set a payment due date, and it shows on the registration ticket so
+    registrants know by when they need to pay.
+
+- name: "Bulk portal login invites from the reminders page"
+  area: communications
+  display_status: admin_facing
+  released_on: 2026-08-11
+  action_path: "/events/1/preview_reminder"
+  pr_number: 2168
+  summary: >-
+    Switch the bulk reminder tool into invite mode to send portal login invitations
+    to a filtered set of registrants in one pass, creating accounts for anyone who
+    doesn't have one yet.
+
+- name: "Import stories from the old WordPress site"
+  area: stories
+  display_status: admin_facing
+  released_on: 2026-08-11
+  action_path: "/stories/import/new"
+  pr_number: 2163
+  summary: >-
+    Bring stories over from a WordPress export, translating the old categories, tags,
+    authors, and organizations into the portal's sectors and records, with a preview
+    before anything is saved.
+  pro_tips:
+    - "You get a row-by-row dry-run preview first, so you can check the mapping before importing for real."
+
+- name: "Auto-filled organization details when linking a registration"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-11
+  action_path: "/events/1/registrants"
+  pr_number: 2140
+  summary: >-
+    Linking a registrant to an organization now fills in the org's type, website,
+    and address from what the registrant typed, and records exactly what changed.
+  pro_tips:
+    - "The linking page lists every value that was filled in, so you can double-check before moving on."
+    - "Existing org details are never overwritten — the portal only fills blanks and flags anything that conflicts."
+
+- name: "Cross-event reports and a new events subnavigation"
+  area: reporting
+  display_status: admin_facing
+  released_on: 2026-08-10
+  action_path: "/events/reports"
+  pr_number: 2113
+  summary: >-
+    Events have a subnavigation linking revenue, participation, and scholarship
+    reports across every training, with breakdowns that filter themselves as you
+    drill into a sector, age group, or location.
+  pro_tips:
+    - "Click any slice of a breakdown to see just the people behind that number."
+
+- name: "Comments and communications on story screens"
+  area: stories
+  display_status: admin_facing
+  released_on: 2026-08-10
+  action_path: "/stories/1"
+  pr_number: 2166
+  summary: >-
+    Story and story-idea edit screens show the comments and email communications
+    tied to that story, so the whole conversation lives in one place.
+
+- name: "Cross-event training attendees page"
+  area: reporting
+  display_status: admin_facing
+  released_on: 2026-08-08
+  action_path: "/events/attendees"
+  pr_number: 2101
+  summary: >-
+    A single attendees page lists everyone who registered across all trainings, with
+    the same roster columns and breakdown charts as a single event, filterable and
+    drillable.
+
+- name: "Public Story Share portal"
+  area: stories
+  display_status: public_facing
+  released_on: 2026-08-09
+  action_path: "/story_share"
+  pr_number: 2148
+  summary: >-
+    A public, shareable Story Share portal that mirrors the awbw.org styling, with
+    admin-managed slots, hover-zoom segments, and a "most read" ordering.
+  pro_tips:
+    - "Admins can reorder the featured slots and pick a color for each from the drag menu."
+
+- name: "Shared registrant filter bar"
+  area: events
+  display_status: admin_facing
+  released_on: 2026-08-09
+  action_path: "/events/1/registrants"
+  pr_number: 2143
+  summary: >-
+    A single, consistent filter bar across the registrant lists lets you narrow by
+    more criteria, tuck advanced options under "More filters", and prefill a bulk
+    email to exactly the people you filtered to.
+
+- name: "Payment method badge and filter on the roster"
+  area: registration
+  display_status: admin_facing
+  released_on: 2026-08-09
+  action_path: "/events/1/roster"
+  pr_number: 2138
+  summary: >-
+    The registrants roster shows each person's payment method as a badge and lets
+    you filter the list by it.
+
+- name: "Certificate slider on the registrants roster"
+  area: registration
+  display_status: admin_facing
+  released_on: 2026-08-09
+  action_path: "/events/1/roster"
+  pr_number: 2107
+  summary: >-
+    Mark a registrant's certificate as sent right from the roster with a slider —
+    it stays in sync with the certificate date on their registration.
+
+- name: "Scholarship recipients grouped by funder"
+  area: scholarships
+  display_status: admin_facing
+  released_on: 2026-08-09
+  action_path: "/scholarships"
+  pr_number: 2054
+  summary: >-
+    The scholarship recipients page groups awards by funder and links each
+    recipient's age chips back to their registration, so it's easy to see who
+    funded whom.
+
+- name: "Feature a recipient shout-out"
+  area: scholarships
+  display_status: admin_facing
+  released_on: 2026-08-09
+  action_path: "/events/1/recipients"
+  pr_number: 2134
+  summary: >-
+    Highlight a scholarship recipient as a shout-out straight from the recipients
+    page.
+
+- name: "Meet-the-staff section on the event form"
+  area: events
+  display_status: admin_facing
+  released_on: 2026-08-09
+  action_path: "/events/1/staff"
+  pr_number: 2130
+  summary: >-
+    Add and manage the staff shown on an event's "Meet the staff" roster directly
+    from the edit-event form.
+
+- name: "Archived list for old and unpublished events"
+  area: events
+  display_status: admin_facing
+  released_on: 2026-08-09
+  action_path: "/events"
+  pr_number: 2131
+  summary: >-
+    Unpublished and long-past events collapse into a tidy archive list on the
+    events index, so admins see current events first without losing the old ones.
+
+- name: "Per-registrant drilldowns on the revenue report"
+  area: reporting
+  display_status: admin_facing
+  released_on: 2026-08-09
+  action_path: "/events/revenue"
+  pr_number: 2124
+  summary: >-
+    Every figure on the events revenue report opens up to the individual
+    registrants behind it.
+
+- name: "Add a subscriber without leaving the form"
+  area: communications
+  display_status: admin_facing
+  released_on: 2026-08-09
+  action_path: "/topic_subscriptions/new"
+  pr_number: 2132
+  summary: >-
+    When adding a topic subscription for someone who isn't in the system yet, you
+    can create their person record inline instead of starting over.
+
+- name: "Admin emails attributed to the sender"
+  area: communications
+  display_status: admin_facing
+  released_on: 2026-08-09
+  action_path: "/communications"
+  pr_number: 2089
+  summary: >-
+    Invitations, reminders, and resends show who sent them, and are recorded
+    against the sending person rather than a generic account.
+
+- name: "\"Someone else will pay\" toggle on registration"
+  area: registration
+  display_status: public_facing
+  released_on: 2026-08-09
+  action_path: "/registration/sample"
+  pr_number: 2139
+  summary: >-
+    Registrants can indicate that someone else will pay for them, and that answer
+    is carried onto their registration for admins to see.
+
+- name: "Aggregated comments for a person"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-06
+  action_path: "/people/1/all_comments"
+  pr_number: 2059
+  summary: >-
+    One page gathers every comment connected to a person — their profile, event
+    registrations, scholarships, CE, and subscriptions — plus a global comments
+    index with search and filters.
+
+- name: "Scholarship statistics report"
+  area: reporting
+  display_status: admin_facing
+  released_on: 2026-08-06
+  action_path: "/events/scholarships"
+  pr_number: 2053
+  summary: >-
+    A cross-event scholarship report totals award dollars and counts by funding
+    source and training, split by live vs. on-demand attendance.
+
+- name: "Membership sign-up and dues"
+  area: payments
+  display_status: user_facing
+  released_on: 2026-08-05
+  action_path: "/people/1/checkout"
+  pr_number: 2094
+  summary: >-
+    Members can sign up for a recurring membership and pay dues through the portal.
+
+- name: "Topic subscriptions"
+  area: communications
+  display_status: admin_facing
+  released_on: 2026-08-04
+  action_path: "/topic_subscriptions"
+  pr_number: 2070
+  summary: >-
+    Facilitators can subscribe to the topics they want to hear about — upcoming
+    trainings, news, resources — and admins manage the list of topics and who's
+    subscribed.
+
+- name: "Start a new communication from the index"
+  area: communications
+  display_status: admin_facing
+  released_on: 2026-08-04
+  action_path: "/communications"
+  pr_number: 2091
+  summary: >-
+    Compose and send a one-off communication to a person straight from the
+    communications index, without going through a record first.
+
+- name: "Printable completion certificate"
+  area: registration
+  display_status: public_facing
+  released_on: 2026-08-04
+  action_path: "/registration/sample"
+  pr_number: 2081
+  summary: >-
+    A clean, one-page printable certificate of completion for a training registrant.
+
+- name: "Attendance stats on the event dashboard"
+  area: reporting
+  display_status: admin_facing
+  released_on: 2026-08-02
+  action_path: "/events/1/dashboard"
+  pr_number: 2037
+  summary: >-
+    The per-event dashboard shows how many registrants actually attended alongside
+    the registration and revenue figures.
+
+- name: "Event participation report and statistics hub"
+  area: reporting
+  display_status: admin_facing
+  released_on: 2026-08-02
+  action_path: "/events/participation"
+  pr_number: 2036
+  summary: >-
+    A cross-event participation report counts unique people trained versus seats
+    filled by year, anchored by an events statistics hub.
+
+- name: "Registrants-by-state map and location breakdowns"
+  area: reporting
+  display_status: admin_facing
+  released_on: 2026-08-02
+  action_path: "/events/1/roster"
+  summary: >-
+    Rosters and the attendees page include a US map coloring states by registrant
+    count, plus city and location breakdowns.
+
+- name: "High-profile flag for organizations"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-03
+  action_path: "/organizations/1"
+  pr_number: 2076
+  summary: >-
+    Mark an organization as high-profile so it stands out in lists.
+
+# ── 2026-07 ─────────────────────────────────────────────────────────────────
+
+- name: "Event abbreviation for compact contexts"
+  area: events
+  display_status: admin_facing
+  released_on: 2026-07-15
+  action_path: "/events/1"
+  pr_number: 1995
+  summary: >-
+    Give an event a short abbreviation that shows in tight spaces like cards and
+    chips instead of the full title.
+
+- name: "\"Other\" answer curation queue"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-07-14
+  action_path: "/other_responses"
+  pr_number: 1939
+  summary: >-
+    Free-text "Other" answers people type on forms (like a sector that isn't
+    listed) are captured as records you can promote, keep, or dismiss.
+  pro_tips:
+    - "Promoting a sector \"Other\" turns it into a real sector tag on the person and their organization."
+
+- name: "Scholarship agreement before an award shows"
+  area: scholarships
+  display_status: public_facing
+  released_on: 2026-07-14
+  action_path: "/registration/sample"
+  pr_number: 1794
+  summary: >-
+    Recipients accept a scholarship agreement before the award is shown as granted,
+    so acceptance is on record.
+
+- name: "Collapsible sections on ticket callout pages"
+  area: registration
+  display_status: public_facing
+  released_on: 2026-07-14
+  action_path: "/registration/sample"
+  pr_number: 1979
+  summary: >-
+    Callout detail pages render expandable sections from the admin's content, so
+    long instructions and FAQs stay tidy.
+
+- name: "Admin review of form submissions"
+  area: registration
+  display_status: admin_facing
+  released_on: 2026-07-06
+  action_path: "/form_submissions/1"
+  pr_number: 1943
+  summary: >-
+    Admins can review the raw answers a registrant submitted on any form.
+
+- name: "Notifications renamed to Communications"
+  area: communications
+  display_status: admin_facing
+  released_on: 2026-07-04
+  action_path: "/communications"
+  pr_number: 1941
+  summary: >-
+    The user-facing "Notifications" area is now called "Communications" throughout
+    the portal.
+
+- name: "Revenue-over-time page for events"
+  area: reporting
+  display_status: admin_facing
+  released_on: 2026-07-04
+  action_path: "/events/revenue"
+  pr_number: 1817
+  summary: >-
+    A chart of event revenue over time, breaking money in from organization
+    subsidy and net.
+
+- name: "Age-range editor on the person form"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-07-04
+  action_path: "/people/1"
+  pr_number: 1872
+  summary: >-
+    Pick a person's primary and additional age ranges with a chip editor, matching
+    how sectors are edited.
+
+- name: "Inline-editable communications with channel icons"
+  area: communications
+  display_status: admin_facing
+  released_on: 2026-07-08
+  action_path: "/communications"
+  pr_number: 1942
+  summary: >-
+    Edit a communication in place, with icons showing the channel and message
+    bodies gated to admins.
+
+- name: "Shareable story links"
+  area: stories
+  display_status: public_facing
+  released_on: 2026-07-08
+  action_path: "/stories/1"
+  pr_number: 1951
+  summary: >-
+    Every story has a friendly, shareable slug URL.
+
+- name: "Continuing education registration"
+  area: registration
+  display_status: public_facing
+  released_on: 2026-06-29
+  action_path: "/registration/sample"
+  pr_number: 1916
+  summary: >-
+    Registrants can request continuing-education hours against a professional
+    license, with fees, deadlines, and a certificate tracked per event.
+
+- name: "Filterable grants index"
+  area: scholarships
+  display_status: admin_facing
+  released_on: 2026-06-29
+  action_path: "/grants"
+  pr_number: 1920
+  summary: >-
+    Browse grants in a fast, filterable list with scholarship theming.
+
+- name: "PDF resources open in the browser viewer"
+  area: content
+  display_status: user_facing
+  released_on: 2026-07-13
+  action_path: "/resources"
+  pr_number: 1893
+  summary: >-
+    PDF resources open in the browser's built-in viewer instead of forcing a
+    download.
+
+- name: "Credit content to any person"
+  area: content
+  display_status: admin_facing
+  released_on: 2026-07-09
+  action_path: "/workshops"
+  pr_number: 1940
+  summary: >-
+    Workshops, stories, resources, and community news can be credited to any
+    person, not just people with active login accounts.
+
+# ── 2026-06 ─────────────────────────────────────────────────────────────────
+
+- name: "\"Events attended\" on organization profiles"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-06-21
+  action_path: "/organizations/1"
+  pr_number: 1816
+  summary: >-
+    An organization's profile lists the events its people attended, mirroring the
+    events list already shown on person profiles.
+
+- name: "Associated records on person and organization pages"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-07-04
+  action_path: "/people/1"
+  pr_number: 1889
+  summary: >-
+    Person and organization edit and profile pages gather links to everything related
+    to that record — registrations, scholarships, affiliations, the login account, and
+    more — so you can jump straight to any of it from one place.
+
+- name: "Time zone on profiles"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-02-16
+  action_path: "/people/1"
+  pr_number: 1001
+  summary: >-
+    A person can have a time zone set on their profile, so times shown to them line up
+    with where they are.
+
+- name: "Admin account-flow reference"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-03-28
+  action_path: "/users/flow_diagram"
+  pr_number: 1442
+  summary: >-
+    A reference page (linked from the users index) diagramming how invitations, password
+    resets, email changes, and account lockout/unlock work, with an admin triage cheat
+    sheet for common "I can't sign in" situations.
+
+- name: "Refreshed registration ticket"
+  area: registration
+  display_status: public_facing
+  released_on: 2026-06-22
+  action_path: "/registration/sample"
+  pr_number: 1751
+  summary: >-
+    The registration ticket got a cleaner look with a thumbnail header, compact
+    details, and status chips.
+
+- name: "Videoconference access window and passcode"
+  area: events
+  display_status: public_facing
+  released_on: 2026-06-22
+  action_path: "/registration/sample"
+  summary: >-
+    Videoconference links, passcodes, and room details appear on the ticket only
+    around the event time and for paid registrants.
+
+- name: "Onboarding tab for registrant setup"
+  area: registration
+  display_status: admin_facing
+  released_on: 2026-06-21
+  action_path: "/events/1/onboarding"
+  pr_number: 1788
+  summary: >-
+    A per-event Onboarding tab tracks each registrant through their setup steps
+    with a checkbox matrix.
+
+- name: "Consolidated ticket callout editor"
+  area: registration
+  display_status: admin_facing
+  released_on: 2026-06-21
+  action_path: "/events/1"
+  pr_number: 1812
+  summary: >-
+    Built-in and custom registration ticket callouts are edited together in one
+    drag-to-reorder editor, with live color and icon preview.
+
+- name: "Job and facilitator affiliations from registration"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-06-21
+  action_path: "/people/1"
+  pr_number: 1809
+  summary: >-
+    Registering or linking an org automatically creates the person's job title
+    affiliation plus a standing Facilitator affiliation.
+
+- name: "Link an affiliation to an organization address"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-06-21
+  action_path: "/people/1"
+  pr_number: 1818
+  summary: >-
+    Point a person's affiliation at one of the organization's specific addresses.
+
+- name: "Match returning registrants across name changes"
+  area: registration
+  display_status: admin_facing
+  released_on: 2026-06-21
+  action_path: "/events/1/registrants"
+  pr_number: 1825
+  summary: >-
+    Returning registrants are recognized even when they swap a nickname for a legal
+    first name, so they aren't duplicated.
+
+- name: "Multi-day events show as a date range"
+  area: events
+  display_status: public_facing
+  released_on: 2026-06-21
+  action_path: "/events"
+  pr_number: 1791
+  summary: >-
+    Events spanning several days display as a date range with a single daily time.
+
+- name: "Admin-configurable registration ticket callouts"
+  area: registration
+  display_status: admin_facing
+  released_on: 2026-06-17
+  action_path: "/events/1"
+  pr_number: 1721
+  summary: >-
+    Admins add call-out cards to an event's registration ticket — for payment,
+    handouts, videoconference, and more — each linking to its own detail page.
+
+- name: "Event invoice with PDF download"
+  area: payments
+  display_status: public_facing
+  released_on: 2026-06-17
+  action_path: "/registration/sample"
+  pr_number: 1709
+  summary: >-
+    A registration generates an invoice reflecting the balance due, downloadable as
+    a PDF.
+
+- name: "Paid-in-full receipt"
+  area: payments
+  display_status: public_facing
+  released_on: 2026-07-04
+  action_path: "/events"
+  pr_number: 1830
+  summary: >-
+    A receipt is available once a registration is paid in full.
+
+- name: "W-9 download on the ticket"
+  area: payments
+  display_status: public_facing
+  released_on: 2026-06-17
+  action_path: "/registration/sample"
+  pr_number: 1707
+  summary: >-
+    Registrants can download AWBW's W-9 from the payment callout on their ticket.
+
+- name: "Custom checkout amount"
+  area: payments
+  display_status: public_facing
+  released_on: 2026-06-18
+  action_path: "/events"
+  pr_number: 1733
+  summary: >-
+    Payers can enter a custom amount at checkout rather than only a fixed price.
+
+- name: "Pay for others in one submission"
+  area: payments
+  display_status: public_facing
+  released_on: 2026-06-08
+  action_path: "/events"
+  pr_number: 1600
+  summary: >-
+    A bulk-payment ticket lets one payer cover several participants at once and
+    allocate the total across them.
+
+- name: "Payments change log"
+  area: payments
+  display_status: admin_facing
+  released_on: 2026-06-18
+  action_path: "/payments"
+  pr_number: 1737
+  summary: >-
+    Payment and allocation changes are recorded in a change log admins can review.
+
+- name: "Grants as parents of scholarships"
+  area: scholarships
+  display_status: admin_facing
+  released_on: 2026-06-07
+  action_path: "/grants"
+  pr_number: 1594
+  summary: >-
+    Grants hold a funder, amount, eligibility, and deadlines, and scholarships draw
+    from them without exceeding the grant total.
+
+- name: "Grant-aware scholarship picker"
+  area: scholarships
+  display_status: admin_facing
+  released_on: 2026-06-08
+  action_path: "/scholarships"
+  pr_number: 1597
+  summary: >-
+    Awarding a scholarship shows each grant's remaining-of-total funds as you pick
+    the funding source.
+
+- name: "Per-event dashboard"
+  area: reporting
+  display_status: admin_facing
+  released_on: 2026-06-06
+  action_path: "/events/1/dashboard"
+  pr_number: 1565
+  summary: >-
+    Each event has a dashboard summarizing registrants, organizations, sectors,
+    locations, scholarships, and payments, with drill-in filters.
+
+- name: "Custom form builder with roles"
+  area: registration
+  display_status: admin_facing
+  released_on: 2026-06-06
+  action_path: "/forms"
+  pr_number: 1563
+  summary: >-
+    Build registration, scholarship, and other forms from composable sections and
+    fields, with per-field width, hints, options, and visibility rules.
+
+- name: "Curated event staff roster"
+  area: events
+  display_status: admin_facing
+  released_on: 2026-06-11
+  action_path: "/events/1/staff"
+  pr_number: 1616
+  summary: >-
+    Attach staff to an event with titles and an expected-to-attend flag, driving the
+    public "Meet the staff" roster.
+
+- name: "Event-specific staff bio"
+  area: events
+  display_status: admin_facing
+  released_on: 2026-06-13
+  action_path: "/events/1/staff"
+  pr_number: 1664
+  summary: >-
+    Give a staff member a bio written just for one event, alongside their profile
+    bio.
+
+- name: "Sortable registrants table"
+  area: events
+  display_status: admin_facing
+  released_on: 2026-06-11
+  action_path: "/events/1/registrants"
+  pr_number: 1630
+  summary: >-
+    Sort the registrants table by clicking its column headers.
+
+- name: "Bulk event reminders with a recipient picker"
+  area: communications
+  display_status: admin_facing
+  released_on: 2026-06-18
+  action_path: "/events/1/preview_reminder"
+  pr_number: 1734
+  summary: >-
+    Send reminder emails to a filtered set of registrants, with a confirm step
+    showing exactly who will receive it.
+
+- name: "Custom reminder message and subject"
+  area: communications
+  display_status: admin_facing
+  released_on: 2026-06-18
+  action_path: "/events/1/preview_reminder"
+  pr_number: 1727
+  summary: >-
+    Personalize the message and subject on a bulk reminder, with a live preview as
+    you type.
+
+- name: "Registrant organization-linking editor"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-06-16
+  action_path: "/event_registrations/1/link_organization"
+  pr_number: 1669
+  summary: >-
+    Manage a registrant's organizations and affiliations from one editor, resolving
+    the org they typed to a saved record.
+
+- name: "Structured profile capture from registration"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-06-23
+  action_path: "/people/1"
+  pr_number: 1882
+  summary: >-
+    Contact info, organization details, and racial/ethnic identity
+    submitted on registration are stored as structured profile data.
+
+- name: "Racial and ethnic identity on profiles"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-06-23
+  action_path: "/people/1"
+  pr_number: 1883
+  summary: >-
+    Capture and edit a person's racial and ethnic identity as structured profile
+    data.
+
+- name: "Compound payer picker on allocations"
+  area: payments
+  display_status: admin_facing
+  released_on: 2026-06-20
+  action_path: "/allocations/new"
+  pr_number: 1722
+  summary: >-
+    Choose who paid — a person or organization — and designate additional payers on
+    the allocation form.
+
+- name: "Sample ticket preview"
+  area: events
+  display_status: admin_facing
+  released_on: 2026-06-19
+  action_path: "/events/1/sample_ticket"
+  pr_number: 1793
+  summary: >-
+    Preview an event's registration ticket as a typical registrant would see it,
+    without creating any data.
+  pro_tips:
+    - "The sample uses a throwaway \"Sample Person\" — nothing is saved and it never shows up in counts or rosters."
+
+- name: "Favorite event nav shortcut"
+  area: events
+  display_status: admin_facing
+  released_on: 2026-06-13
+  action_path: "/events/1"
+  pr_number: 1666
+  summary: >-
+    Pin a favorite event for a one-click shortcut to it in the nav.
+
+- name: "Grouped bulk-payment allocations"
+  area: payments
+  display_status: admin_facing
+  released_on: 2026-06-16
+  action_path: "/events/1/bulk_payments"
+  pr_number: 1679
+  summary: >-
+    Allocate a bulk payment across unpaid registrants with a clear allocation UI.
+
+# ── 2026-05 and earlier 2026 ────────────────────────────────────────────────
+
+- name: "Online payments, allocations, and refunds"
+  area: payments
+  display_status: admin_facing
+  released_on: 2026-06-05
+  action_path: "/payments"
+  pr_number: 1487
+  summary: >-
+    Card payments through Stripe, with allocations recording what each payment
+    covers and support for refunds and discounts.
+
+- name: "Reminder emails from event management"
+  area: communications
+  display_status: admin_facing
+  released_on: 2026-04-05
+  action_path: "/events/1/preview_reminder"
+  pr_number: 1433
+  summary: >-
+    Send reminder emails to an event's registrants from the management screens.
+
+- name: "Portal usage and tagging analytics"
+  area: reporting
+  display_status: admin_facing
+  released_on: 2026-04-04
+  action_path: "/admin/activities/charts"
+  pr_number: 1462
+  summary: >-
+    Charts of portal usage and tagging activity across the admin analytics pages.
+
+- name: "Admin activity feed"
+  area: reporting
+  display_status: admin_facing
+  released_on: 2026-01-18
+  action_path: "/admin/activities/events"
+  summary: >-
+    A searchable, filterable feed of visits and events across the portal for admins,
+    powered by activity tracking.
+
+- name: "Business intelligence queries"
+  area: reporting
+  display_status: admin_facing
+  released_on: 2026-02-16
+  action_path: "/queries"
+  pr_number: 999
+  summary: >-
+    Admins can run ad-hoc SQL reports through Blazer.
+
+- name: "Account activity tracking"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-03-01
+  action_path: "/people/1"
+  pr_number: 1277
+  summary: >-
+    Track account changes — email changes, password resets, confirmations — with
+    dynamic search on a person's account activity.
+
+- name: "Confirm an email change with interstitials"
+  area: communications
+  display_status: admin_facing
+  released_on: 2026-03-01
+  action_path: "/users"
+  pr_number: 1278
+  summary: >-
+    Email-change and confirmation workflows guide admins through clear interstitial
+    pages and send the right copy to the right address.
+
+- name: "Public event registration"
+  area: registration
+  display_status: public_facing
+  released_on: 2026-02-24
+  action_path: "/events"
+  pr_number: 1206
+  summary: >-
+    Events can accept registrations from the public through a polished registration
+    form, gated by a per-event toggle.
+
+- name: "Slug-based registration URLs"
+  area: registration
+  display_status: public_facing
+  released_on: 2026-03-01
+  action_path: "/events"
+  pr_number: 1268
+  summary: >-
+    Each event registration has a friendly slug URL for the ticket.
+
+- name: "Export event registrations to CSV"
+  area: reporting
+  display_status: admin_facing
+  released_on: 2026-02-10
+  action_path: "/events/1/registrants"
+  pr_number: 888
+  summary: >-
+    Download an event's registrations as a CSV.
+
+- name: "Scholarship recipient tracking"
+  area: scholarships
+  display_status: admin_facing
+  released_on: 2026-02-28
+  action_path: "/scholarships"
+  pr_number: 1262
+  summary: >-
+    Track scholarship recipients against event registrations.
+
+- name: "Scholarship application form"
+  area: scholarships
+  display_status: public_facing
+  released_on: 2026-02-28
+  action_path: "/events"
+  pr_number: 1253
+  summary: >-
+    A dedicated scholarship application form, whose answers surface wherever the
+    scholarship is reviewed.
+
+- name: "Duplicate person detection"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-02-14
+  action_path: "/people/check_duplicates"
+  pr_number: 990
+  summary: >-
+    Creating a person or user warns about likely duplicates before you save.
+
+- name: "Merge duplicate tags, categories, and sectors"
+  area: content
+  display_status: admin_facing
+  released_on: 2026-02-15
+  action_path: "/categories/dedupe_index"
+  pr_number: 989
+  summary: >-
+    Tools to find and merge duplicate categories and sectors, keeping the taxonomy
+    clean.
+
+- name: "Comments on people and organizations"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-02-15
+  action_path: "/people/1"
+  pr_number: 996
+  summary: >-
+    Leave threaded comments on a person or organization, with optional topic and
+    follow-up flags.
+
+- name: "User invitations and welcome flow"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-02-12
+  action_path: "/users"
+  pr_number: 893
+  summary: >-
+    Invite people to the portal with a confirmation and welcome page where they set
+    their password.
+
+- name: "Bulk portal invitations"
+  area: communications
+  display_status: admin_facing
+  released_on: 2026-02-22
+  action_path: "/users"
+  pr_number: 1162
+  summary: >-
+    Send welcome instructions to many people at once as a background job.
+
+- name: "Track replies to contact-us messages"
+  area: communications
+  display_status: admin_facing
+  released_on: 2026-05-25
+  action_path: "/contact_us"
+  pr_number: 1493
+  summary: >-
+    Mark contact-us submissions as responded so nothing slips through.
+
+- name: "Monthly reports with shared filters"
+  area: reporting
+  display_status: admin_facing
+  released_on: 2026-05-25
+  action_path: "/monthly_reports"
+  pr_number: 1530
+  summary: >-
+    Monthly reports use standard list screens with the same search and filters as
+    the rest of the portal.
+
+- name: "Resend a communication with history"
+  area: communications
+  display_status: admin_facing
+  released_on: 2026-02-10
+  action_path: "/communications"
+  pr_number: 900
+  summary: >-
+    Resend a notification while keeping the parent/child chain so the history is
+    intact.
+
+- name: "Cancellation emails"
+  area: communications
+  display_status: public_facing
+  released_on: 2026-03-01
+  action_path: "/events"
+  pr_number: 1287
+  summary: >-
+    Cancelling an event registration sends the registrant a cancellation email.
+
+- name: "Lock and unlock user accounts"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-01-23
+  action_path: "/users/1"
+  pr_number: 760
+  summary: >-
+    Admins can lock or unlock a user's account from the edit screen.
+
+- name: "Drag-and-drop category ordering"
+  area: content
+  display_status: admin_facing
+  released_on: 2026-01-25
+  action_path: "/categories"
+  pr_number: 712
+  summary: >-
+    Reorder categories within a category type by dragging them.
+
+- name: "Video gallery"
+  area: content
+  display_status: user_facing
+  released_on: 2026-03-09
+  action_path: "/video_recordings"
+  pr_number: 1228
+  summary: >-
+    A gallery of video recordings, flagged as instructional or podcast, that
+    facilitators can browse and bookmark.
+
+- name: "@mentions in rich text"
+  area: content
+  display_status: admin_facing
+  released_on: 2026-01-15
+  action_path: "/workshops"
+  pr_number: 662
+  summary: >-
+    Mention people and records inside rich-text fields, with links back to what you
+    referenced.
+
+- name: "Rich text everywhere"
+  area: content
+  display_status: admin_facing
+  released_on: 2026-03-01
+  action_path: "/workshops"
+  pr_number: 1297
+  summary: >-
+    Content across the portal uses the Rhino rich-text editor with images, links,
+    grids, and formatting.
+
+# ── 2025 (foundations) ──────────────────────────────────────────────────────
+
+- name: "Workshop library"
+  area: content
+  display_status: user_facing
+  released_on: 2025-09-13
+  action_path: "/workshops"
+  summary: >-
+    The core library of AWBW workshops with rich descriptions, categories, sectors,
+    and variations.
+
+- name: "Workshop series"
+  area: content
+  display_status: user_facing
+  released_on: 2025-09-17
+  action_path: "/workshops"
+  summary: >-
+    Group related workshops as a series, shown as parent and member workshops.
+
+- name: "Workshop variations"
+  area: content
+  display_status: user_facing
+  released_on: 2025-09-20
+  action_path: "/workshop_variations"
+  summary: >-
+    Facilitator-contributed variations on a workshop, with their own images and
+    videos.
+
+- name: "Resource library"
+  area: content
+  display_status: user_facing
+  released_on: 2025-09-13
+  action_path: "/resources"
+  summary: >-
+    Downloadable handouts, toolkits, and templates that facilitators can search and
+    save.
+
+- name: "Bookmarks"
+  area: content
+  display_status: user_facing
+  released_on: 2025-09-23
+  action_path: "/bookmarks/personal"
+  summary: >-
+    Bookmark workshops, resources, events, and more, then sort and filter your
+    saved items.
+
+- name: "Keyword search and filtering across libraries"
+  area: content
+  display_status: user_facing
+  released_on: 2025-10-25
+  action_path: "/workshops"
+  summary: >-
+    Fast keyword search and filtering across workshops, resources, and other
+    libraries.
+
+- name: "Workshop logs"
+  area: content
+  display_status: user_facing
+  released_on: 2025-09-27
+  action_path: "/workshop_logs"
+  summary: >-
+    Facilitators log the workshops they lead, with attendance and reflection fields.
+
+- name: "Workshop ideas"
+  area: content
+  display_status: admin_facing
+  released_on: 2025-11-06
+  action_path: "/workshop_ideas"
+  summary: >-
+    Facilitators submit workshop ideas that admins can review and promote into full
+    workshops.
+
+- name: "Workshop variation ideas"
+  area: content
+  display_status: user_facing
+  released_on: 2026-02-09
+  action_path: "/workshop_variation_ideas"
+  pr_number: 871
+  summary: >-
+    Facilitators submit ideas for workshop variations, promotable into published
+    variations.
+
+- name: "FAQ and Help section"
+  area: content
+  display_status: user_facing
+  released_on: 2025-09-23
+  action_path: "/faqs"
+  summary: >-
+    A searchable, accordion-style FAQ and Help section, with reorderable, inline-
+    editable questions.
+
+- name: "Quotes"
+  area: content
+  display_status: admin_facing
+  released_on: 2025-11-26
+  action_path: "/quotes"
+  summary: >-
+    Curate participant quotes and surface them alongside workshop logs.
+
+- name: "Tags, categories, and sectors"
+  area: content
+  display_status: admin_facing
+  released_on: 2025-12-22
+  action_path: "/tags"
+  summary: >-
+    A tagging system of categories and sectors, with admin CRUD, that organizes
+    content across the portal.
+
+- name: "Windows audiences"
+  area: content
+  display_status: admin_facing
+  released_on: 2025-11-27
+  action_path: "/windows_types"
+  pr_number: 515
+  summary: >-
+    Classify content by Windows audience type for filtering and display.
+
+- name: "Events"
+  area: events
+  display_status: public_facing
+  released_on: 2025-09-13
+  action_path: "/events"
+  summary: >-
+    Create and publish events with public event pages and registrations.
+
+- name: "Calendar links on events"
+  area: events
+  display_status: public_facing
+  released_on: 2025-11-19
+  action_path: "/events/1"
+  summary: >-
+    Add-to-calendar links and location/zoom details on event pages.
+
+- name: "Social share on event pages"
+  area: events
+  display_status: public_facing
+  released_on: 2026-02-21
+  action_path: "/events/1"
+  pr_number: 1144
+  summary: >-
+    A social-share sidebar lets visitors share an event page.
+
+- name: "Organizations"
+  area: people
+  display_status: admin_facing
+  released_on: 2025-09-13
+  action_path: "/organizations"
+  summary: >-
+    Organization records with affiliations, addresses, logos, and profile details.
+
+- name: "Person profiles"
+  area: people
+  display_status: admin_facing
+  released_on: 2025-11-08
+  action_path: "/people/1"
+  summary: >-
+    Rich profiles for the people in AWBW's network, with contact info, sectors, and
+    affiliations.
+
+- name: "Affiliations between people and organizations"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-02-16
+  action_path: "/people/1"
+  summary: >-
+    Connect people to organizations with titles and date ranges, distinguishing
+    facilitator affiliations.
+
+- name: "Organization addresses"
+  area: people
+  display_status: admin_facing
+  released_on: 2025-11-16
+  action_path: "/organizations/1"
+  summary: >-
+    Organizations hold multiple structured addresses instead of a single set of
+    fields.
+
+- name: "User accounts"
+  area: people
+  display_status: admin_facing
+  released_on: 2025-09-13
+  action_path: "/users"
+  summary: >-
+    Manage portal login accounts, tied to people, with confirmation and invite
+    states.
+
+- name: "Login and password reset"
+  area: people
+  display_status: public_facing
+  released_on: 2025-09-22
+  action_path: "/users/sign_in"
+  summary: >-
+    Secure login with a clear password reset and change flow.
+
+- name: "Stories"
+  area: stories
+  display_status: public_facing
+  released_on: 2025-11-06
+  action_path: "/stories"
+  summary: >-
+    Editorial stories with facilitators, images, and links back to the public site.
+
+- name: "Story ideas"
+  area: stories
+  display_status: user_facing
+  released_on: 2025-11-02
+  action_path: "/story_ideas"
+  summary: >-
+    Facilitators submit story ideas that admins can promote into published stories.
+
+- name: "Community news"
+  area: stories
+  display_status: public_facing
+  released_on: 2025-11-12
+  action_path: "/community_news"
+  summary: >-
+    Post and browse community news with images and rich text.
+
+- name: "Contact us"
+  area: communications
+  display_status: public_facing
+  released_on: 2025-11-07
+  action_path: "/contact_us"
+  summary: >-
+    A contact form that emails AWBW and sets expectations for a reply.
+
+- name: "Site banners"
+  area: communications
+  display_status: admin_facing
+  released_on: 2025-11-07
+  action_path: "/banners"
+  summary: >-
+    Admins publish banners with sanitized content across the portal.
+
+- name: "Communications and notifications system"
+  area: communications
+  display_status: admin_facing
+  released_on: 2026-01-18
+  action_path: "/communications"
+  summary: >-
+    A unified system that sends, tracks, and records the portal's emails and
+    notifications, with delivery status.
+
+- name: "Home dashboard"
+  area: content
+  display_status: user_facing
+  released_on: 2025-09-28
+  action_path: "/"
+  summary: >-
+    A home dashboard surfacing featured workshops, stories, news, and events for
+    signed-in facilitators.
+
+- name: "Featured content on the dashboard"
+  area: content
+  display_status: admin_facing
+  released_on: 2025-11-18
+  action_path: "/"
+  summary: >-
+    Flag workshops, stories, and other content as featured to intentionally place
+    it on the home dashboard.
+
+- name: "Printable stories and news"
+  area: stories
+  display_status: user_facing
+  released_on: 2026-02-04
+  action_path: "/stories/1"
+  pr_number: 738
+  summary: >-
+    Stories and community news have print-friendly layouts.
+
+- name: "Recent activity feed"
+  area: reporting
+  display_status: admin_facing
+  released_on: 2025-11-08
+  action_path: "/admin"
+  summary: >-
+    A universal recent-activity feed showing the latest content changes across the
+    portal.
+
+- name: "Public form links"
+  area: content
+  display_status: admin_facing
+  released_on: 2026-08-16
+  action_path: "/forms"
+  summary: >-
+    Publish a standalone form (one not tied to an event) at a shareable public
+    link that anyone can fill out without an account. Responses appear in the
+    form submissions index, filterable by form.
+
+- name: "Copy a form"
+  area: content
+  display_status: admin_facing
+  released_on: 2026-08-18
+  action_path: "/forms"
+  pr_number: 2258
+  summary: >-
+    Duplicate any form with one click. The copy ("COPY of ...") carries over
+    every field and answer option so you can tweak a near-identical form instead
+    of rebuilding it from scratch.
+  pro_tips:
+    - The copy starts unpublished with no public link — set those on the new form
+      when you're ready.
+    - Event links and past submissions stay with the original; the copy is a fresh
+      form.
+
+- name: "Transfer a registration to another event"
+  area: registration
+  display_status: admin_facing
+  released_on: 2026-08-18
+  action_path: "/transfer_guide"
+  pr_number: 2044
+  summary: >-
+    Move a registrant from one event to another of the same format without losing
+    whether they attended. The transfer is tracked as a link between the two
+    registrations, so the roster and dashboard show who transferred in or out and
+    admins can edit or undo the move.
+  pro_tips:
+    - An incoming registration keeps its payment, scholarship, and CE on the
+      original registration — the edit form shows a read-only summary that links
+      back to the source instead of its own billing cards.
+    - Reporting totals stay on the original event; the new event still counts the
+      person in headcount and attendance but leaves them out of its financial
+      totals.
+    - Transferring someone a second time collapses the chain — the new
+      registration points straight at the original source and the middle stop is
+      removed.
+
+- name: "Filter index pages by author or person name"
+  area: content
+  display_status: user_facing
+  released_on: 2026-08-22
+  pr_number: 2311
+  summary: >-
+    Type a name into the filter box to narrow an index by who authored or is
+    named on each record. Added to Stories, Workshop variations, Workshop ideas,
+    Membership invoices, and Payments.
+  pro_tips:
+    - Partial names work — "jane" matches "Jane Doe" — and it honors each author's
+      credit preference, so it never surfaces a name shown as anonymous.
+    - Workshop ideas now list the credited author (per that person's display
+      preference) rather than whoever entered the idea.
+
+- name: "Tag people with internal staff tags"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-22
+  action_path: "/staff_tags"
+  pr_number: 2313
+  summary: >-
+    Mark people with internal, admin-only staff tags for talent pipelines,
+    rosters, and outreach — potential future trainers, sector leader candidates,
+    cohort or roundtable prospects. Tag someone on their edit page, then filter
+    the people list by a tag to pull the roster.
+  pro_tips:
+    - Staff tags are internal only — public visitors never see them. Admins get a
+      Staff tags section on the Tags and Taggings pages where each tag links to its
+      people roster.
+    - Manage the list of tags at /staff_tags. Unpublish a tag to retire it from the
+      pickers while keeping its history; you can only delete a tag that isn't in
+      use.
+    - Each tag records which admin applied it, and when.
+
+- name: "Browse and search all form answers"
+  area: reporting
+  display_status: admin_facing
+  released_on: 2026-08-22
+  action_path: "/form_answers"
+  summary: >-
+    A new Form answers page lists every individual answer submitted across the
+    site's forms. Search the answer text or filter by form, person, submission,
+    event, or question type, then jump straight to the full submission.
+
+- name: "Filter the people directory by role, status, age range, topic, and staff tag"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-22
+  action_path: "/people"
+  pr_number: 2312
+  summary: >-
+    The people directory gains a row of dropdown filters — role, facilitator
+    status, membership status, age range, topic subscription, and staff tag —
+    together in a blue admin panel. Each filter's values are explained in its own
+    entry below.
+
+- name: "People filter: role"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-22
+  action_path: "/people"
+  pr_number: 2312
+  summary: >-
+    Filter people by what they create or lead: story authors, blog contributors,
+    workshop authors, workshop variation authors, workshop log authors, and sector
+    leaders.
+  pro_tips:
+    - The role dropdown replaces the old "Sector leaders only" checkbox; pick
+      "Sector leaders" there to get the same list.
+
+- name: "People filter: facilitator status"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-22
+  action_path: "/people"
+  pr_number: 2312
+  summary: >-
+    Filter people by their facilitator standing: active, inactive, boomerang (left
+    and came back), or formerly active.
+  description: >-
+    Active — a current facilitator term. Inactive — has facilitator terms but none
+    current. Boomerang — left and came back: a current term that began after an
+    earlier facilitator term had ended. Formerly active — a past term genuinely
+    ended and none is current.
+
+- name: "People filter: membership status"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-22
+  action_path: "/people"
+  pr_number: 2312
+  summary: >-
+    Filter people by membership standing, read from their current invoice: active,
+    inactive, paid, due, or overdue.
+  description: >-
+    Active — membership not cancelled. Inactive — has a membership but it's
+    cancelled. Paid — the current invoice is covered. Due — still owes but within
+    the grace period. Overdue — past the grace period.
+
+- name: "People filter: age range"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-22
+  action_path: "/people"
+  pr_number: 2312
+  summary: >-
+    Filter people by age range. The dropdown lists your published age ranges and
+    matches anyone tagged with the one you pick.
+
+- name: "People filter: topic subscription"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-22
+  action_path: "/people"
+  pr_number: 2312
+  summary: >-
+    Filter people by topic subscription. Pick a topic to see everyone still
+    subscribed to it; anyone who unsubscribed is left out.
+
+- name: "People filter: staff tag"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-22
+  action_path: "/people"
+  pr_number: 2312
+  summary: >-
+    Filter people by staff tag. Pick a tag to see everyone carrying it.
+
+- name: "People filters: staff tag dropdown always shows, with manage links"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-22
+  action_path: "/people"
+  pr_number: 2328
+  summary: >-
+    The staff tag filter in the people directory now always appears, even before
+    you've published any staff tags. Both it and the topic subscription filter
+    carry a small "Manage staff tags" / "Manage topics" link so you can add or
+    edit the underlying records in one hop.
+
+- name: "Flag blog contributors from the person edit form"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-22
+  pr_number: 2323
+  summary: >-
+    Admins can now check "Blog contributor" on a person's edit page to add the
+    orange Blog Contributor badge to their profile. Previously the flag could
+    only be set outside the app.
+
+- name: "Tie a topic subscription to an organization"
+  area: communications
+  display_status: admin_facing
+  released_on: 2026-08-23
+  action_path: "/topic_subscriptions"
+  pr_number: 2360
+  summary: >-
+    A topic subscription can now name a specific organization. Set it on the
+    subscription form, filter the subscriptions list by organization, and see it
+    in the new Organization column. It's optional — leave it blank for a topic
+    that isn't tied to any organization.
+
+- name: "Change log on every record's edit page"
+  area: reporting
+  display_status: admin_facing
+  released_on: 2026-08-22
+  pr_number: 2245
+  summary: >-
+    Every edit page now shows a change log under its edit history: a plain-language
+    record of what changed, who changed it, and when — including nested records,
+    attached files, and rich text. When nothing has happened yet, it says so rather
+    than showing nothing.
+  description: >-
+    The change log answers "what happened to this record?" It captures real edits
+    only — plain browsing (views, prints, searches, filters, downloads) is kept out —
+    and reads each entry in plain language: what a save did to the record itself, to
+    its nested child records, to attached files (shown by name), and to rich text
+    that previously passed through unrecorded. A nested record reports what it
+    contained, not just that it changed. It sits in the same spot on every page,
+    under the edit history, and is available on the organization, continuing
+    education, staff tag, and category type pages, among others. Admin-only.
+  pro_tips:
+    - "Only mutations show: opening or printing a record never clutters its log."
+    - "Deleting a child or attachment is recorded too — the entry keeps the name even after the file is gone."
+
+- name: "Staff taggings directory"
+  area: people
+  display_status: admin_facing
+  released_on: 2026-08-24
+  action_path: "/staff_taggings"
+  summary: >-
+    A searchable list of everyone carrying a staff tag. Filter by one or more tags,
+    search by person or organization name, search the text of comments and
+    communications, sort the columns, and add, change, or remove taggings from the
+    page.
+  pro_tips:
+    - "The name box also matches a person's email, phone, address, and their affiliated organization."
+    - "The comments & communications box searches the notes and logged calls/emails recorded on each tagging."
+    - "The staff tag filter is a multi-select — pick several tags to see everyone carrying any of them."
+    - "Click a column header (Person, Staff tag, Tagged) to sort; click again to flip the direction."
+    - "\"New tagging\" tags a person in one step; each staff tag on the staff tags page also has a \"View taggings\" link, pre-filtered to that tag."
+    - "Editing a tagging lets you switch its tag and record comments or communications about it, all on one page."
+    - "Reach it from the admin home page under \"Staff taggings\"."

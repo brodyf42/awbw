@@ -76,6 +76,7 @@ class StoriesController < ApplicationController
         elsif params.dig(:library_asset, :new_assets).present?
           update_asset_owner(@story)
         end
+        notify_story_promoted if @story.story_idea.present?
         success = true
       end
     rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotSaved, ActiveRecord::RecordNotUnique => e
@@ -99,7 +100,6 @@ class StoriesController < ApplicationController
     Story.transaction do
       @story.assign_attributes(story_params.except(:images, :category_ids, :sector_ids))
       attribute_comment_authorship
-      stamp_new_notification_recipients
       if @story.save
         assign_associations(@story)
         if params[:promote_idea_assets] == "true"
@@ -173,11 +173,22 @@ class StoriesController < ApplicationController
     end
   end
 
-  # Inline-logged communications are addressed to the story's credited author.
-  def stamp_new_notification_recipients
-    recipient_email = @story.communications_email.presence || "n/a"
-    @story.notifications.select(&:new_record?).each { |n| n.recipient_email = recipient_email }
+  # Promoting a story idea into a story emails the idea's submitter and an admin FYI.
+  def notify_story_promoted
+    NotificationServices::CreateNotification.call(
+      noticeable: @story,
+      kind: :story_promoted,
+      recipient_role: :person,
+      recipient_email: @story.story_idea.created_by.email,
+      notification_type: 0)
+    NotificationServices::CreateNotification.call(
+      noticeable: @story,
+      kind: :story_promoted_fyi,
+      recipient_role: :admin,
+      recipient_email: ENV.fetch("REPLY_TO_EMAIL", "programs@awbw.org"),
+      notification_type: 0)
   end
+
 
   def set_story
     # Accepts both the bare id ("23") and the slugged param ("23-my-great-story");
@@ -217,7 +228,7 @@ class StoriesController < ApplicationController
       primary_asset_attributes: [ :id, :file, :_destroy ],
       gallery_assets_attributes: [ :id, :file, :_destroy ],
       comments_attributes: [ :id, :topic, :body, :flagged, :_destroy ],
-      notifications_attributes: [ :id, :channel, :sender_id, :email_subject, :email_body_text, :noticeable_type, :noticeable_id, :_destroy ],
+      notifications_attributes: [ :id, :channel, :sender_id, :email_subject, :email_body_text, :direction, :responded, :noticeable_type, :noticeable_id, :_destroy ],
     )
   end
 

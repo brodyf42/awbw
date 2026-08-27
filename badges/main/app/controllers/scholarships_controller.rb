@@ -1,13 +1,13 @@
 class ScholarshipsController < ApplicationController
-  before_action :set_scholarship, only: [ :show, :edit, :update, :destroy, :toggle_tasks ]
+  before_action :set_scholarship, only: [ :show, :edit, :update, :destroy, :toggle_tasks, :reoffer ]
   before_action :set_grant, only: [ :new, :create ]
 
   def index
     authorize! Scholarship
     set_report_filter_state
-    scholarships = filtered_scholarships
-    @funder_groups = ScholarshipsGrouping.new(scholarships).funder_groups
-    @scholarships_count = scholarships.size
+    grouping = ScholarshipsGrouping.new(filtered_scholarships)
+    @funder_groups = grouping.funder_groups
+    @scholarships_count = grouping.total_count
     @scholarship_report = EventScholarshipReport.new(report_training_events, featured_year: @selected_year, funder: @filter_funder)
   end
 
@@ -29,6 +29,7 @@ class ScholarshipsController < ApplicationController
     @scholarship = Scholarship.new(recipient: @allocatable.registrant)
     @grants = Grant.selectable_for(@scholarship)
     authorize! @scholarship
+    return if redirect_transferred_in_scholarship
     load_scholarship_submission
   end
 
@@ -51,6 +52,7 @@ class ScholarshipsController < ApplicationController
     @scholarship = Scholarship.new(scholarship_params.merge(recipient: @allocatable.registrant))
     @scholarship.build_allocation(allocatable: @allocatable, amount: @scholarship.amount_cents.to_i)
     authorize! @scholarship
+    return if redirect_transferred_in_scholarship
 
     if @scholarship.save
       redirect_to scholarship_save_path, notice: "Scholarship created."
@@ -73,10 +75,6 @@ class ScholarshipsController < ApplicationController
 
     @scholarship.assign_attributes(scholarship_params)
     attribute_comment_authorship
-
-    # Inline-logged notifications are addressed to the scholarship recipient.
-    recipient_email = @scholarship.recipient&.preferred_email.presence || "n/a"
-    @scholarship.notifications.select(&:new_record?).each { |n| n.recipient_email = recipient_email }
 
     if @scholarship.save
       redirect_to scholarship_save_path, notice: "Scholarship updated."
@@ -108,6 +106,17 @@ class ScholarshipsController < ApplicationController
     end
   end
 
+  # Re-offer a declined award: back to pending, allocation re-funded.
+  def reoffer
+    authorize! @scholarship, to: :update?
+    @scholarship.reoffer_agreement!(by: "admin")
+    redirect_to edit_scholarship_path(@scholarship, return_to: params[:return_to].presence, participant: params[:participant].presence),
+                notice: "Scholarship re-offered — awaiting the recipient's response."
+  rescue ActiveRecord::RecordInvalid => e
+    redirect_to edit_scholarship_path(@scholarship, return_to: params[:return_to].presence, participant: params[:participant].presence),
+                alert: e.record.errors.full_messages.to_sentence.presence || "Couldn't re-offer this scholarship."
+  end
+
   private
 
   # Filter state for the shared report filter partials (time period, event,
@@ -132,10 +141,15 @@ class ScholarshipsController < ApplicationController
   # filters (which resolve to the events a scholarship was awarded at).
   def filtered_scholarships
     # Eager-load everything the grid derives so each row's funder, program,
-    # location, training, and status cells add no per-row queries.
+    # location, training, and status cells add no per-row queries. The program's
+    # own affiliations back the status column (FacilitatorProgramStatus reads the
+    # loaded association); the allocation is loaded for its allocatable_type/_id
+    # alone, since Scholarship#event resolves the training through the recipient's
+    # already-loaded registrations rather than the allocatable itself.
     scope = authorized_scope(Scholarship.all).includes(
       { grant: :funder },
-      { recipient: [ { affiliations: { organization: :addresses } }, { event_registrations: :event } ] }
+      :allocation,
+      { recipient: [ { affiliations: { organization: [ :addresses, :affiliations ] } }, { event_registrations: :event } ] }
     )
     if params[:recipient_id].present?
       scope = scope.where(recipient_id: params[:recipient_id])
@@ -259,11 +273,23 @@ class ScholarshipsController < ApplicationController
     GlobalID::Locator.locate_signed(sgid) if sgid
   end
 
+  # A transferred-in reg carries no scholarship of its own — its recognition comes
+  # from the source it transferred from (see EventRegistration#effective_scholarship)
+  # and the dollars stay there. The UI hides the add link, but block the URL too and
+  # send the admin to the source, where the scholarship belongs. (#1944)
+  def redirect_transferred_in_scholarship
+    return false unless @allocatable.is_a?(EventRegistration) && @allocatable.transferred_in?
+
+    redirect_to edit_event_registration_path(@allocatable.transferred_from_registration),
+      alert: "This registrant transferred in from another event — add the scholarship on their original registration."
+    true
+  end
+
   def scholarship_params
     params.require(:scholarship).permit(
       :amount_dollars, :amount_cents, :tasks_completed, :agreement_signed, :grant_id, :recipient_id,
       comments_attributes: [ :id, :topic, :body, :flagged, :_destroy ],
-      notifications_attributes: [ :id, :channel, :sender_id, :email_subject, :email_body_text, :noticeable_type, :noticeable_id, :_destroy ]
+      notifications_attributes: [ :id, :channel, :sender_id, :email_subject, :email_body_text, :direction, :responded, :noticeable_type, :noticeable_id, :_destroy ]
     )
   end
 

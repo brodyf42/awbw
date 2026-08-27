@@ -11,8 +11,11 @@ RSpec.describe EventRegistrationServices::PublicRegistration do
     f
   end
 
+  # Resolve a field by identifier, tolerating the organization rename: the seeded
+  # form carries the canonical "organization_*" names, but specs may reference
+  # either spelling (see FormField.aliased_identifiers).
   def field_id(key)
-    form.form_fields.find_by!(field_identifier: key).id.to_s
+    form.form_fields.find_by!(field_identifier: FormField.aliased_identifiers(key)).id.to_s
   end
 
   def base_form_params(first_name:, last_name:, email:)
@@ -24,7 +27,28 @@ RSpec.describe EventRegistrationServices::PublicRegistration do
     }
   end
 
+  describe "registration status" do
+    it "flips an on-demand facilitator-training registration straight to attended" do
+      on_demand = create(:event, :published, :publicly_visible, facilitator_training: true, on_demand: true)
+      on_demand.event_forms.create!(form: form, role: "registration")
+
+      result = described_class.call(event: on_demand, registration_form: form,
+                                    form_params: base_form_params(first_name: "Sam", last_name: "Rowe", email: "sam@example.com"))
+
+      expect(result.event_registration.status).to eq("attended")
+    end
+
+    it "leaves a scheduled event's registration as registered" do
+      result = described_class.call(event: event, registration_form: form,
+                                    form_params: base_form_params(first_name: "Sam", last_name: "Rowe", email: "sam@example.com"))
+
+      expect(result.event_registration.status).to eq("registered")
+    end
+  end
+
   describe "affiliation creation" do
+    # A facilitator affiliation is only minted off a facilitator-training event.
+    let(:event) { create(:event, :published, :publicly_visible, facilitator_training: true) }
     let!(:organization) { create(:organization, name: "Helping Hands") }
 
     def register_with(position:)
@@ -48,6 +72,17 @@ RSpec.describe EventRegistrationServices::PublicRegistration do
 
       expect(person.affiliations.where(organization: organization).pluck(:title))
         .to contain_exactly("Facilitator")
+    end
+
+    # The facilitator affiliation is dated to the training, not to the day the form
+    # was submitted — the whole New/Ongoing/Reinstate rule leans on that, since an
+    # affiliation starting ON the training isn't prior history (ADR-0001 D8).
+    it "dates the facilitator affiliation to the event's start date" do
+      person = register_with(position: nil)
+
+      facilitator = person.affiliations.find_by(organization: organization, title: "Facilitator")
+      expect(facilitator.start_date).to eq(event.start_date.to_date)
+      expect(organization.reload.facilitator_status_on(event.start_date.to_date)).to eq(:new)
     end
 
     it "links the created affiliations to the agency address built from the form" do
@@ -75,6 +110,23 @@ RSpec.describe EventRegistrationServices::PublicRegistration do
       person = register_with(position: "Counselor")
 
       expect(person.affiliations.where(organization: organization).map(&:organization_address)).to all(be_nil)
+    end
+
+    it "creates only the job affiliation for a non-facilitator-training event" do
+      event.update!(facilitator_training: false)
+
+      person = register_with(position: "Counselor")
+
+      expect(person.affiliations.where(organization: organization).pluck(:title))
+        .to contain_exactly("Counselor")
+    end
+
+    it "links the created affiliations to the resulting registration" do
+      person = register_with(position: "Counselor")
+
+      registration = event.event_registrations.find_by(registrant: person)
+      expect(person.affiliations.where(organization: organization).map(&:event_registration))
+        .to all(eq(registration))
     end
   end
 
@@ -229,8 +281,10 @@ RSpec.describe EventRegistrationServices::PublicRegistration do
     end
   end
 
-  describe "mailing list consent" do
-    it "stamps the consent time and source when the registrant opts in" do
+  describe "News subscription capture" do
+    let!(:news) { create(:topic_subscription_type, name: "News") }
+
+    it "subscribes the registrant to News with the event as the source when they opt in" do
       params = base_form_params(first_name: "Coco", last_name: "Lee", email: "coco@example.com").merge(
         field_id("communication_consent") => [ "Yes" ]
       )
@@ -238,33 +292,30 @@ RSpec.describe EventRegistrationServices::PublicRegistration do
       described_class.call(event: event, registration_form: form, form_params: params)
       person = Person.find_by!(email: "coco@example.com")
 
-      expect(person.mailing_list_consent_at).to be_present
-      expect(person.mailing_list_consent_source).to eq("#{event.start_date.to_date.iso8601} #{event.title} registration")
+      subscription = person.topic_subscriptions.active.for_topic_type(news).sole
+      expect(subscription.source).to eq("#{event.start_date.to_date.iso8601} #{event.title} registration")
     end
 
-    it "does not record consent when the box is left unchecked" do
+    it "does not subscribe when the consent box is left unchecked" do
       params = base_form_params(first_name: "Coco", last_name: "Lee", email: "coco@example.com").merge(
         field_id("communication_consent") => [ "" ]
       )
 
       described_class.call(event: event, registration_form: form, form_params: params)
 
-      expect(Person.find_by!(email: "coco@example.com").mailing_list_consent_at).to be_nil
+      expect(Person.find_by!(email: "coco@example.com").topic_subscriptions).to be_empty
     end
 
-    it "never re-stamps or clears consent already on file" do
-      original = 1.year.ago
-      create(:person, first_name: "Coco", last_name: "Lee", email: "coco@example.com",
-                      mailing_list_consent_at: original, mailing_list_consent_source: "Earlier")
+    it "does not add a second active subscription when one already exists" do
+      person = create(:person, first_name: "Coco", last_name: "Lee", email: "coco@example.com")
+      create(:topic_subscription, person: person, topic_subscription_type: news, source: "Earlier")
       params = base_form_params(first_name: "Coco", last_name: "Lee", email: "coco@example.com").merge(
         field_id("communication_consent") => [ "Yes" ]
       )
 
       described_class.call(event: event, registration_form: form, form_params: params)
-      person = Person.find_by!(email: "coco@example.com")
 
-      expect(person.mailing_list_consent_at).to be_within(1.second).of(original)
-      expect(person.mailing_list_consent_source).to eq("Earlier")
+      expect(person.topic_subscriptions.active.for_topic_type(news).sole.source).to eq("Earlier")
     end
   end
 
@@ -429,7 +480,7 @@ RSpec.describe EventRegistrationServices::PublicRegistration do
       register_with_agency_type("Other: Equine therapy")
 
       answer = FormAnswer.joins(:form_field)
-        .find_by(form_fields: { field_identifier: "agency_type" })
+        .find_by(form_fields: { field_identifier: FormField.aliased_identifiers("organization_type") })
       expect(answer.submitted_answer).to eq("Other: Equine therapy")
     end
 
@@ -552,7 +603,7 @@ RSpec.describe EventRegistrationServices::PublicRegistration do
         event: event,
         registration_form: form,
         form_params: base_form_params(first_name: "Pat", last_name: "Lee", email: "pat@example.com").merge(
-          field_id("primary_sector_single") => primary_sector.id.to_s,
+          field_id("primary_sector") => primary_sector.id.to_s,
           field_id("additional_sectors") => [ additional_sector.id.to_s ]
         )
       )
@@ -571,7 +622,7 @@ RSpec.describe EventRegistrationServices::PublicRegistration do
         event: event,
         registration_form: form,
         form_params: base_form_params(first_name: "Pat", last_name: "Lee", email: "pat@example.com").merge(
-          field_id("primary_sector_single") => primary_sector.id.to_s
+          field_id("primary_sector") => primary_sector.id.to_s
         )
       )
 
@@ -586,7 +637,7 @@ RSpec.describe EventRegistrationServices::PublicRegistration do
         event: event,
         registration_form: form,
         form_params: base_form_params(first_name: "Pat", last_name: "Lee", email: "pat@example.com").merge(
-          field_id("primary_sector_single") => primary_sector.id.to_s
+          field_id("primary_sector") => primary_sector.id.to_s
         )
       )
 
@@ -607,7 +658,7 @@ RSpec.describe EventRegistrationServices::PublicRegistration do
         registration_form: form,
         form_params: base_form_params(first_name: "Al", last_name: "Ng", email: "al@example.com").merge(
           field_id("primary_age_group") => [ young.id.to_s ],
-          field_id("additional_age_group") => [ teen.id.to_s ]
+          field_id("additional_age_groups") => [ teen.id.to_s ]
         )
       )
 
@@ -934,6 +985,204 @@ RSpec.describe EventRegistrationServices::PublicRegistration do
 
       person = result.event_registration.registrant
       expect(FormSubmission.where(person: person, role: "scholarship")).to be_empty
+    end
+  end
+
+  describe "file-upload answers" do
+    let!(:upload_field) do
+      form.form_fields.create!(name: "Photo of your creation", answer_type: :file_upload,
+                               status: :active, position: 999)
+    end
+
+    def signed_id_for(fixture, content_type)
+      blob = ActiveStorage::Blob.create_and_upload!(
+        io: File.open(Rails.root.join("spec/fixtures/files", fixture)),
+        filename: fixture, content_type: content_type
+      )
+      blob.signed_id
+    end
+
+    it "attaches the uploaded blob to the answer and stores its filename" do
+      params = base_form_params(first_name: "Pat", last_name: "Art", email: "pat@example.com").merge(
+        upload_field.id.to_s => signed_id_for("sample.png", "image/png")
+      )
+
+      result = described_class.call(event: event, registration_form: form, form_params: params)
+
+      expect(result.success?).to be true
+      answer = result.form_submission.form_answers.find_by(form_field: upload_field)
+      expect(answer.uploaded_file).to be_attached
+      expect(answer.uploaded_file.filename.to_s).to eq("sample.png")
+      expect(answer.submitted_answer).to eq("sample.png")
+    end
+
+    it "leaves the answer fileless when nothing was uploaded" do
+      params = base_form_params(first_name: "No", last_name: "File", email: "nofile@example.com").merge(
+        upload_field.id.to_s => ""
+      )
+
+      result = described_class.call(event: event, registration_form: form, form_params: params)
+
+      expect(result.success?).to be true
+      answer = result.form_submission.form_answers.find_by(form_field: upload_field)
+      expect(answer.uploaded_file).to be_nil
+      expect(answer.submitted_answer).to eq("")
+    end
+
+    # assets.type defaults to "PrimaryAsset", so an unqualified build_asset yields
+    # a PrimaryAsset — five image types, no documents — while the form advertises
+    # the full Asset list. Every document type it offers has to actually save.
+    it "accepts every content type the upload field advertises" do
+      expect(FormUploadAsset::ACCEPTED_CONTENT_TYPES).to include("application/pdf")
+
+      params = base_form_params(first_name: "Doc", last_name: "Upload", email: "doc@example.com").merge(
+        upload_field.id.to_s => signed_id_for("sample.pdf", "application/pdf")
+      )
+
+      result = described_class.call(event: event, registration_form: form, form_params: params)
+
+      expect(result.errors).to be_empty
+      answer = result.form_submission.form_answers.find_by(form_field: upload_field)
+      expect(answer.uploaded_file.filename.to_s).to eq("sample.pdf")
+      expect(answer.asset).to be_a(FormUploadAsset)
+    end
+
+    it "rejects a file whose content type Asset does not accept" do
+      params = base_form_params(first_name: "Bad", last_name: "Type", email: "bad@example.com").merge(
+        upload_field.id.to_s => signed_id_for("sample.txt", "text/plain")
+      )
+
+      result = described_class.call(event: event, registration_form: form, form_params: params)
+
+      expect(result.success?).to be false
+      expect(Person.find_by(email: "bad@example.com")).to be_nil
+    end
+
+    it "rejects a file larger than Asset's maximum" do
+      blob = ActiveStorage::Blob.create_and_upload!(
+        io: File.open(Rails.root.join("spec/fixtures/files/sample.png")),
+        filename: "huge.png", content_type: "image/png"
+      )
+      blob.update!(byte_size: Asset::MAX_FILE_SIZE + 1)
+      params = base_form_params(first_name: "Too", last_name: "Big", email: "big@example.com").merge(
+        upload_field.id.to_s => blob.signed_id
+      )
+
+      result = described_class.call(event: event, registration_form: form, form_params: params)
+
+      expect(result.success?).to be false
+      expect(Person.find_by(email: "big@example.com")).to be_nil
+    end
+
+    # A tampered/expired signed id used to reach ActiveStorage's find_signed!,
+    # whose InvalidSignature isn't in this service's rescue list — a 500 on a
+    # public endpoint.
+    it "returns a form error rather than raising when the value isn't a usable signed id" do
+      params = base_form_params(first_name: "Bad", last_name: "Id", email: "badid@example.com").merge(
+        upload_field.id.to_s => "not-a-signed-id"
+      )
+
+      result = described_class.call(event: event, registration_form: form, form_params: params)
+
+      expect(result.success?).to be false
+      expect(result.errors.join).to match(/uploaded file/i)
+      expect(Person.find_by(email: "badid@example.com")).to be_nil
+    end
+
+    # submitted_answer is only a cache of the attachment's name. Pinned across
+    # every transition so a second writer that skips FormAnswer#sync_uploaded_filename!
+    # fails here rather than silently desyncing the two.
+    it "keeps submitted_answer equal to the attached filename through upload, replace, and blank re-submit" do
+      params = base_form_params(first_name: "Sync", last_name: "Check", email: "sync@example.com")
+      in_sync = lambda do |result|
+        answer = result.form_submission.form_answers.find_by(form_field: upload_field)
+        expect(answer.submitted_answer).to eq(answer.uploaded_file&.filename.to_s)
+        answer
+      end
+
+      uploaded = in_sync.call(described_class.call(
+        event: event, registration_form: form,
+        form_params: params.merge(upload_field.id.to_s => signed_id_for("sample.png", "image/png"))
+      ))
+      expect(uploaded.submitted_answer).to eq("sample.png")
+
+      replaced = in_sync.call(described_class.call(
+        event: event, registration_form: form,
+        form_params: params.merge(upload_field.id.to_s => signed_id_for("sample.pdf", "application/pdf"))
+      ))
+      expect(replaced.submitted_answer).to eq("sample.pdf")
+
+      blanked = in_sync.call(described_class.call(
+        event: event, registration_form: form, form_params: params.merge(upload_field.id.to_s => "")
+      ))
+      expect(blanked.submitted_answer).to eq("sample.pdf")
+    end
+
+    it "keeps the file already on the answer when a re-submission leaves the field blank" do
+      params = base_form_params(first_name: "Re", last_name: "Sub", email: "resub@example.com").merge(
+        upload_field.id.to_s => signed_id_for("sample.png", "image/png")
+      )
+      described_class.call(event: event, registration_form: form, form_params: params)
+
+      result = described_class.call(event: event, registration_form: form,
+                                    form_params: params.merge(upload_field.id.to_s => ""))
+
+      expect(result.success?).to be true
+      answer = result.form_submission.form_answers.find_by(form_field: upload_field)
+      expect(answer.uploaded_file).to be_attached
+      expect(answer.submitted_answer).to eq("sample.png")
+    end
+  end
+
+  # Guards the rename: forms built before the "agency_" -> "organization_" rename
+  # still carry the legacy identifiers, and the pipeline must keep reading them.
+  describe "legacy agency_ organization identifiers" do
+    let!(:organization) { create(:organization, name: "Legacy Org") }
+
+    let(:legacy_form) do
+      f = FormBuilderService.new(name: "Legacy", sections: %i[person_identifier]).call
+      {
+        "agency_name" => "Organization name",
+        "agency_position" => "Position",
+        "agency_website" => "Website",
+        "agency_type" => "Type",
+        "agency_street" => "Street",
+        "agency_city" => "City",
+        "agency_state" => "State",
+        "agency_zip" => "Zip",
+        "agency_country" => "Country"
+      }.each_with_index do |(identifier, name), index|
+        f.form_fields.create!(name: name, answer_type: :free_form_input_one_line, status: :active,
+                              position: 101 + index, field_identifier: identifier)
+      end
+      event.event_forms.create!(form: f, role: "registration")
+      f
+    end
+
+    def legacy_field_id(identifier)
+      legacy_form.form_fields.find_by!(field_identifier: identifier).id.to_s
+    end
+
+    it "links the organization and fills its profile from the legacy identifiers" do
+      params = {
+        legacy_field_id("first_name") => "Lee",
+        legacy_field_id("last_name") => "Legacy",
+        legacy_field_id("primary_email") => "lee@example.com",
+        legacy_field_id("agency_name") => "Legacy Org",
+        legacy_field_id("agency_website") => "legacy.org",
+        legacy_field_id("agency_type") => "501c3/nonprofit",
+        legacy_field_id("agency_city") => "Reno",
+        legacy_field_id("agency_state") => "NV"
+      }
+
+      result = described_class.call(event: event, registration_form: legacy_form, form_params: params)
+      organization.reload
+
+      expect(result.success?).to be true
+      expect(result.event_registration.organizations).to include(organization)
+      expect(organization.agency_type).to eq("501c3/nonprofit")
+      expect(organization.website_url).to include("legacy.org")
+      expect(organization.addresses.find_by(city: "Reno")).to be_present
     end
   end
 end

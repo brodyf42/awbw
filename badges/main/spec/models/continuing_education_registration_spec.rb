@@ -130,11 +130,78 @@ RSpec.describe ContinuingEducationRegistration, type: :model do
       expect(ce_reg_for(event: event, status: "attended", cost_cents: 10_000).certificate_available?).to be(false)
     end
 
+    it "requires logged attendance to approximately cover the awarded hours once time is tracked" do
+      event = create(:event, ce_hours_offered: 6, start_date: 3.days.ago, end_date: 1.day.ago)
+      ce_reg = ce_reg_for(event: event, status: "attended") # 6h awarded → needs 324 min (90%)
+      reg = ce_reg.event_registration
+
+      # Only 5 hours (300 min) logged — short of the 324-minute threshold.
+      create(:event_attendance_time_entry, event_registration: reg,
+        signed_in_at: 2.days.ago.change(hour: 9), signed_out_at: 2.days.ago.change(hour: 14))
+      expect(ce_reg.certificate_available?).to be(false)
+
+      # Another 30 minutes clears the threshold (330 ≥ 324).
+      create(:event_attendance_time_entry, event_registration: reg,
+        signed_in_at: 2.days.ago.change(hour: 14), signed_out_at: 2.days.ago.change(hour: 14, min: 30))
+      expect(ce_reg.reload.certificate_available?).to be(true)
+    end
+
+    it "isn't gated on logged time when no attendance was tracked" do
+      event = create(:event, ce_hours_offered: 6, start_date: 3.days.ago, end_date: 1.day.ago)
+      expect(ce_reg_for(event: event, status: "attended").certificate_available?).to be(true)
+    end
+
     it "records delivery via certificate_sent_at" do
       ce_reg = create(:continuing_education_registration)
       expect(ce_reg.certificate_sent?).to be(false)
       ce_reg.mark_certificate_sent!
       expect(ce_reg.certificate_sent?).to be(true)
+    end
+
+    describe "transfer creates a second record (two-record model, #1944)" do
+      let(:origin_event) { create(:event, ce_hours_offered: 6, ce_hours_cost_cents: 10_000, start_date: 3.days.ago, end_date: 1.day.ago) }
+      let(:origin_reg) { create(:event_registration, event: origin_event, status: "attended") }
+      let(:license) { create(:professional_license, person: origin_reg.registrant) }
+
+      it "carries hours/cost from the source without re-defaulting from the event" do
+        # A real transfer leaves a matching stub on the source; that stub is what
+        # marks the destination record as transfer-carried.
+        origin_reg.continuing_education_registrations.create!(
+          professional_license: license, hours: 0, cost_cents: 10_000, skip_event_defaults: true)
+        dest_reg = create(:event_registration, event: create(:event, ce_hours_offered: 6, ce_hours_cost_cents: 10_000),
+          registrant: origin_reg.registrant, transferred_from_registration: origin_reg)
+        ce = dest_reg.continuing_education_registrations.create!(
+          professional_license: license, hours: 6, cost_cents: 0, skip_event_defaults: true)
+
+        expect(ce.hours).to eq(6)
+        expect(ce.cost_cents).to eq(0)   # the event's $100 default is skipped
+        expect(ce).to be_transfer_created
+      end
+
+      it "certifies against its own (destination) event, not the source" do
+        future = create(:event, ce_hours_offered: 6, start_date: 10.days.from_now, end_date: 12.days.from_now)
+        dest_reg = create(:event_registration, event: future, registrant: origin_reg.registrant,
+          status: "attended", transferred_from_registration: origin_reg)
+        ce = dest_reg.continuing_education_registrations.create!(
+          professional_license: license, hours: 6, cost_cents: 0, skip_event_defaults: true)
+
+        # Origin already ended, but the hours are earned at the destination event,
+        # which hasn't happened yet → not certifiable until that event ends.
+        expect(ce.certificate_available?).to be(false)
+        future.update!(start_date: 3.days.ago, end_date: 1.day.ago)
+        expect(ce.reload.certificate_available?).to be(true)
+      end
+
+      it "links a transfer-created record back to the paid original for the same license" do
+        origin_ce = origin_reg.continuing_education_registrations.create!(
+          professional_license: license, hours: 0, cost_cents: 10_000, skip_event_defaults: true)
+        dest_reg = create(:event_registration, event: create(:event, ce_hours_offered: 6),
+          registrant: origin_reg.registrant, transferred_from_registration: origin_reg)
+        ce = dest_reg.continuing_education_registrations.create!(
+          professional_license: license, hours: 6, cost_cents: 0, skip_event_defaults: true)
+
+        expect(ce.origin_ce_registration).to eq(origin_ce)
+      end
     end
   end
 
@@ -261,6 +328,47 @@ RSpec.describe ContinuingEducationRegistration, type: :model do
 
       create(:allocation, source: payment, allocatable: ce_reg, amount: 6_000)
       expect(ce_reg.payment_status_label).to eq("Paid")
+    end
+  end
+
+  describe ".search_by_params" do
+    let(:person) { create(:person) }
+    let(:license) { create(:professional_license, person: person) }
+
+    def ce_reg(license:, certificate_sent_at: nil)
+      registration = create(:event_registration, registrant: license.person)
+      create(:continuing_education_registration,
+        event_registration: registration,
+        professional_license: license,
+        certificate_sent_at: certificate_sent_at)
+    end
+
+    it "filters to a single license" do
+      mine = ce_reg(license: license)
+      other = ce_reg(license: create(:professional_license))
+
+      results = ContinuingEducationRegistration.search_by_params(professional_license_id: license.id)
+
+      expect(results).to include(mine)
+      expect(results).not_to include(other)
+    end
+
+    it "filters by issued-on date range" do
+      in_range = ce_reg(license: license, certificate_sent_at: Date.new(2026, 6, 15).noon)
+      before_range = ce_reg(license: license, certificate_sent_at: Date.new(2025, 12, 31).noon)
+
+      results = ContinuingEducationRegistration.search_by_params(issued_from: "2026-01-01", issued_to: "2026-12-31")
+
+      expect(results).to include(in_range)
+      expect(results).not_to include(before_range)
+    end
+
+    it "ignores an unparseable date" do
+      reg = ce_reg(license: license, certificate_sent_at: Time.current)
+
+      results = ContinuingEducationRegistration.search_by_params(issued_from: "not-a-date")
+
+      expect(results).to include(reg)
     end
   end
 end

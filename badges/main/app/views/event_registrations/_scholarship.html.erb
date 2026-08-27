@@ -1,7 +1,7 @@
 <%# ---- Scholarship — "Requested" is a plain flag saved with the form; it does
     not create or destroy an award. Awarding is a deliberate action via
     "Add scholarship". ---- %>
-<section class="flex min-h-[12rem] flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+<section id="scholarship-card" class="flex min-h-[12rem] scroll-mt-20 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
   <div class="flex items-center gap-3 border-b border-gray-100 px-4 py-3">
     <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg <%= section_icon_class(:scholarships, scholarship.present? || event_registration.scholarship_requested) %>">
       <i class="fa-solid fa-graduation-cap"></i>
@@ -28,10 +28,10 @@
         <div class="flex items-center gap-2">
           <span class="text-sm font-semibold text-gray-900 tabular-nums"><%= dollars_from_cents(scholarship.amount_cents) %></span>
           <%= link_to edit_scholarship_path(scholarship, return_to: "registration"),
-                      class: "ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 hover:underline",
+                      class: "ml-auto inline-flex items-center gap-1.5 text-xs font-medium #{eyebrow_link_class} hover:underline",
                       target: "_blank", rel: "noopener" do %>
             Edit
-            <i class="fa-solid fa-arrow-up-right-from-square text-[0.6rem]"></i>
+            <i class="fa-solid fa-arrow-up-right-from-square text-2xs"></i>
           <% end %>
         </div>
 
@@ -51,17 +51,7 @@
             the organizations card's "Connect organization" link. %>
         <div class="mt-auto flex flex-wrap items-center gap-1.5 pt-3">
           <%# Agreement first, then tasks — the recipient agrees before completing tasks. %>
-          <% if scholarship.agreement_signed? %>
-            <%= render "shared/badge",
-                       label: "Agreement signed",
-                       classes: "#{DomainTheme.bg_class_for(:scholarships, intensity: 50)} #{DomainTheme.text_class_for(:scholarships, intensity: 700)} #{DomainTheme.border_class_for(:scholarships, intensity: 200)}",
-                       icon: "fa-solid fa-file-signature" %>
-          <% else %>
-            <%= render "shared/badge",
-                       label: "Agreement pending",
-                       classes: "bg-amber-50 text-amber-700 border-amber-200",
-                       icon: "fa-solid fa-file-signature" %>
-          <% end %>
+          <%= scholarship.decorate.agreement_status_badge(all_states: true, prefix: true, icon_size: nil) %>
           <% if scholarship.tasks_completed? %>
             <%= render "shared/badge",
                        label: "Tasks completed",
@@ -80,9 +70,9 @@
         <%= link_to new_scholarship_path(allocatable_sgid: event_registration.to_sgid.to_s, return_to: "registration"),
                     class: "inline-flex items-center gap-1.5 self-start rounded-md px-2 py-1 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700",
                     target: "_blank", rel: "noopener" do %>
-          <i class="fa-solid fa-plus text-[0.6rem]"></i>
+          <i class="fa-solid fa-plus text-2xs"></i>
           Add scholarship
-          <i class="fa-solid fa-arrow-up-right-from-square text-[0.6rem]"></i>
+          <i class="fa-solid fa-arrow-up-right-from-square text-2xs"></i>
         <% end %>
       </div>
     <% end %>

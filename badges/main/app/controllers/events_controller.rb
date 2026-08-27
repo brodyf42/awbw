@@ -2,18 +2,19 @@ class EventsController < ApplicationController
   include AhoyTracking, TagAssignable
   skip_before_action :authenticate_user!, only: [ :index, :show, :staff ]
   skip_before_action :verify_authenticity_token, only: [ :preview ]
-  before_action :set_event, only: %i[ show edit update destroy preview dashboard sample_ticket registrants roster onboarding staff edit_staff update_staff recipients preview_reminder confirm_reminder send_reminder copy_registration_form feature_recipient_shoutout ]
-  before_action :set_report_filters, only: %i[ revenue participation reports scholarships ]
+  before_action :set_event, only: %i[ show edit update destroy preview dashboard attendance sample_ticket registrants roster onboarding staff edit_staff update_staff recipients preview_reminder confirm_reminder send_reminder copy_registration_form feature_recipient_shoutout ]
+  before_action :set_report_filters, only: %i[ revenue participation reports scholarships program_statuses signins ]
   # The cross-event report suite is visible to admins and event owners alike; what
   # differs is the rows, which EventPolicy's :reportable scope narrows to the
-  # viewer's own events.
-  before_action :authorize_report!, only: %i[ revenue participation reports scholarships attendees ]
+  # viewer's own events. #attendance is per-event, so it authorizes its own record
+  # rather than joining this list.
+  before_action :authorize_report!, only: %i[ revenue participation reports scholarships program_statuses attendees signins ]
   # Log a visit to each event page / report. after_action so it only fires once
   # the action rendered successfully (authorization inside the actions has passed);
   # the turbo_frame_request? / redirect guards skip the lazy results/charts
   # sub-requests and the confirm-reminder bounce-back. send_reminder is logged
   # inline on a successful send (it always redirects).
-  after_action :track_page_view, only: %i[ dashboard roster registrants recipients staff onboarding edit preview sample_ticket revenue participation reports scholarships attendees confirm_reminder ]
+  after_action :track_page_view, only: %i[ dashboard attendance roster registrants recipients staff onboarding edit preview sample_ticket revenue participation reports scholarships program_statuses attendees signins confirm_reminder ]
 
   def index
     authorize!
@@ -62,6 +63,7 @@ class EventsController < ApplicationController
     @revenue_report = EventRevenueReport.new(report_events(Event.paid))
     @participation_report = EventParticipationReport.new(report_events(Event.all))
     @scholarship_report = EventScholarshipReport.new(report_events(Event.facilitator_trainings))
+    @program_status_report = EventProgramStatusReport.new(report_events(Event.facilitator_trainings))
   end
 
   # Cross-event scholarship report: scholarship dollars and award counts (funded
@@ -71,6 +73,13 @@ class EventsController < ApplicationController
   def scholarships
     events, selected_year = filtered_report_events(Event.facilitator_trainings)
     @report = EventScholarshipReport.new(events, featured_year: selected_year, funder: @filter_funder)
+  end
+
+  # Organizations by program status at each facilitator training, by year — the
+  # annual-reporting figures. Sibling of the other cross-event reports.
+  def program_statuses
+    events, selected_year = filtered_report_events(Event.facilitator_trainings)
+    @report = EventProgramStatusReport.new(events, featured_year: selected_year)
   end
 
   # Cross-event index of the people behind event registrations, deduped to one row
@@ -100,6 +109,29 @@ class EventsController < ApplicationController
     @people = people.paginate(page: params[:page], per_page: per_page)
     @roster = AttendeesRoster.new(@people, events: attendee_events, registrations: attendee_registrations)
     render :attendees_results
+  end
+
+  # Per-event attendance sign-in/out report, grouped by day then registrant — the
+  # in-portal CE hour sign-in sheet. `?ce=true` scopes to CE registrants and shows
+  # their license number and awarded hours.
+  def attendance
+    authorize! @event
+    @report = EventAttendanceReport.new(@event, ce_only: params[:ce] == "true")
+  end
+
+  # Cross-event sign-ins: the totals table for each event the report filters reach,
+  # so staff can read a training's logged hours without opening it, and compare
+  # across a year. Sibling of the revenue/participation/scholarship reports, sharing
+  # their filter bar. CE columns switch on when any event in scope grants CE —
+  # otherwise a mixed selection would hide the licence numbers the boards audit.
+  def signins
+    @events = report_events(Event.all).select { |event| event.event_dates.any? }
+    # Whether anything narrows the scope, so the header can say "All events" rather
+    # than reciting every event the portal holds.
+    @signins_narrowed = [ @filter_event, @event_type, @event_search ].any?(&:present?)
+    @signins_ce = @events.any?(&:ce_eligible?)
+    @reports = @events.map { |event| EventAttendanceReport.new(event, ce_only: @signins_ce) }
+      .select(&:any?)
   end
 
   def new
@@ -190,12 +222,13 @@ class EventsController < ApplicationController
     scope = scope.funder_name(params[:funder_name]) if params[:funder_name].present?
     scope = scope.submission_status(params[:submission_status], @event) if params[:submission_status].present?
     scope = scope.registrant_city(params[:city]) if params[:city].present?
-    scope = scope.organization_status(params[:org_status], @event) if params[:org_status].present?
+    scope = scope.organization_linking_status(params[:org_status], @event) if params[:org_status].present?
     scope = scope.account_status(params[:account_status]) if params[:account_status].present?
     scope = scope.registrant_ids(params[:registrant_ids]) if params[:registrant_ids].present?
     scope = scope.registrant_state(params[:state]) if params[:state].present?
     scope = scope.registrant_county(params[:county]) if params[:county].present?
     scope = scope.registrant_sector(params[:sector]) if params[:sector].present?
+    scope = scope.registered_between(params[:registered_from], params[:registered_to])
 
     @active_count = scope.active.count
     @inactive_count = scope.inactive.count
@@ -283,7 +316,7 @@ class EventsController < ApplicationController
     authorize! @event, to: :staff?
     @event = @event.decorate
     @event_staffs = @event.event_staffs
-      .includes(person: [ :sectors, { categorizable_items: { category: :category_type } }, { avatar_attachment: :blob }, { affiliations: :organization } ])
+      .includes(person: [ :sectors, :professional_licenses, { categorizable_items: { category: :category_type } }, { avatar_attachment: :blob }, { affiliations: :organization } ])
       .ordered_by_name
   end
 
@@ -316,7 +349,8 @@ class EventsController < ApplicationController
       recipients = Person.where(id: @dashboard.scholarship_applicant_ids)
       @breakdowns = AttendeesBreakdowns.new(recipients,
         events: Event.where(id: @event.id),
-        registrations: EventRegistration.active)
+        registrations: EventRegistration.active,
+        as_of: @event.start_date&.to_date)
       return render :recipients_charts
     end
 
@@ -331,7 +365,11 @@ class EventsController < ApplicationController
     authorize! @event, to: :recipients?
     registration = @event.event_registrations.active.find_by(id: params[:registration_id])
     unless registration
-      redirect_to recipients_event_path(@event), alert: "Choose a recipient to feature." and return
+      # A transferred-out reg is inactive, so it never matches above — give an
+      # accurate "locked" warning instead of the generic prompt. (#1944)
+      locked = @event.event_registrations.find_by(id: params[:registration_id])&.editing_locked?
+      message = locked ? "That registrant was transferred out — their registration is locked. Undo the transfer to feature them." : "Choose a recipient to feature."
+      redirect_to recipients_event_path(@event), alert: message and return
     end
 
     authorize! registration, to: :update?
@@ -353,7 +391,7 @@ class EventsController < ApplicationController
       .includes(
         :event, :organizations, :comments,
         { scholarships: { grant: :funder } },
-        registrant: [ :user, :contact_methods, :addresses ]
+        registrant: [ :user, :contact_methods, :addresses, :topic_subscriptions ]
       )
       .joins(:registrant)
       .select { |r| r.registrant.preferred_email.present? }
@@ -368,6 +406,7 @@ class EventsController < ApplicationController
     # filters reuse the registrants-roster scopes (via the event), so both pages
     # stay in sync; @dashboard supplies the state/county options.
     @dashboard = EventDashboard.new(@event)
+    @topic_subscription_types = TopicSubscriptionType.active.ordered
     recipient_filter = ReminderRecipientFilter.new(@event_registrations, params, event: @event)
     @matched_ids = recipient_filter.matched_ids
     @filtering = recipient_filter.filtering?
@@ -384,16 +423,22 @@ class EventsController < ApplicationController
     # Pre-fill the editable message with the standard reminder sentence (days
     # resolved now). Absent param = first load → default; a present-but-blank
     # param = the admin cleared it (e.g. bounced back here) → respect the blank.
-    @custom_message = params.key?(:custom_message) ? params[:custom_message].to_s : helpers.default_reminder_message(days_until_event)
+    @custom_message = params.key?(:custom_message) ? params[:custom_message].to_s : helpers.default_reminder_message(days_until_event, event: @event)
     # Pre-fill the editable subject with the standard portal subject. Same
     # absent-vs-present logic as the message, so a bounce-back keeps the admin's
     # edit; a blank subject falls back to the default at send time.
     @custom_subject = params.key?(:custom_subject) ? params[:custom_subject].to_s : helpers.default_reminder_subject(@event)
+    # Same absent-vs-present logic as the message: on-demand training defaults to
+    # hiding the box (its dates/times/cost describe nothing), but an explicit "0"
+    # from a bounce-back means the admin unticked it and we respect that.
+    @hide_event_card = params.key?(:hide_event_card) ? hide_event_card_param : @event.on_demand?
+    # The ticket button shows by default — only hidden when the admin explicitly ticks it.
+    @hide_ticket_button = hide_ticket_button_param
 
     if @sample_registration
       # Render in preview mode so the custom-message container is always present
       # in the markup for the live preview, even before any text is typed.
-      mail = EventMailer.event_registration_reminder(@sample_registration, custom_message: @custom_message, custom_subject: @custom_subject, preview: true)
+      mail = EventMailer.event_registration_reminder(@sample_registration, custom_message: @custom_message, custom_subject: @custom_subject, hide_event_card: @hide_event_card, hide_ticket_button: @hide_ticket_button, preview: true)
       @reminder_preview_html = mail.html_part&.body&.decoded
     end
   end
@@ -408,9 +453,11 @@ class EventsController < ApplicationController
     @event_registrations = selected_reminder_registrations
     @custom_message = params[:custom_message].to_s
     @custom_subject = params[:custom_subject].to_s
+    @hide_event_card = hide_event_card_param
+    @hide_ticket_button = hide_ticket_button_param
 
     if @event_registrations.empty?
-      redirect_to preview_reminder_event_path(@event, mode: params[:mode].presence, custom_message: @custom_message, custom_subject: @custom_subject), alert: "Please select at least one recipient."
+      redirect_to preview_reminder_event_path(@event, mode: params[:mode].presence, custom_message: @custom_message, custom_subject: @custom_subject, hide_event_card: (hide_event_card_param ? "1" : "0"), hide_ticket_button: (hide_ticket_button_param ? "1" : "0")), alert: "Please select at least one recipient."
       return
     end
 
@@ -420,7 +467,7 @@ class EventsController < ApplicationController
       return
     end
 
-    mail = EventMailer.event_registration_reminder(@event_registrations.first, custom_message: @custom_message, custom_subject: @custom_subject)
+    mail = EventMailer.event_registration_reminder(@event_registrations.first, custom_message: @custom_message, custom_subject: @custom_subject, hide_event_card: @hide_event_card, hide_ticket_button: @hide_ticket_button)
     @reminder_subject = mail.subject
     @reminder_preview_html = mail.html_part&.body&.decoded
   end
@@ -430,7 +477,7 @@ class EventsController < ApplicationController
     registrations = selected_reminder_registrations
 
     if registrations.empty?
-      redirect_to preview_reminder_event_path(@event, mode: params[:mode].presence, custom_message: params[:custom_message].to_s, custom_subject: params[:custom_subject].to_s), alert: "Please select at least one recipient."
+      redirect_to preview_reminder_event_path(@event, mode: params[:mode].presence, custom_message: params[:custom_message].to_s, custom_subject: params[:custom_subject].to_s, hide_event_card: (hide_event_card_param ? "1" : "0"), hide_ticket_button: (hide_ticket_button_param ? "1" : "0")), alert: "Please select at least one recipient."
       return
     end
 
@@ -438,6 +485,8 @@ class EventsController < ApplicationController
 
     custom_message = params[:custom_message].to_s
     custom_subject = params[:custom_subject].to_s
+    hide_event_card = hide_event_card_param
+    hide_ticket_button = hide_ticket_button_param
 
     # Record an individual notification per recipient (delivered + persisted via
     # NotificationMailerJob), so each reminder shows up in that person's
@@ -450,8 +499,11 @@ class EventsController < ApplicationController
         recipient_email: event_registration.registrant.preferred_email,
         notification_type: 0,
         sender: current_user, # an admin sent these by hand from the reminders page
+        bulk: true,
         custom_message: custom_message.presence,
-        custom_subject: custom_subject.presence
+        custom_subject: custom_subject.presence,
+        hide_event_card: hide_event_card,
+        hide_ticket_button: hide_ticket_button
       )
     end
 
@@ -459,7 +511,7 @@ class EventsController < ApplicationController
     # was sent. Roster passed as plain "Name <email>" labels so the delivery job
     # needs no record lookups.
     recipient_labels = registrations.map { |r| "#{r.registrant.full_name} <#{r.registrant.preferred_email}>" }
-    EventMailer.event_registration_reminder_fyi(@event, recipient_labels, custom_message: custom_message.presence).deliver_later
+    EventMailer.event_registration_reminder_fyi(@event, recipient_labels, custom_message: custom_message.presence, hide_event_card: hide_event_card, hide_ticket_button: hide_ticket_button).deliver_later
 
     track_view("events.send_reminder", { event_id: @event.id, recipient_count: registrations.size })
     redirect_to registrants_event_path(@event), notice: "Reminder emails are being sent to #{registrations.size} registrant#{'s' if registrations.size != 1}."
@@ -544,7 +596,7 @@ class EventsController < ApplicationController
       message = @event.errors.full_messages.to_sentence.presence || "Event could not be destroyed."
       respond_to do |format|
         format.html { redirect_to event_path(@event), status: :see_other, alert: message }
-        format.json { render json: { errors: @event.errors.full_messages }, status: :unprocessable_entity }
+        format.json { render json: { errors: @event.errors.full_messages }, status: :unprocessable_content }
       end
     end
   end
@@ -784,14 +836,24 @@ class EventsController < ApplicationController
     scope = scope.where(id: person_linked_organization_ids(params[:organization_id])) if params[:organization_id].present?
     scope = scope.where(id: person_linked_org_city_ids(params[:org_city])) if params[:org_city].present?
     if params[:scholarship].present?
-      ids = scholarship_recipient_person_ids
-      scope = params[:scholarship] == "no" ? scope.where.not(id: ids) : scope.where(id: ids)
+      # Scoped to one event, every status (including "no") is unambiguous at the
+      # registration level, so reuse the shared scope. Cross-event, "No scholarship"
+      # instead means "never a recipient in any attended registration" — a person-
+      # level question the registration scope can't express — so answer it person-side.
+      scope = if params[:scholarship] == "no" && @filter_event.nil?
+        scope.where.not(id: scholarship_recipient_person_ids)
+      else
+        scope.where(id: scholarship_status_person_ids(params[:scholarship]))
+      end
     end
-    if params[:ce].present?
-      ids = ce_person_ids
-      scope = params[:ce] == "no" ? scope.where.not(id: ids) : scope.where(id: ids)
+    # Address filters read the person's own address data directly (no registration
+    # required) — city is a free-text match, state/county exact. City and state ask
+    # one subquery so they describe the same address, matching the roster's shared
+    # join; two subqueries would let someone with homes in two states through on a
+    # city from one and a state from the other.
+    if params[:state].present? || params[:city].present?
+      scope = scope.where(id: person_address_ids(state: params[:state], city: params[:city]))
     end
-    scope = scope.where(id: person_address_ids(state: params[:state])) if params[:state].present?
     if params[:county].present?
       # County options carry their state ("STATE::County") so same-named counties
       # across states don't collide.
@@ -799,9 +861,58 @@ class EventsController < ApplicationController
       scope = scope.where(id: person_address_ids(state: county_state, county: county_name))
     end
 
+    # Shared registration-level filters, applied cross-event with "any registration
+    # matches" semantics: reuse each EventRegistration scope against the attended
+    # registrations and keep the people behind the matches. (Submission status,
+    # organization linking and readiness are event/form-specific, so they stay on the
+    # single-event roster/picker only.)
+    ATTENDEE_REGISTRATION_FILTERS.each do |param, scope_name|
+      value = params[param].presence
+      next if value.nil?
+      # A value asking for an absence ("No comments", "No CE") can't be matched one
+      # registration at a time: that lets through anyone who commented — or took CE —
+      # on a different one. Ask the positive scope and exclude instead, the same shape
+      # as "No scholarship" above. (Scoped to one event the two readings agree, so
+      # this needs no @filter_event branch.)
+      positive = ATTENDEE_NEGATIVE_FILTER_VALUES[[ param, value ]]
+      scope = if positive
+        scope.where.not(id: registration_scope_person_ids(scope_name, positive))
+      else
+        scope.where(id: registration_scope_person_ids(scope_name, value))
+      end
+    end
+
     scope
       .includes(:affiliations, { sectorable_items: :sector }, { age_range_categorizable_items: { category: :category_type } })
       .order(:first_name, :last_name)
+  end
+
+  # param => EventRegistration scope for the registration-level filters the
+  # cross-event attendees index shares with the registrants roster. (payment_status
+  # and funder are already applied to attendee_registrations, so they're not here.)
+  ATTENDEE_REGISTRATION_FILTERS = {
+    payment_method: :payment_method,
+    ce_status: :ce_status,
+    funder_name: :funder_name,
+    account_status: :account_status,
+    comment_status: :comment_status,
+    comment: :comment_text,
+    topic_subscription: :registrant_topic_subscription
+  }.freeze
+  # [ param, value ] => the positive value to ask for and exclude. These are the
+  # values that assert an absence about the person, which cross-event can only be
+  # answered by inverting the positive set — see the loop above.
+  ATTENDEE_NEGATIVE_FILTER_VALUES = {
+    [ :comment_status, "none" ] => "present",
+    [ :ce_status, EventRegistration::NO_CE ] => "registered"
+  }.freeze
+
+  # People behind the attended registrations that match a registration-level scope.
+  def registration_scope_person_ids(scope_name, value)
+    EventRegistration
+      .where(id: attendee_registrations.select(:id))
+      .public_send(scope_name, value)
+      .select(:registrant_id)
   end
 
   def person_sector_ids(sector_id)
@@ -852,14 +963,14 @@ class EventsController < ApplicationController
       .transform_values { |pairs| pairs.map(&:first) }
   end
 
-  # Person ids whose linked training org currently has the given facilitator
-  # program status (new / ongoing / reinstated).
+  # Anchored the same way the index's own column is: this list spans events, so
+  # both read as of the start of the current year rather than disagreeing.
   def person_program_status_ids(status)
     status_sym = status.to_sym
     org_ids = Organization
       .where(id: EventRegistrationOrganization.where(event_registration_id: attendee_registrations.select(:id)).select(:organization_id))
       .includes(:affiliations)
-      .select { |organization| organization.facilitator_status_on(Date.current) == status_sym }
+      .select { |organization| organization.facilitator_status_on == status_sym }
       .map(&:id)
     return Person.none if org_ids.empty?
     person_linked_organization_ids(org_ids)
@@ -871,9 +982,12 @@ class EventsController < ApplicationController
       .select(:registrant_id)
   end
 
-  def ce_person_ids
+  # People behind the attended registrations whose scholarship matches a recipient
+  # sub-status (yes/agreed/complete/incomplete), via the shared scope.
+  def scholarship_status_person_ids(value)
     EventRegistration
-      .where(id: ContinuingEducationRegistration.where(event_registration_id: attendee_registrations.select(:id)).select(:event_registration_id))
+      .where(id: attendee_registrations.select(:id))
+      .scholarship_status(value)
       .select(:registrant_id)
   end
 
@@ -883,10 +997,18 @@ class EventsController < ApplicationController
     Affiliation.with_status(status).select(:person_id)
   end
 
-  def person_address_ids(state: nil, county: nil)
+  # Person ids behind active person addresses, narrowed by any of state, county or
+  # city. City is a free-text LIKE (matching the roster's registrant_city filter),
+  # state/county are exact. Street isn't a filter anywhere yet, but the column
+  # exists — add a `street:` clause here the same way if one is ever needed.
+  def person_address_ids(state: nil, county: nil, city: nil)
     scope = Address.active.where(addressable_type: "Person")
     scope = scope.where(state: state) if state.present?
     scope = scope.where(county: county) if county.present?
+    if city.present?
+      like = "%#{Address.sanitize_sql_like(city.downcase.strip)}%"
+      scope = scope.where("LOWER(addresses.city) LIKE ?", like)
+    end
     scope.select(:addressable_id)
   end
 
@@ -901,6 +1023,7 @@ class EventsController < ApplicationController
     addresses = Address.active.where(addressable_type: "Person", addressable_id: person_ids)
     @attendee_states = addresses.where.not(state: [ nil, "" ]).distinct.pluck(:state).sort
     @attendee_counties = addresses.where.not(county: [ nil, "" ]).where.not(state: [ nil, "" ]).distinct.pluck(:state, :county).sort
+    @attendee_topic_types = TopicSubscriptionType.active.ordered
   end
 
   def invite_mode?
@@ -913,7 +1036,7 @@ class EventsController < ApplicationController
   # its own communication record, so there's no separate per-recipient notification
   # or admin FYI here.
   def send_bulk_invites(registrations)
-    invited = registrations.count { |reg| PersonInviter.call(person: reg.registrant, sender: current_user).invited }
+    invited = registrations.count { |reg| PersonInviter.call(person: reg.registrant, sender: current_user, bulk: true).invited }
 
     track_view("events.send_invites", { event_id: @event.id, recipient_count: invited })
     redirect_to registrants_event_path(@event), notice: "Portal invite (confirmation) emails are being sent to #{invited} #{'person'.pluralize(invited)}."
@@ -932,6 +1055,16 @@ class EventsController < ApplicationController
     @reminder_preview_html = mail.html_part&.body&.decoded
   end
 
+  # Whether the admin ticked "hide the event details box" on the compose page.
+  def hide_event_card_param
+    ActiveModel::Type::Boolean.new.cast(params[:hide_event_card]) || false
+  end
+
+  # Whether the admin ticked "hide the View ticket button" on the compose page.
+  def hide_ticket_button_param
+    ActiveModel::Type::Boolean.new.cast(params[:hide_ticket_button]) || false
+  end
+
   # The registrations the admin checked on the recipient picker, narrowed to those
   # we can actually email. Shared by the confirm interstitial and the send action
   # so both operate on exactly the same set.
@@ -944,12 +1077,13 @@ class EventsController < ApplicationController
   end
 
   # Maps registrant person_id => the organization name they typed on the
-  # registration form (the `agency_name` answer), in one batch query. Drives both
+  # registration form (the organization-name answer, canonical or legacy), in one
+  # batch query. Drives both
   # the roster's Pending/None org chip and the readiness "Organization not linked"
   # check, so both read the same resolved answer.
   def submitted_org_names_for(registrations)
     registration_form = @event.registration_form
-    field = registration_form&.form_fields&.find_by(field_identifier: "agency_name")
+    field = registration_form&.form_fields&.find_by(field_identifier: FormField.aliased_identifiers("organization_name"))
     return {} unless field
 
     FormAnswer.joins(:form_submission)
@@ -1028,7 +1162,7 @@ class EventsController < ApplicationController
   def onboarding_csv_row(registration, cost_required, day_count, include_ce = false)
     person = registration.registrant
     scholarship = registration.scholarships.first
-    statuses = registration.program_statuses.map { |status| status.to_s.titleize }.join(", ")
+    statuses = registration.program_statuses.map(&:label).join(", ")
 
     row = [
       person.first_name,
@@ -1066,7 +1200,7 @@ class EventsController < ApplicationController
     (1..day_count).each do |day|
       row << (registration.public_send("completed_day_#{day}") ? "Yes" : "No")
     end
-    row << registration.attendance_status_label
+    row << registration.attendance_status_report_label
     row << registration.comments.map { |comment| comment.body.to_s.strip }.reject(&:blank?).join(" ::: ")
     row << (registration.comments.any?(&:flagged?) ? "Yes" : "No")
     row

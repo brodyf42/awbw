@@ -1,4 +1,5 @@
 class Affiliation < ApplicationRecord
+  include Communicable
   # Standing title given to the "facilitator affiliation" we create on registration
   # and org linking. Matches the `facilitators` scope / `facilitator?` predicate
   # (both treat exactly "Facilitator" as canonical).
@@ -16,14 +17,27 @@ class Affiliation < ApplicationRecord
   belongs_to :person, touch: true
   # Which of the organization's addresses this person is affiliated with (optional).
   belongs_to :organization_address, class_name: "Address", optional: true
+  # The registration that auto-minted this affiliation, when it came from one. NULL
+  # for manually/historically created rows — reconciliation only sweeps rows that
+  # have this link.
+  belongs_to :event_registration, optional: true, inverse_of: :affiliations
+
+  has_many :comments, -> { newest_first }, as: :commentable, dependent: :destroy
+
+  # A communication logged on an affiliation is addressed to the affiliated person.
+  def communications_email
+    person&.preferred_email
+  end
+  accepts_nested_attributes_for :comments, allow_destroy: true, reject_if: proc { |attrs| attrs["body"].blank? }
 
   # Validations
   validates_presence_of :organization_id
+  validates :title, length: { maximum: 255 }
   validate :organization_address_belongs_to_organization
 
   # Not flagged inactive and not past its end date. Includes affiliations whose
   # start_date is still in the future (e.g. a Facilitator affiliation dated to an
-  # upcoming training's month) — they are "pending" but counted here.
+  # upcoming training) — they are "pending" but counted here.
   scope :active_or_pending, -> {
     where(inactive: false)
       .where("affiliations.end_date IS NULL OR affiliations.end_date >= ?", Date.current)
@@ -41,11 +55,9 @@ class Affiliation < ApplicationRecord
       .where("affiliations.end_date IS NULL OR affiliations.end_date >= ?", date)
   }
 
-  # Only the exact, case-sensitive title "Facilitator" counts — variants like
-  # "Lead Facilitator" or "facilitator" are deliberately excluded. BINARY forces
-  # a case-sensitive comparison under MySQL's default case-insensitive collation;
-  # TRIM mirrors the in-memory #facilitator? strip so stray whitespace still matches.
-  scope :facilitators, -> { where("BINARY TRIM(title) = ?", "Facilitator") }
+  # Exactly "Facilitator" (case-sensitive; BINARY on the literal keeps the plain
+  # title index usable). Titles are normalized on write, so no TRIM is needed.
+  scope :facilitators, -> { where("affiliations.title = BINARY ?", FACILITATOR_TITLE) }
 
   # Affiliations whose #status_on(date) equals the given status, expressed in SQL
   # so it composes as a subquery (e.g. person-id narrowing). Kept in lock-step with
@@ -70,7 +82,11 @@ class Affiliation < ApplicationRecord
     end
   }
 
+  before_validation :normalize_title
   before_validation :skip_if_duplicate
+  # Runs before validation so a reassigned org drops its stale organization_address_id
+  # before organization_address_belongs_to_organization would reject it.
+  before_validation :reset_org_scoped_links_on_org_change, on: :update
   before_save :set_inactive_from_dates
   after_save :sync_organization_status_with_affiliations
   after_save :sync_organization_affiliation_dates
@@ -78,12 +94,10 @@ class Affiliation < ApplicationRecord
   after_destroy :sync_organization_affiliation_dates
 
   # Methods
-  # A facilitator affiliation is one whose title is *exactly* "Facilitator"
-  # (trimmed, case-sensitive). Variants like "Lead Facilitator" or "facilitator"
-  # are deliberately excluded. Mirrors the .facilitators scope so in-memory and
-  # SQL checks agree.
+  # In-memory twin of the .facilitators scope: exactly "Facilitator", case-sensitive.
+  # An executable agreement spec locks the two together.
   def facilitator?
-    title.to_s.strip == "Facilitator"
+    title.to_s.strip == FACILITATOR_TITLE
   end
 
   # Current: not flagged inactive and not past its end date. Mirrors the `active`
@@ -117,6 +131,12 @@ class Affiliation < ApplicationRecord
     errors.add(:organization_address_id, "must be an address of this organization") unless valid
   end
 
+  # Store titles trimmed (blank → nil) so the .facilitators scope matches the bare
+  # column and uses the title index without a TRIM wrapper.
+  def normalize_title
+    self.title = title&.strip.presence
+  end
+
   def skip_if_duplicate
     scope = Affiliation.where(
       organization_id: organization_id,
@@ -129,6 +149,27 @@ class Affiliation < ApplicationRecord
     scope = scope.where.not(id: id) if persisted?
 
     throw(:abort) if scope.exists?
+  end
+
+  # When an admin moves the affiliation to a different org (only possible from the
+  # standalone edit form), the links scoped to the old org no longer apply:
+  #  - event_registration_id is cleared (a row with no link counts as manually
+  #    created, which reconciliation leaves alone). The registration's own org
+  #    link is separate and is updated in its org-linking step.
+  #  - organization_address_id is re-pointed at the new org: an old-org address
+  #    would fail organization_address_belongs_to_organization. If the new org has
+  #    exactly one address we adopt it; otherwise it's left blank for an admin to
+  #    set after saving.
+  def reset_org_scoped_links_on_org_change
+    return unless organization_id_changed?
+
+    self.event_registration_id = nil
+    self.organization_address_id = sole_address_id_for_new_organization
+  end
+
+  def sole_address_id_for_new_organization
+    addresses = Organization.find_by(id: organization_id)&.addresses
+    addresses.first.id if addresses&.one?
   end
 
   def set_inactive_from_dates

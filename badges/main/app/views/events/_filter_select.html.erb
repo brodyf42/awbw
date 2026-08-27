@@ -8,13 +8,21 @@
       selected     – currently selected value
       blank        – include_blank placeholder label
       field_class  – Tailwind classes for the <select>
-      wrapper_class – optional wrapper width (defaults to the roster's w-48) %>
+      wrapper_class – optional wrapper width (defaults to the roster's w-48)
+      clear_to     – optional value "Clear filters" resets this select to. Only
+                     needed when the select renders pre-selected (blank: nil), so
+                     its first option is a real value rather than a neutral
+                     placeholder — see collection#clearAndSubmit.
+      hint         – optional HTML rendered as muted help text under the select
+                     (e.g. a link to manage the underlying records). %>
 <div class="<%= local_assigns.fetch(:wrapper_class, "w-full md:w-44") %>">
-  <%= label_tag param, label, class: "block text-sm font-medium text-gray-700 mb-1" %>
-  <%# Grey the text only while the include_blank placeholder (the first option) is
-      selected, so a chosen value still reads in dark text. %>
+  <%= label_tag param, label, class: search_label_class %>
   <%= select_tag param,
                  options_for_select(options, selected),
                  include_blank: blank,
-                 class: "#{field_class} has-[option:first-child:checked]:text-gray-400" %>
+                 data: { clear_to: local_assigns[:clear_to] },
+                 class: "#{field_class} search-select-placeholder" %>
+  <% if local_assigns[:hint].present? %>
+    <p class="mt-1 text-xs text-gray-500"><%= local_assigns[:hint] %></p>
+  <% end %>
 </div>

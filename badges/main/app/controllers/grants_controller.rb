@@ -37,11 +37,13 @@ class GrantsController < ApplicationController
   def new
     @grant = Grant.new
     authorize! @grant
+    set_form_variables
   end
 
   def edit
     authorize! @grant
     set_scholarships
+    set_form_variables
   end
 
   def create
@@ -53,6 +55,7 @@ class GrantsController < ApplicationController
     if @grant.save
       redirect_to @grant, notice: "Grant was successfully created."
     else
+      set_form_variables
       render :new, status: :unprocessable_content
     end
   end
@@ -65,6 +68,7 @@ class GrantsController < ApplicationController
       redirect_to @grant, notice: "Grant was successfully updated.", status: :see_other
     else
       set_scholarships
+      set_form_variables
       render :edit, status: :unprocessable_content
     end
   end
@@ -96,6 +100,17 @@ class GrantsController < ApplicationController
     scope = scope.where(funder_type: params[:funder_type]) if Grant::FUNDER_TYPES.include?(params[:funder_type])
     scope = scope.where(funder_id: params[:funder_id]) if params[:funder_id].present?
 
+    scope = case params[:planned_giving]
+    when "yes" then scope.where(planned_giving: true)
+    when "no" then scope.where(planned_giving: false)
+    else scope
+    end
+
+    # Sector/category filters back the "View all grants" deep link from the
+    # taggings browse page (see TaggingsHelper#tagged_index_path).
+    scope = scope.sector_names_all(params[:sector_names_all]) if params[:sector_names_all].present?
+    scope = scope.category_names_all(params[:category_names_all]) if params[:category_names_all].present?
+
     case params[:tasks]
     when "completed" then scope.all_tasks_completed
     when "outstanding" then scope.tasks_outstanding
@@ -109,7 +124,7 @@ class GrantsController < ApplicationController
   def filter_by_funder_name(scope, query)
     like = "%#{Grant.sanitize_sql_like(query)}%"
     org_ids = Organization.where("name LIKE ?", like).pluck(:id)
-    person_ids = Person.where("first_name LIKE :q OR last_name LIKE :q OR CONCAT(first_name, ' ', last_name) LIKE :q", q: like).pluck(:id)
+    person_ids = Person.where("first_name LIKE :q OR legal_first_name LIKE :q OR last_name LIKE :q OR CONCAT(first_name, ' ', last_name) LIKE :q OR CONCAT(legal_first_name, ' ', last_name) LIKE :q", q: like).pluck(:id)
     scope.where(funder_type: "Organization", funder_id: org_ids)
          .or(scope.where(funder_type: "Person", funder_id: person_ids))
   end
@@ -125,10 +140,31 @@ class GrantsController < ApplicationController
                           .paginate(page: params[:page], per_page: 10)
   end
 
+  # Sector chips, grouped category checkboxes, and the image upload fields on the
+  # grant form.
+  def set_form_variables
+    @sectors = Sector.published.order(:name)
+    @categories_grouped =
+      Category
+        .includes(:category_type)
+        .published
+        .order(:position, :name)
+        .group_by(&:category_type)
+        .select { |type, _| type.nil? || (type.published? && !type.story_specific? && !type.profile_specific?) }
+        .sort_by { |type, _| type&.name.to_s.downcase }
+
+    @grant.build_primary_asset if @grant.primary_asset.blank?
+    @grant.gallery_assets.build
+  end
+
   def grant_params
     params.require(:grant).permit(
       :name, :description, :amount_dollars, :amount_cents, :funder_sgid,
-      :funds_allocation_deadline, :funds_received_on, :eligibility_criteria, :tasks
+      :funds_allocation_deadline, :funds_received_on, :eligibility_criteria, :tasks,
+      :planned_giving, :in_memoriam,
+      sector_ids: [], category_ids: [],
+      primary_asset_attributes: [ :id, :file, :_destroy ],
+      gallery_assets_attributes: [ :id, :file, :_destroy ]
     )
   end
 end

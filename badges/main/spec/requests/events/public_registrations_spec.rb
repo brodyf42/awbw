@@ -315,9 +315,10 @@ RSpec.describe "Events::PublicRegistrations", type: :request do
 
     it "uses singular date and time labels for a single-day event" do
       pacific = ActiveSupport::TimeZone["Pacific Time (US & Canada)"]
+      day = 2.weeks.from_now.in_time_zone(pacific)
       event.update!(autoshow_registration_details: true,
-                    start_date: pacific.local(2026, 8, 12, 9),
-                    end_date: pacific.local(2026, 8, 12, 12))
+                    start_date: day.change(hour: 9),
+                    end_date: day.change(hour: 12))
 
       get new_event_public_registration_path(event)
 
@@ -385,14 +386,14 @@ RSpec.describe "Events::PublicRegistrations", type: :request do
     end
 
     it "renders a dynamic-option field switched to single choice as radio buttons" do
-      # primary_service_area sources its options dynamically from Sector
+      # additional_sectors sources its options dynamically from Sector
       # (it stores no answer options of its own). When such a field is changed
       # from checkbox to single-choice radio, the public form must still render
       # the dynamic options — otherwise the question shows up blank.
       sector_a = create(:sector, :published, name: "Healthcare")
       sector_b = create(:sector, :published, name: "Education")
       create(:form_field, form: form, answer_type: :single_select_radio,
-             field_identifier: "primary_service_area", name: "Primary sector",
+             field_identifier: "additional_sectors", name: "Additional sectors",
              required: false)
 
       get new_event_public_registration_path(event)
@@ -406,7 +407,7 @@ RSpec.describe "Events::PublicRegistrations", type: :request do
     it "still renders a dynamic-option field as checkboxes" do
       create(:sector, :published, name: "Healthcare")
       create(:form_field, form: form, answer_type: :multi_select_checkbox,
-             field_identifier: "primary_service_area", name: "Primary sector",
+             field_identifier: "additional_sectors", name: "Additional sectors",
              required: false)
 
       get new_event_public_registration_path(event)
@@ -601,10 +602,138 @@ RSpec.describe "Events::PublicRegistrations", type: :request do
     end
   end
 
+  describe "POST create with a file upload" do
+    let!(:upload_field) do
+      create(:form_field, :file_upload, form: form, name: "Photo of your creation", required: true)
+    end
+    %w[first_name last_name primary_email].each do |identifier|
+      let!("#{identifier}_field".to_sym) do
+        create(:form_field, form: form, field_identifier: identifier, name: identifier.humanize, required: false)
+      end
+    end
+
+    def signed_id_for(fixture, content_type)
+      ActiveStorage::Blob.create_and_upload!(
+        io: File.open(Rails.root.join("spec/fixtures/files", fixture)),
+        filename: fixture, content_type: content_type
+      ).signed_id
+    end
+
+    def identity_answers
+      {
+        first_name_field.id.to_s => "Pat",
+        last_name_field.id.to_s => "Lee",
+        primary_email_field.id.to_s => "pat@example.com"
+      }
+    end
+
+    it "carries an already-uploaded file back into the form re-rendered after an error" do
+      signed_id = signed_id_for("sample.png", "image/png")
+
+      post event_public_registration_path(event),
+           params: { public_registration: { form_fields: identity_answers.merge(
+             essay_field.id.to_s => "too few",
+             upload_field.id.to_s => signed_id
+           ) } }
+
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(response.body).to include(%(name="public_registration[retained_uploads][#{upload_field.id}]"))
+      expect(response.body).to include(signed_id)
+      expect(response.body).to include("sample.png")
+    end
+
+    # An untouched file input still posts a blank value, so the retained id is
+    # what keeps the earlier upload from being silently dropped.
+    it "attaches the retained upload when the file input comes back blank" do
+      signed_id = signed_id_for("sample.png", "image/png")
+
+      post event_public_registration_path(event),
+           params: { public_registration: {
+             form_fields: identity_answers.merge(
+               essay_field.id.to_s => "this answer has plenty of words",
+               upload_field.id.to_s => ""
+             ),
+             retained_uploads: { upload_field.id.to_s => signed_id }
+           } }
+
+      expect(response).to have_http_status(:redirect)
+      answer = FormAnswer.find_by(form_field: upload_field)
+      expect(answer.uploaded_file).to be_attached
+      expect(answer.submitted_answer).to eq("sample.png")
+    end
+
+    it "re-renders with an error instead of raising on an unusable signed id" do
+      post event_public_registration_path(event),
+           params: { public_registration: { form_fields: identity_answers.merge(
+             essay_field.id.to_s => "this answer has plenty of words",
+             upload_field.id.to_s => "not-a-signed-id"
+           ) } }
+
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(response.body).to match(/uploaded file/i)
+    end
+  end
+
   describe "GET show" do
     let(:person) { create(:person) }
+    # The person_id lookup is the admin-side fallback for registrations that have
+    # no slug, so these view as staff. Public access is by slug — see below.
+    let(:admin) { create(:user, :admin) }
 
-    before { create(:form_submission, person: person, form: form, event: event) }
+    before do
+      create(:form_submission, person: person, form: form, event: event)
+      sign_in admin
+    end
+
+    context "when nobody is signed in" do
+      before { sign_out admin }
+
+      # Person ids are sequential, so this lookup would otherwise let anyone walk
+      # every registrant's answers (and now their uploaded files).
+      it "does not serve a registration looked up by person id" do
+        get event_public_registration_path(event, person_id: person.id)
+
+        expect(response).to redirect_to(root_path)
+      end
+
+      it "still serves the registrant's own slug link" do
+        registration = create(:event_registration, event: event, registrant: person)
+
+        get event_public_registration_path(event, reg: registration.slug)
+
+        expect(response).to have_http_status(:success)
+      end
+    end
+
+    context "when a signed-in user who is neither the registrant nor staff looks it up by person id" do
+      let(:other_user) { create(:user, :with_person) }
+
+      before do
+        sign_out admin
+        sign_in other_user
+      end
+
+      it "does not serve another person's registration" do
+        get event_public_registration_path(event, person_id: person.id)
+
+        expect(response).to redirect_to(root_path)
+      end
+    end
+
+    context "when the registrant views their own submission by person id" do
+      let(:registrant_user) { create(:user, person: person) }
+
+      before do
+        sign_out admin
+        sign_in registrant_user
+      end
+
+      it "serves the submission" do
+        get event_public_registration_path(event, person_id: person.id)
+
+        expect(response).to have_http_status(:success)
+      end
+    end
 
     it "renders header and field-label HTML unescaped on the response page" do
       create(:form_field, form: form, answer_type: :group_header, name: "<strong>Your details</strong>")
@@ -627,6 +756,24 @@ RSpec.describe "Events::PublicRegistrations", type: :request do
 
       expect(response.body).to include("Why do you want to attend?")
       expect(response.body).not_to include("Reworded after submission")
+    end
+
+    it "renders an uploaded file answer as an image preview and download link" do
+      upload_field = create(:form_field, :file_upload, form: form, name: "Photo of your creation")
+      submission = FormSubmission.find_by(person: person, form: form)
+      answer = submission.form_answers.create!(form_field: upload_field, submitted_answer: "sample.png")
+      answer.build_asset.tap do |asset|
+        asset.file.attach(io: File.open(Rails.root.join("spec/fixtures/files/sample.png")),
+                          filename: "sample.png", content_type: "image/png")
+        asset.save!
+      end
+
+      get event_public_registration_path(event, person_id: person.id)
+
+      expect(response).to have_http_status(:success)
+      expect(response.body).to include("Photo of your creation")
+      expect(response.body).to include("sample.png")
+      expect(response.body).to include(rails_blob_path(answer.uploaded_file, only_path: true))
     end
 
     context "when the registrant filled out a separate scholarship form" do
@@ -685,10 +832,7 @@ RSpec.describe "Events::PublicRegistrations", type: :request do
     end
 
     context "when reached from the admin org-linking popup" do
-      let(:admin) { create(:user, :admin) }
       let!(:registration) { create(:event_registration, event: event, registrant: person) }
-
-      before { sign_in admin }
 
       it "shows a back link to the org popup, carrying its own return_to" do
         get event_public_registration_path(event, person_id: person.id,
@@ -706,10 +850,7 @@ RSpec.describe "Events::PublicRegistrations", type: :request do
     end
 
     context "when viewed from the admin registrants roster" do
-      let(:admin) { create(:user, :admin) }
       let!(:registration) { create(:event_registration, event: event, registrant: person) }
-
-      before { sign_in admin }
 
       it "returns the eyebrow to the registrant's row instead of the ticket" do
         get event_public_registration_path(event, person_id: person.id,

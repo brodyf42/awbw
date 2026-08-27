@@ -132,7 +132,7 @@ rename_registration_header.call("Mailing Address", "Primary Mailing Address",
                                 subtitle: "For mailing raffle prizes, incentives, and important announcements")
 rename_registration_header.call("Organization Information", "Your Organization",
                                 subtitle: "If your organization has a website, please put your organization name as it appears on the website. " \
-                                          "If you're not associated with an organization, please provide a name for your art program.")
+                                          "If you're not associated with an organization, please provide a name for your program.")
 rename_registration_header.call("Professional Information", "Participant Information")
 rename_registration_header.call("Background Information", "About You")
 
@@ -306,10 +306,15 @@ end
 # and carries the free-form qualifiers (hint_dates / hint_times / hint_registration_cost)
 # so the seeded data demonstrates those grey parentheticals on its registration
 # page. force-set on re-seed, mirroring the date/cost refresh above.
+# rhino_description is the event show page's rich content, captured to an HTML file
+# so re-seeding reproduces it deterministically (instead of the create-only random
+# Faker). Its images are RemoteImage references to portal.awbw.org — no local blobs.
+flagship_description_html = File.read(Rails.root.join("db/seeds/dev/files/awbw_facilitator_training_description.html"))
 Event.find_by(title: "AWBW Facilitator Training")&.update!(
-  videoconference_url: "https://awbw-org.zoom.us/j/88285411273",
+  rhino_description: flagship_description_html,
+  videoconference_url: "https://example.zoom.us/j/99912345678",
   videoconference_label: "Zoom",
-  videoconference_passcode: "awbwmarch",
+  videoconference_passcode: "demopass",
   autoshow_registration_details: true,
   hint_dates: "must attend both days",
   hint_times: "both days",
@@ -650,8 +655,8 @@ component_callouts = {
     description: <<~HTML.strip
       <p>Join us on Zoom for both training days. You'll find the join link in this ticket's videoconference section.</p>
       <ul>
-        <li><strong>Meeting ID:</strong> 882 8541 1273</li>
-        <li><strong>Passcode:</strong> awbwmarch</li>
+        <li><strong>Meeting ID:</strong> 999 1234 5678</li>
+        <li><strong>Passcode:</strong> demopass</li>
       </ul>
       <p>Please update Zoom to the latest version beforehand to avoid delays getting in.</p>
     HTML
@@ -758,9 +763,9 @@ registrations_data = []
 if facilitator_training
   facilitator_training.update!(ce_hours_offered: 12, ce_hours_cost_cents: 12_000)
   [
-    { person: amy_person, status: "registered", scholarship_requested: true, w9_requested: true, invoice_requested: true, ce_credit_requested: true, ce_license_number: "LMFT 90210" },
+    { person: amy_person, status: "registered", scholarship_requested: true, w9_requested: true, invoice_requested: true, ce_credit_requested: true, ce_license_kind: "LMFT", ce_license_number: "90210" },
     { person: maria_j, status: "registered", invoice_requested: true, ce_credit_requested: true, intends_to_pay: true },
-    { person: anna_g, status: "attended", ce_credit_requested: true, intends_to_pay: true, ce_license_number: "LCSW 11223", ce_status: "issued" },
+    { person: anna_g, status: "attended", ce_credit_requested: true, intends_to_pay: true, ce_license_kind: "LCSW", ce_license_number: "11223", ce_status: "issued" },
     { person: mario_j, status: "registered" },
     { person: kim_d, status: "cancelled" },
     { person: aisha_person, status: "registered", intends_to_pay: true }
@@ -778,7 +783,7 @@ end
 if trauma_training
   trauma_training.update!(ce_hours_offered: 18, ce_hours_cost_cents: 15_000)
   [
-    { person: sarah_s, status: "registered", invoice_requested: true, ce_credit_requested: true, ce_license_number: "LPCC 44556" },
+    { person: sarah_s, status: "registered", invoice_requested: true, ce_credit_requested: true, ce_license_kind: "LPCC", ce_license_number: "44556" },
     { person: jessica_b, status: "registered", scholarship_requested: true, ce_credit_requested: true },
     { person: angel_g, status: "registered" },
     { person: linda_w, status: "no_show" }
@@ -853,7 +858,7 @@ registrations_data.each do |data|
   # CE opt-in becomes a ContinuingEducationRegistration against the registrant's
   # license (a placeholder when no number is seeded). Hours come from the event.
   if data[:ce_credit_requested] && registration.continuing_education_registrations.none?
-    license = ProfessionalLicense.find_or_create_for(person: data[:person], number: data[:ce_license_number])
+    license = ProfessionalLicense.find_or_create_for(person: data[:person], number: data[:ce_license_number], kind: data[:ce_license_kind])
     ce_registration = registration.continuing_education_registrations.create!(professional_license: license)
     # "issued" in the seed data means the CE certificate was delivered.
     ce_registration.mark_certificate_sent! if data[:ce_status] == "issued"
@@ -1081,20 +1086,20 @@ form_submissions.each do |data|
   data[:form].form_fields.where(answer_type: [ :free_form_input_one_line, :free_form_input_paragraph ]).each do |field|
     # Organization Name + Position / Title are seeded later with org-matching values
     # (record_organization_answers), so leave them blank here.
-    next if %w[agency_name agency_position].include?(field.field_identifier)
+    next if field.matches_identifier?("organization_name") || field.matches_identifier?("organization_position")
 
     sample_text = case field.field_identifier
     when "first_name" then data[:person].first_name
     when "last_name" then data[:person].last_name
     when "primary_email", "enter_email", "confirm_email" then data[:person].preferred_email || "sample@example.com"
     when "phone" then "(555) #{rand(100..999)}-#{rand(1000..9999)}"
-    when "street_address", "agency_street_address" then Faker::Address.street_address
-    when "city", "agency_city" then Faker::Address.city
-    when "state_province", "agency_state_province" then Faker::Address.state_abbr
-    when "zip_postal_code", "agency_zip_postal_code" then Faker::Address.zip_code
+    when "street_address", "agency_street_address", "organization_street" then Faker::Address.street_address
+    when "city", "agency_city", "organization_city" then Faker::Address.city
+    when "state_province", "agency_state_province", "organization_state" then Faker::Address.state_abbr
+    when "zip_postal_code", "agency_zip_postal_code", "organization_zip" then Faker::Address.zip_code
     when "agency_organization_name" then Faker::Company.name
     when "position_title" then "Facilitator"
-    when "agency_website" then "https://example.org"
+    when "agency_website", "organization_website" then "https://example.org"
     when "secondary_email" then data[:person].email_2
     when "preferred_nickname" then data[:person].first_name
     when "pronouns" then [ "she/her", "he/him", "they/them" ].sample
@@ -1167,7 +1172,7 @@ record_professional_answers = ->(submission, i) do
   # Additional age groups are multi-select checkboxes, so store a couple of
   # ", "-joined AgeRange ids the way public registration does.
   additional_ages = age_range_categories.rotate(i + 1).reject { |category| category == age }.first(2)
-  additional_age_field = form.form_fields.find_by(field_identifier: "additional_age_group")
+  additional_age_field = form.form_fields.find_by(field_identifier: "additional_age_groups")
   if additional_age_field && additional_ages.present? && submission.form_answers.where(form_field: additional_age_field).none?
     submission.form_answers.create!(form_field: additional_age_field,
                                     submitted_answer: additional_ages.map(&:id).join(", "),
@@ -1180,7 +1185,7 @@ record_professional_answers = ->(submission, i) do
 
   # Mirror the registration form's two sector fields: the single-select primary
   # sector dropdown and the multi-select additional sectors checkboxes.
-  primary_field = form.form_fields.find_by(field_identifier: "primary_sector_single")
+  primary_field = form.form_fields.find_by(field_identifier: "primary_sector")
   if primary_field && primary_sector && submission.form_answers.where(form_field: primary_field).none?
     submission.form_answers.create!(form_field: primary_field,
                                     submitted_answer: primary_sector.id.to_s,
@@ -1226,14 +1231,14 @@ record_organization_answers = ->(registration, submission, i) do
   # A title on most submissions, but leave roughly one in five blank so dev data
   # exercises both registration/linking outcomes: a job + Facilitator affiliation
   # when a title was given, and a Facilitator-only affiliation when it wasn't.
-  position_field = form.form_fields.find_by(field_identifier: "agency_position")
+  position_field = form.form_fields.find_by(field_identifier: FormField.aliased_identifiers("organization_position"))
   if position_field && i % 5 != 4 && submission.form_answers.where(form_field: position_field).none?
     submission.form_answers.create!(form_field: position_field,
                                     submitted_answer: job_titles[i % job_titles.size],
                                     question_name_when_answered: position_field.name)
   end
 
-  agency_field = form.form_fields.find_by(field_identifier: "agency_name")
+  agency_field = form.form_fields.find_by(field_identifier: FormField.aliased_identifiers("organization_name"))
   next unless agency_field && org_answer_orgs.any?
   next if submission.form_answers.where(form_field: agency_field).any?
 
@@ -1434,14 +1439,14 @@ puts "Creating organization-link demo registrants on the flagship training…"
 if facilitator_training && registration_form
   # "Pending" only exists when the form has the Organization Name field,
   # which lives in the person_contact_info section the dev form otherwise omits.
-  unless registration_form.form_fields.exists?(field_identifier: "agency_name")
+  unless registration_form.form_fields.exists?(field_identifier: FormField.aliased_identifiers("organization_name"))
     FormBuilderService.update_sections!(
       registration_form,
       (registration_form.sections || []).map(&:to_sym) | [ :person_contact_info ]
     )
   end
-  agency_field = registration_form.form_fields.find_by(field_identifier: "agency_name")
-  agency_position_field = registration_form.form_fields.find_by(field_identifier: "agency_position")
+  agency_field = registration_form.form_fields.find_by(field_identifier: FormField.aliased_identifiers("organization_name"))
+  agency_position_field = registration_form.form_fields.find_by(field_identifier: FormField.aliased_identifiers("organization_position"))
 
   # Real, existing orgs to link against / match on (skip the AWBW house org).
   demo_orgs = Organization.where.not(name: "A Window Between Worlds").order(:name).to_a
@@ -1492,7 +1497,13 @@ if facilitator_training && registration_form
   demo_people = Person.where("email LIKE ? OR email LIKE ?",
     "orgchip.demo.%@seed.example.com", "affdemo.%@seed.example.com")
   Resource.where(author_id: demo_people).update_all(author_id: nil)
-  demo_people.find_each(&:destroy)
+  # Drop payments first: payments.rb (which runs later) records payments against
+  # some of these registrants, and payments reference the person without a destroy
+  # cascade, so on a re-seed the person destroy would hit that foreign key.
+  demo_people.find_each do |person|
+    Payment.where(person: person).destroy_all
+    person.destroy
+  end
 
   # Each scenario => one registrant. :orgs link real orgs (→ chip shows links);
   # :agency stores a submitted name. A typed name matching an existing org is linked
@@ -1540,6 +1551,9 @@ if facilitator_training && registration_form
   # Demo 10: a registrant with more than one registration-form submission, each
   # naming a different org we don't have — exercises the per-submission "View
   # submission #N" links and one "Create and link" row per distinct submitted org.
+  # Each submission also carries a fake Stripe (ExternalProcessorPayment) so the
+  # payments index has Stripe rows to exercise its payment-method filter and
+  # metadata / charge-id search.
   if agency_field
     demo_multi = Person.create!(
       email: "orgchip.demo.10@seed.example.com",
@@ -1549,9 +1563,28 @@ if facilitator_training && registration_form
     EventRegistration.find_or_create_by!(event: facilitator_training, registrant: demo_multi) do |reg|
       reg.status = "registered"
     end
+    card_amount_cents = facilitator_training.cost_cents.to_i
+    card_amount_cents = 15_000 if card_amount_cents <= 0
     [ "Greenfield Survivor Services", "Harbor Light Counseling" ].each do |org_name|
       submission = FormSubmission.create!(person: demo_multi, form: registration_form, event: facilitator_training, role: "registration")
       submission.form_answers.create!(form_field: agency_field, submitted_answer: org_name, question_name_when_answered: agency_field.name)
+
+      stripe_payment = ExternalProcessorPayment.new(
+        person: demo_multi,
+        form_submission: submission,
+        amount_cents: card_amount_cents,
+        amount_cents_remaining: card_amount_cents,
+        currency: "usd",
+        external_origin: false,
+        stripe_charge_id: "ch_seed_reg_#{submission.id}",
+        metadata: {
+          "form_submission_id" => submission.id,
+          "event_id" => facilitator_training.id,
+          "organization_name" => org_name
+        }
+      )
+      stripe_payment.skip_pay_charge_validation = true
+      stripe_payment.save!
     end
   end
 
@@ -1578,7 +1611,7 @@ if facilitator_training && registration_form
   # --- Affiliation-status demo: two affiliations per org (a real job title plus the
   # Facilitator role that gates AWBW-active), plus the position typed on the form, so
   # the org-link editor's affiliation pills can be seen across their states. ---
-  position_field = registration_form.form_fields.find_by(field_identifier: "agency_position")
+  position_field = registration_form.form_fields.find_by(field_identifier: FormField.aliased_identifiers("organization_position"))
   submit_field = ->(registration, field, value) do
     if field
       submission = FormSubmission.find_or_create_by!(person: registration.registrant, form: registration_form, role: "registration", event: registration.event)
@@ -1650,4 +1683,62 @@ if facilitator_training && registration_form
       link_org.call(registration, org)
     end
   end
+end
+
+# Spread each registration's "registered on" date (created_at) around its event's
+# start instead of leaving it at the seed run's "today", so the roster's
+# registration-date filter has realistic data to work with. Most people register
+# in advance (days to weeks before the event); a couple register a day or two
+# after it starts (late / at-the-door). The offset is derived from the
+# registration id, so re-seeding keeps the same spread and this stays idempotent.
+puts "Spreading registration dates around each event's start…"
+# Days BEFORE the event start; the two negatives put a couple registrations just
+# after the start. Weighted toward the final weeks, with a long early-bird tail.
+registration_day_offsets = [ 56, 45, 38, 30, 28, 24, 21, 18, 16, 14, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, -1, -2 ]
+EventRegistration.includes(:event).find_each do |registration|
+  start = registration.event&.start_date
+  next unless start
+  offset_days = registration_day_offsets[registration.id % registration_day_offsets.length]
+  registration.update_column(:created_at, start - offset_days.days)
+end
+
+# The yearly on-demand facilitator trainings: last year's (ended), the current
+# one (what Event.current_on_demand_facilitator_training resolves to — the
+# on-demand agreement path registers people here), and next year's upcoming
+# one. Each spans its calendar year and shares the standalone registration
+# form, so the person-page "Email form links" panel and the public
+# registration form both have real targets.
+puts "Creating yearly on-demand facilitator trainings…"
+(Date.current.year - 1..Date.current.year + 1).each do |year|
+  title = "On-Demand Training #{year}"
+  # start/end are datetimes and pages render them in the viewer's zone — anchor
+  # in AWBW's home (Pacific) zone so Jan 1 doesn't display as Dec 31 of the
+  # prior year for US viewers.
+  pacific = ActiveSupport::TimeZone["Pacific Time (US & Canada)"]
+  opens = pacific.local(year, 1, 1)
+  closes = pacific.local(year, 12, 31).end_of_day
+  event = Event.find_or_create_by!(title: title) do |e|
+    e.description = "Self-paced facilitator training for #{year}."
+    e.rhino_description = "Self-paced facilitator training for #{year}."
+    e.start_date = opens
+    e.end_date = closes
+    e.created_by = admin_user
+    e.published = true
+  end
+
+  # Keep the schedule current on re-seed (find_or_create_by! only sets on create).
+  event.update!(
+    start_date: opens,
+    end_date: closes,
+    registration_close_date: closes,
+    cost_cents: 0,
+    published: true,
+    on_demand: true,
+    facilitator_training: true
+  )
+
+  EventForm.find_or_create_by!(event: event, role: "registration") do |ef|
+    ef.form = registration_form
+  end
+  event.update!(public_registration_enabled: true) unless event.public_registration_enabled?
 end

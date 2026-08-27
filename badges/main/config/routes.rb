@@ -33,7 +33,7 @@ Rails.application.routes.draw do
       get :confirm_email_manual
       post :process_email_manual
     end
-    resources :comments, only: [ :index, :create, :update ]
+    resources :comments, only: [ :create, :update ]
   end
 
   get "contact_us", to: "contact_us#index"
@@ -53,8 +53,9 @@ Rails.application.routes.draw do
     get "activities/charts",         to: "ahoy_activities#charts", as: "activities_charts"
     get "activities/counts",         to: "analytics#index", as: "activities_counts"
     post "activities/counts/print",  to: "analytics#print", as: "analytics_print"
-    resources :comments, only: [ :index ]
   end
+
+  resources :comments, only: [ :index ]
 
   resources :banners
   resources :bookmarks do
@@ -65,6 +66,8 @@ Rails.application.routes.draw do
     end
   end
   resources :category_types
+  resources :staff_tags
+  resources :staff_taggings, only: [ :index, :new, :create, :edit, :update, :destroy ]
   resources :categories do
     collection do
       get :dedupe_index
@@ -74,6 +77,10 @@ Rails.application.routes.draw do
     end
   end
   resources :community_news
+  # Public pretty-URL for a standalone, published form — fillable with no account.
+  get "f/:slug", to: "public_forms#show", as: :public_form
+  post "f/:slug", to: "public_forms#create"
+  get "f/:slug/thank-you", to: "public_forms#thank_you", as: :thank_you_public_form
   get "bulk_payment/:slug", to: "events/bulk_payment_form_submissions#ticket", as: :bulk_payment_ticket
   post "bulk_payment/:slug/resend_confirmation", to: "events/bulk_payment_form_submissions#resend_confirmation", as: :bulk_payment_resend_confirmation
   get "registration/:slug", to: "events/registrations#show", as: :registration_ticket
@@ -81,6 +88,7 @@ Rails.application.routes.draw do
   get "registration/:slug/receipt", to: "events/registrations#receipt", as: :registration_receipt
   get "registration/:slug/scholarship", to: "events/callouts#scholarship", as: :registration_scholarship
   post "registration/:slug/scholarship/agreement", to: "events/callouts#sign_agreement", as: :registration_scholarship_agreement
+  post "registration/:slug/scholarship/decline", to: "events/callouts#decline_agreement", as: :registration_scholarship_decline
   get "registration/:slug/faq", to: "events/callouts#faq", as: :registration_faq
   get "registration/:slug/payment", to: "events/callouts#payment", as: :registration_payment
   get "registration/:slug/certificate", to: "events/callouts#certificate", as: :registration_certificate
@@ -88,6 +96,9 @@ Rails.application.routes.draw do
   post "registration/:slug/ce/license", to: "events/callouts#update_ce_license", as: :registration_ce_license
   post "registration/:slug/ce/request", to: "events/callouts#request_ce", as: :registration_ce_request
   post "registration/:slug/ce/pay", to: "events/callouts#pay_ce", as: :registration_ce_pay
+  post "registration/:slug/ce/sign-in", to: "events/callouts#sign_in_ce", as: :registration_ce_sign_in
+  post "registration/:slug/ce/sign-out", to: "events/callouts#sign_out_ce", as: :registration_ce_sign_out
+  patch "registration/:slug/ce/attendance", to: "events/callouts#update_ce_attendance", as: :registration_ce_attendance
   get "registration/:slug/handouts", to: "events/callouts#handouts", as: :registration_handouts
   get "registration/:slug/resource/:resource_id", to: "events/callouts#resource", as: :registration_resource
   get "registration/:slug/videoconference", to: "events/callouts#videoconference", as: :registration_videoconference
@@ -100,14 +111,18 @@ Rails.application.routes.draw do
     member do
       get :confirm
       post :process_confirm
+      get :transfer
+      post :process_transfer
+      patch :revert_transfer
       get :link_organization
       post :select_organization
       post :create_organization
       delete :unlink_organization
       patch :update_onboarding
       patch :toggle_certificate_issued
+      patch :update_attendance
     end
-    resources :comments, only: [ :index, :create, :update ]
+    resources :comments, only: [ :create, :update ]
   end
   resources :topic_subscriptions, except: [ :show ] do
     collection do
@@ -117,7 +132,7 @@ Rails.application.routes.draw do
       patch :unsubscribe
       patch :resubscribe
     end
-    resources :comments, only: [ :index, :create, :update ]
+    resources :comments, only: [ :create, :update ]
   end
   resources :topic_subscription_types, except: [ :show ] do
     member do
@@ -130,22 +145,38 @@ Rails.application.routes.draw do
       get :smart_form_settings
     end
     member do
+      get :results
+      post :copy
       patch :reorder_field
       put :reorder_fields
       get :edit_sections
       patch :update_sections
     end
   end
-  resources :form_submissions, only: [ :index, :show ]
+  resources :form_submissions, only: [ :index, :show ] do
+    member do
+      get :link_organization
+      post :select_organization
+      post :create_organization
+    end
+  end
+  resources :bulk_payments, only: [ :index ]
+  resources :form_answers, only: [ :index ]
   resources :grants
   resources :scholarships, only: [ :index, :new, :create, :show, :edit, :update, :destroy ] do
-    member { patch :toggle_tasks }
-    resources :comments, only: [ :index, :create, :update ]
+    member do
+      patch :toggle_tasks
+      post :reoffer
+    end
+    resources :comments, only: [ :create, :update ]
   end
-  resources :continuing_education_registrations, only: [ :new, :create, :edit, :update, :destroy ] do
+  resources :continuing_education_registrations, only: [ :index, :show, :new, :create, :edit, :update, :destroy ] do
     member { patch :toggle_certificate }
-    resources :comments, only: [ :index, :create, :update ]
+    resources :comments, only: [ :create, :update ]
   end
+  # The admin-only browse index plus standalone new/edit flows. (Licenses can
+  # also be edited inline on the person + CE forms.)
+  resources :professional_licenses, only: [ :index, :new, :create, :edit, :update ]
   resources :discounts, only: [ :create, :show, :destroy ] do
     collection do
       post :allocation_form
@@ -157,10 +188,13 @@ Rails.application.routes.draw do
       get :participation
       get :reports
       get :scholarships
+      get :program_statuses
       get :attendees
+      get :signins
     end
     member do
       get :dashboard
+      get :attendance
       get :sample_ticket
       # Admin-only in-memory previews of the behavioral built-in callout pages,
       # linked from the sample ticket. They reuse Events::CalloutsController's
@@ -197,20 +231,36 @@ Rails.application.routes.draw do
     resource :invoice, only: [ :show ], module: :events
     get "form_submissions/:person_id", to: "events/form_submissions#show", as: :registrant_submissions
   end
+  resources :author_credit_divergences, only: :index do
+    collection do
+      patch :update_person
+      patch :update_item
+      patch :assign_author
+    end
+  end
   resources :people do
     collection do
       get :check_duplicates
+      get :email_addresses
     end
     member do
       get :workshop_logs
       get :checkout
       get :bio
       get :all_comments
+      get :comments_and_communications
+      post :send_form_link
     end
-    resources :comments, only: [ :index, :create, :update ]
+    resources :comments, only: [ :create, :update ]
     resources :memberships, only: [ :index, :new, :create ]
   end
   resources :faqs
+  get "transfer_guide", to: "transfer_guide#show", as: :transfer_guide
+  resources :features do
+    collection do
+      post :import
+    end
+  end
   resources :other_responses, only: [ :index, :update ] do
     collection do
       post :promote
@@ -232,7 +282,7 @@ Rails.application.routes.draw do
     member do
       get :populations_served
     end
-    resources :comments, only: [ :index, :create, :update ]
+    resources :comments, only: [ :create, :update ]
     resources :monthly_reports, only: :index
   end
   resources :payments, only: [ :new, :create, :show, :index, :edit, :update ] do
@@ -255,7 +305,11 @@ Rails.application.routes.draw do
 
   resources :refunds, only: [ :new, :create, :show ]
   resources :organization_statuses
-  resources :affiliations, only: :destroy
+  resources :affiliations, only: [ :edit, :update, :destroy ] do
+    member do
+      post :end, to: "affiliations#end_affiliation"
+    end
+  end
   resources :quotes
 
   resources :monthly_reports, only: [ :index, :show ], constraints: { id: /\d+/ }
@@ -299,7 +353,7 @@ Rails.application.routes.draw do
   resources :workshop_variation_ideas
   resources :workshop_variations
   resources :workshops do
-    resources :comments, only: [ :index, :create, :update ]
+    resources :comments, only: [ :create, :update ]
   end
 
   resources :workshop_mentions, only: [ :index ]

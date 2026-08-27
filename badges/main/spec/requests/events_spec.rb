@@ -368,6 +368,104 @@ RSpec.describe "Events", type: :request do
         expect(response.body).not_to include(%(href="#{event_registrations_path}?))
       end
 
+      # The four angles on this population sit on the eyebrow's row, each carrying the
+      # report's own filters so switching angle keeps the same events in scope.
+      it "offers Details / Attendees / Scholarships / Sign-ins carrying the filters" do
+        sign_in admin
+        get participation_events_path(event_id: training_2026.id, event_type: "trainings")
+
+        nav = Capybara.string(response.body).find("nav[aria-label='Report views']")
+        expect(nav).to have_text("Details")
+        expect(nav).to have_link("Attendees")
+        expect(nav).to have_link("Scholarships")
+        expect(nav).to have_link("Sign-ins", href: signins_events_path(event_id: training_2026.id, event_type: "trainings"))
+        # Details is the current page, so it isn't a link.
+        expect(nav).to have_no_link("Details")
+      end
+
+      context "report sub-nav" do
+        it "renders on the attendees index with Attendees current" do
+          sign_in admin
+          get attendees_events_path
+
+          nav = Capybara.string(response.body).find("nav[aria-label='Report views']")
+          expect(nav).to have_link("Details")
+          expect(nav).to have_link("Sign-ins")
+          expect(nav).to have_link("Scholarships")
+          expect(nav).to have_no_link("Attendees")
+        end
+
+        it "renders on the scholarship report with Scholarships current" do
+          sign_in admin
+          get scholarships_events_path
+
+          nav = Capybara.string(response.body).find("nav[aria-label='Report views']")
+          expect(nav).to have_link("Details")
+          expect(nav).to have_link("Attendees")
+          expect(nav).to have_no_link("Scholarships")
+        end
+
+        it "renders on the program-status report with Program status current" do
+          sign_in admin
+          get program_statuses_events_path
+
+          nav = Capybara.string(response.body).find("nav[aria-label='Report views']")
+          expect(nav).to have_link("Details")
+          expect(nav).to have_link("Scholarships")
+          expect(nav).to have_no_link("Program status")
+        end
+
+        # Breakdowns is a panel on the attendees index, not a page, so it has no tab.
+        it "has no Breakdowns tab" do
+          sign_in admin
+          get attendees_events_path(charts: "open")
+
+          nav = Capybara.string(response.body).find("nav[aria-label='Report views']")
+          expect(nav).to have_no_text("Breakdowns")
+        end
+
+        # The scholarship report's own filters have to survive a trip through the
+        # other angles and back, or switching tab quietly rewrites the report.
+        it "round-trips the scholarship report's funder and period filters" do
+          sign_in admin
+          funder = create(:organization)
+          get scholarships_events_path(funder_sgid: funder.to_sgid.to_s, time_period: "2026")
+
+          nav = Capybara.string(response.body).find("nav[aria-label='Report views']")
+          details = nav.find_link("Details")[:href]
+          expect(details).to include("funder_sgid", "time_period=2026")
+
+          get details
+          nav = Capybara.string(response.body).find("nav[aria-label='Report views']")
+          expect(nav.find_link("Scholarships")[:href]).to include("funder_sgid", "time_period=2026")
+        end
+      end
+
+      # Switching angle must not silently widen the population, so every filter that
+      # is set travels with the tab — including the attendees index's own scholarship
+      # and payment vocabulary, which the report pages don't read but shouldn't drop.
+      it "carries the scholarship and other selected filters across the tabs" do
+        sign_in admin
+        get participation_events_path(event_type: "trainings", scholarship: "agreed",
+          payment_status: "unpaid", funder: "external", search: "TAC")
+
+        nav = Capybara.string(response.body).find("nav[aria-label='Report views']")
+        %w[ Attendees Scholarships Sign-ins ].each do |label|
+          href = nav.find_link(label)[:href]
+          expect(href).to include("scholarship=agreed", "payment_status=unpaid", "funder=external", "search=TAC")
+        end
+      end
+
+      it "links each event to its sign-ins, CE-scoped only when CE is enabled" do
+        training_2026.update!(ce_hours_offered: 6)
+        sign_in admin
+        get participation_events_path
+        expect(response.body).to include("CE sign-ins")
+        expect(response.body).to include(attendance_event_path(training_2026))
+        expect(response.body).to include("Sign-ins →")
+        expect(response.body).to include(attendance_event_path(webinar_2025))
+      end
+
       # The Event dropdown lists every event, so the report rows are identified by
       # their per-event dashboard link rather than the title.
       it "narrows to facilitator trainings by event type" do
@@ -421,6 +519,34 @@ RSpec.describe "Events", type: :request do
         )
         expect(response.body).to match(/<input[^>]*name="return_to"[^>]*value="events"/)
       end
+
+      it "returns to the organization profile when arriving from its program-status chips" do
+        organization = create(:organization)
+        sign_in admin
+        get participation_events_path(event_id: training_2026.id, return_organization_id: organization.id, return_to: "organization")
+
+        expect(response.body).to include("← Organization")
+        expect(response.body).to include(CGI.escapeHTML(organization_path(organization, anchor: "program-status")))
+        # The origin has to survive a filter change, or the eyebrow reverts.
+        expect(response.body).to match(/<input[^>]*name="return_organization_id"[^>]*value="#{organization.id}"/)
+      end
+
+      it "returns to the organization edit form when arriving from its program-status chips" do
+        organization = create(:organization)
+        sign_in admin
+        get participation_events_path(event_id: training_2026.id, return_organization_id: organization.id, return_to: "organization_edit")
+
+        expect(response.body).to include("← Organization")
+        expect(response.body).to include(CGI.escapeHTML(edit_organization_path(organization, anchor: "program-status")))
+      end
+
+      it "falls back to the reports eyebrow when the organization origin has no id" do
+        sign_in admin
+        get participation_events_path(return_to: "organization")
+
+        expect(response.body).to include("← Reports")
+        expect(response.body).not_to include("← Organization")
+      end
     end
 
     context "as non-admin" do
@@ -470,18 +596,68 @@ RSpec.describe "Events", type: :request do
         expect(response.body).to include(CGI.escapeHTML(attendees_events_path(charts: 1)))
       end
 
-      it "links to that event's own breakdowns when scoped to one event" do
+      it "links to that event's own breakdowns on the attendees index when scoped to one event" do
         sign_in admin
         get reports_events_path(event_id: training.id)
 
-        expect(response.body).to include(CGI.escapeHTML(roster_event_path(training, charts: 1)))
+        # The scoped breakdowns link now lands on the attendees index (not the
+        # roster), pre-filtered to the event with its charts panel open.
+        expect(response.body).to include(attendees_events_path)
+        expect(response.body).to include("event_id=#{training.id}", "charts=1")
+        expect(response.body).not_to include(CGI.escapeHTML(roster_event_path(training, charts: 1)))
       end
 
-      it "shows the scholarship summary card linking to its full report" do
+      # The attendees index defaults its event-type filter to facilitator trainings,
+      # so a hub scoped to an event of any other type has to pin that filter open —
+      # otherwise the event is filtered out and the drill-in lands on an empty list.
+      it "opens the attendees event-type filter when scoped to a non-training event" do
+        webinar = create(:event, facilitator_training: false, start_date: Date.current)
+        create(:event_registration, event: webinar, status: "attended")
+        sign_in admin
+        get reports_events_path(event_id: webinar.id)
+
+        expect(response.body).to match(%r{/events/attendees\?[^"']*event_id=#{webinar.id}[^"']*event_type=all})
+      end
+
+      # Unscoped, the index's own "trainings" default is the population the hub
+      # counted, so the link leaves the filter alone.
+      it "leaves the attendees event-type filter alone when the hub is unscoped" do
+        sign_in admin
+        get reports_events_path
+
+        expect(response.body).to include(
+          CGI.escapeHTML(attendees_events_path(charts: 1, event_year: Date.current.year.to_s, return_to: "reports", anchor: "breakdowns"))
+        )
+      end
+
+      # The index has no time_period vocabulary — it narrows by the event's calendar
+      # year, the same translation the card's own figure links already do — so the
+      # hub's period is converted rather than passed along to be silently dropped.
+      it "translates the hub period into the attendees year filter" do
+        sign_in admin
+        get reports_events_path(period: "last_year")
+
+        expect(response.body).to match(%r{/events/attendees\?charts=1[^"']*event_year=#{Date.current.year - 1}})
+        expect(response.body).not_to match(%r{/events/attendees\?[^"']*time_period=})
+      end
+
+      it "leaves the attendees year filter open for an all-time hub" do
+        sign_in admin
+        get reports_events_path(period: "all_time")
+
+        expect(response.body).to include(CGI.escapeHTML(attendees_events_path(charts: 1, return_to: "reports", anchor: "breakdowns")))
+      end
+
+      it "shows the scholarship summary card linking to its details and to the recipient attendees/breakdowns" do
         sign_in admin
         get reports_events_path
         expect(response.body).to include("Scholarships")
         expect(response.body).to include(scholarships_events_path)
+        # Attendees and Breakdowns eyebrows land on the attendees index pre-filtered
+        # to scholarship recipients, returning to the reports hub. (Rails serializes
+        # query params alphabetically, so return_to precedes scholarship.)
+        expect(response.body).to match(%r{/events/attendees\?[^"']*scholarship=yes})
+        expect(response.body).to match(%r{/events/attendees\?[^"']*return_to=reports[^"']*scholarship=yes})
       end
 
       it "carries the active filters into the full report links" do
@@ -1035,6 +1211,11 @@ RSpec.describe "Events", type: :request do
         expect(event.reload.facilitator_training).to be(true)
       end
 
+      it "persists the training completion deadline" do
+        patch event_path(event), params: { event: { completion_deadline: "2026-08-30" } }
+        expect(event.reload.completion_deadline).to eq(Date.new(2026, 8, 30))
+      end
+
       it "persists the registration detail hints" do
         patch event_path(event), params: { event: {
           hint_dates: "must attend both days",
@@ -1311,6 +1492,25 @@ RSpec.describe "Events", type: :request do
       expect(response.body).not_to include("Any status")
     end
 
+    context "CE sign-ins link in bulk actions" do
+      it "links to the CE attendance report for a CE-eligible event" do
+        event.update!(ce_hours_offered: 6)
+        get registrants_event_path(event)
+
+        expect(response.body).to include("CE sign-ins")
+        expect(response.body).to include(attendance_event_path(event))
+      end
+
+      it "links the generic sign-ins when the event offers no CE" do
+        event.update!(ce_hours_offered: 0)
+        get registrants_event_path(event)
+
+        expect(response.body).not_to include("CE sign-ins")
+        expect(response.body).to include("Sign-ins")
+        expect(response.body).to include(attendance_event_path(event))
+      end
+    end
+
     context "with unknown filter params" do
       it "does not crash on an invalid payment_status" do
         get registrants_event_path(event, payment_status: "bogus")
@@ -1443,6 +1643,37 @@ RSpec.describe "Events", type: :request do
         expect(response.body).not_to include("Activa")
       end
 
+      it "filters to transferred-in registrations via the FK-backed value" do
+        source = create(:event_registration, status: "transferred_out")
+        incoming_person = create(:person, first_name: "Incomia", last_name: "Transferred")
+        create(:event_registration, event: event, registrant: incoming_person, status: "registered", transferred_from_registration: source)
+
+        get registrants_event_path(event, params: { attendance_status: "transferred_in" })
+
+        expect(response.body).to include("Incomia")
+        # The roster badge carries an "In" marker alongside the real status.
+        expect(response.body).to include("Transferred in from another event")
+        expect(response.body).not_to include("Activa")
+        expect(response.body).not_to include("Inactiva")
+      end
+
+      it "warns on a transferred-out registration whose destination isn't recorded yet" do
+        create(:event_registration, event: event, status: "transferred_out")
+
+        get registrants_event_path(event, params: { attendance_status: "transferred_out" })
+
+        expect(response.body).to include("Transfer incomplete — no destination event recorded yet")
+      end
+
+      it "drops the warning once the transfer destination is recorded" do
+        source = create(:event_registration, event: event, status: "transferred_out")
+        create(:event_registration, registrant: source.registrant, transferred_from_registration: source)
+
+        get registrants_event_path(event, params: { attendance_status: "transferred_out" })
+
+        expect(response.body).not_to include("Transfer incomplete — no destination event recorded yet")
+      end
+
       it "shows the active registrant count in the page heading" do
         get registrants_event_path(event)
 
@@ -1460,12 +1691,12 @@ RSpec.describe "Events", type: :request do
           .at_css("tr#registrant-row-#{registration.id} td[data-column-toggle-col='organization']")&.text&.squish
       end
 
-      # Stores a submitted "agency_name" answer for the registrant, mirroring what
-      # public registration captures, so the Pending/None chip logic has data.
+      # Stores a submitted "organization_name" answer for the registrant, mirroring
+      # what public registration captures, so the Pending/None chip logic has data.
       def submit_agency_name(name)
         registration_form = Form.find_by(name: "Registration") || create(:form, name: "Registration")
-        field = registration_form.form_fields.find_by(field_identifier: "agency_name") ||
-          create(:form_field, form: registration_form, field_identifier: "agency_name")
+        field = registration_form.form_fields.find_by(field_identifier: "organization_name") ||
+          create(:form_field, form: registration_form, field_identifier: "organization_name")
         create(:event_form, :registration, event: event, form: registration_form) unless event.registration_form
         submission = create(:form_submission, person: person, form: registration_form)
         create(:form_answer, form_submission: submission, form_field: field, submitted_answer: name)
@@ -2354,12 +2585,14 @@ RSpec.describe "Events", type: :request do
         expect(page).to have_link(href: registrants_event_path(event, ce_status: "registered"), visible: :all)
       end
 
-      it "shows a program status badge next to each organization" do
+      it "shows a program status badge next to each organization, hovering to explain it" do
         get dashboard_event_path(event)
 
         # The org list lives inside a collapsed <details>, so match hidden nodes too.
         page = Capybara.string(response.body)
-        expect(page).to have_css("span[title='New']", text: "N", visible: :all)
+        badge = page.all("span", text: "N", visible: :all).find { |node| node[:title]&.start_with?("New as of") }
+        expect(badge).to be_present
+        expect(badge[:title]).to include("event start date")
       end
 
       it "renders the payments section with totals for a paid event" do
@@ -2477,18 +2710,20 @@ RSpec.describe "Events", type: :request do
         create(:event_registration, event: event, registrant: create(:person), status: "attended")
         create(:event_registration, event: event, registrant: create(:person), status: "no_show")
         create(:event_registration, event: event, registrant: create(:person), status: "cancelled")
+        # A transferred-in registrant: registered here, back-linked to a source.
+        source = create(:event_registration, status: "transferred_out")
+        create(:event_registration, event: event, registrant: create(:person), status: "registered", transferred_from_registration: source)
 
         get dashboard_event_path(event)
 
         page = Capybara.string(response.body)
         expect(page).to have_text("Attended", normalize_ws: true)
-        # Every status is its own row that drills into the roster filtered to it.
-        %w[ attended no_show registered cancelled transferred_in transferred_out incomplete_attendance ].each do |status|
+        expect(page).to have_text("Transferred in", normalize_ws: true)
+        # Every row (real statuses plus the FK-backed transferred_in) drills into
+        # the roster filtered to it.
+        %w[ attended no_show registered cancelled transferred_out transferred_in incomplete_attendance ].each do |status|
           expect(page).to have_link(href: registrants_event_path(event, attendance_status: status), visible: :all)
         end
-        # 1 attended over 3 registrants (attended + registered + no-show; the
-        # cancellation is excluded) → 33%.
-        expect(page).to have_text("33%", normalize_ws: true)
       end
     end
 
@@ -2545,7 +2780,7 @@ RSpec.describe "Events", type: :request do
           get roster_event_path(owned_event)
 
           expect(response).to have_http_status(:ok)
-          expect(response.body).to include("Registrant roster")
+          expect(response.body).to include("Roster")
           expect(response.body).to include("Ada")
           expect(response.body).to include("Lovelace")
           expect(response.body).to include("Roster Org")
@@ -2613,7 +2848,7 @@ RSpec.describe "Events", type: :request do
           submission = create(:form_submission, person: person, form: registration_form)
 
           sector = create(:sector, name: "Sexual Assault")
-          sector_field = create(:form_field, form: registration_form, field_identifier: "primary_sector_single")
+          sector_field = create(:form_field, form: registration_form, field_identifier: "primary_sector")
           create(:form_answer, form_submission: submission, form_field: sector_field, submitted_answer: sector.id.to_s)
 
           age_range = create(:category_type, name: "AgeRange")
@@ -2681,6 +2916,17 @@ RSpec.describe "Events", type: :request do
           expect(response.body).to include("#{recipients_event_path(owned_event)}#participant-#{registration.slug}")
         end
 
+        it "badges a declined award on the roster instead of dropping the recipient" do
+          scholarship = create(:scholarship, recipient: person)
+          create(:allocation, source: scholarship, allocatable: registration)
+          scholarship.reload.decline_agreement!("Timing no longer works")
+
+          get roster_event_path(owned_event)
+
+          expect(response.body).to include("fa-graduation-cap")
+          expect(response.body).to include("Declined")
+        end
+
         it "does not show a recipients link for registrants without a scholarship" do
           get roster_event_path(owned_event)
 
@@ -2728,7 +2974,7 @@ RSpec.describe "Events", type: :request do
         it "returns to the roster from the registration it opened" do
           get edit_event_registration_path(registration, return_to: "roster")
 
-          expect(response.body).to include("Registrant roster")
+          expect(response.body).to include("Roster")
           expect(response.body).to include(roster_event_path(owned_event))
         end
 
@@ -3010,6 +3256,33 @@ RSpec.describe "Events", type: :request do
         expect(response.body).to include("It will let me reach more survivors.")
       end
 
+      it "keeps a declined award on the recipient's card, struck through and badged" do
+        registration = EventRegistration.find_by!(registrant: applicant, event: event)
+        scholarship = create(:scholarship, recipient: applicant, amount_cents: 1000)
+        create(:allocation, source: scholarship, allocatable: registration, amount: 1000)
+        scholarship.reload.decline_agreement!("Timing no longer works")
+
+        get recipients_event_path(event)
+
+        expect(response.body).to include("Declined")
+        expect(response.body).to match(/line-through[^>]*>\s*<i[^>]*sack-dollar[^>]*><\/i>\s*\$10\b/)
+      end
+
+      it "recognizes a transferred-in registrant as a scholarship recipient (award on the source)" do
+        # Same person transfers: source award + incoming reg both belong to them.
+        person = create(:person, first_name: "Transo", last_name: "Ferredin")
+        source = create(:event_registration, event: create(:event, cost_cents: 5_000), registrant: person, status: "transferred_out")
+        create(:allocation, source: create(:scholarship, recipient: person, amount_cents: 5_000),
+               allocatable: source, amount: 5_000)
+        create(:event_registration, event: event, registrant: person, status: "registered",
+               transferred_from_registration: source)
+
+        get recipients_event_path(event)
+
+        expect(response.body).to include("Transo Ferredin")
+        expect(response.body).to include("Billed to original event")
+      end
+
       it "shows a recipient city breakdown, grouped by the registration-linked org, in the lazy charts frame" do
         org = create(:organization, name: "Reach Org")
         create(:address, addressable: org, city: "Richmond", state: "CA", inactive: false)
@@ -3021,6 +3294,28 @@ RSpec.describe "Events", type: :request do
         expect(response).to have_http_status(:ok)
         expect(response.body).to include("All cities")
         expect(response.body).to include("Richmond, CA")
+      end
+
+      # These charts cover one event, so program status has to be judged on that
+      # event's start date — the same verdict its dashboard shows, and what the
+      # card's note claims. The affiliation here starts after Jan 1 but before the
+      # training, so the cross-event start-of-year fallback would read it as New.
+      it "anchors the program-status breakdown on the event's start date" do
+        org = create(:organization, name: "Anchored Org")
+        create(:affiliation, organization: org, person: create(:person),
+                             title: "Facilitator", start_date: 2.weeks.from_now.to_date)
+        registration = EventRegistration.find_by!(registrant: applicant, event: event)
+        create(:event_registration_organization, event_registration: registration, organization: org)
+        # Anchor the start time at noon so the event's calendar date is the same in
+        # the request's viewer time zone and the assertion below, whatever the clock.
+        event.update!(start_date: event.start_date.change(hour: 12))
+
+        get recipients_event_path(event), headers: { "Turbo-Frame" => "recipients_charts" }
+
+        card = Capybara.string(response.body).find("#organization-program-status", visible: :all)
+        expect(card).to have_text(:all, "Ongoing")
+        expect(card).to have_no_text(:all, "New")
+        expect(card).to have_css("i[title*='#{event.start_date.strftime('%b %-d, %Y')}']", visible: :all)
       end
 
       it "renders the collapsible card controls and an expand/collapse-all button" do
@@ -3399,6 +3694,17 @@ RSpec.describe "Events", type: :request do
 
           expect(response).to redirect_to(recipients_event_path(event))
         end
+
+        it "warns and does not feature a transferred-out registration (#1944)" do
+          registration = event.event_registrations.find_by(registrant: applicant)
+          registration.update!(status: "transferred_out")
+
+          post feature_recipient_shoutout_event_path(event), params: { registration_id: registration.id }
+
+          expect(registration.reload.shoutout).to be(false)
+          expect(response).to redirect_to(recipients_event_path(event))
+          expect(flash[:alert]).to match(/transferred out|locked/i)
+        end
       end
     end
 
@@ -3485,6 +3791,36 @@ RSpec.describe "Events", type: :request do
         sign_in admin
         get staff_event_path(published_event)
         expect(response.body).to include(edit_staff_event_path(published_event))
+      end
+
+      it "shows a staff member's license credentials when their profile allows it" do
+        staffer.update!(profile_show_credentials: true)
+        create(:professional_license, person: staffer, kind: "LMFT", number: "44556")
+        create(:event_staff, event: published_event, person: staffer)
+        sign_in admin
+        get staff_event_path(published_event)
+        expect(response.body).to include("LMFT")
+      end
+
+      it "hides a staff member's license credentials when their profile disallows it" do
+        staffer.update!(profile_show_credentials: false)
+        create(:professional_license, person: staffer, kind: "LMFT", number: "44556")
+        create(:event_staff, event: published_event, person: staffer)
+        sign_in admin
+        get staff_event_path(published_event)
+        expect(response.body).not_to include("LMFT")
+      end
+
+      it "joins a staff member's multiple license credentials comma-separated" do
+        staffer.update!(profile_show_credentials: true)
+        create(:professional_license, person: staffer, kind: "LMFT", number: "44556")
+        create(:professional_license, person: staffer, kind: "LCSW", number: "77889")
+        create(:event_staff, event: published_event, person: staffer)
+        credentials = staffer.reload.license_credentials
+        expect(credentials).to include(", ").and(include("LMFT")).and(include("LCSW"))
+        sign_in admin
+        get staff_event_path(published_event)
+        expect(response.body).to include(credentials)
       end
     end
 
@@ -3698,7 +4034,7 @@ RSpec.describe "Events", type: :request do
         post send_reminder_event_path(event), params: { registration_ids: [] }
       }.not_to change(Notification, :count)
 
-      expect(response).to redirect_to(preview_reminder_event_path(event, custom_message: "", custom_subject: ""))
+      expect(response).to redirect_to(preview_reminder_event_path(event, custom_message: "", custom_subject: "", hide_event_card: "0", hide_ticket_button: "0"))
     end
 
     it "logs an Ahoy event with the recipient count on a successful send" do

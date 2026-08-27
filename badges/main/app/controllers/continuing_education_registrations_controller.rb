@@ -1,9 +1,27 @@
 class ContinuingEducationRegistrationsController < ApplicationController
-  before_action :set_ce_registration, except: [ :new, :create ]
+  before_action :set_ce_registration, except: [ :index, :new, :create ]
   before_action :set_event_registration, only: [ :new, :create ]
+
+  def index
+    authorize!
+    base = ContinuingEducationRegistration.search_by_params(params)
+    # Totals over the whole (unpaginated) filtered set so the header stays true
+    # across pages.
+    @ce_total_cost_cents = base.sum(:cost_cents)
+    @ce_total_hours = base.sum(:hours)
+    @ce_registrations = base.includes(:allocations, professional_license: [], event_registration: [ :registrant, :event ])
+      .order(created_at: :desc)
+      .paginate(page: params[:page], per_page: 25)
+    render :continuing_education_registrations_results if turbo_frame_request?
+  end
+
+  def show
+    authorize! @ce_registration
+  end
 
   def new
     authorize!
+
     @ce_registration = @event_registration.continuing_education_registrations.build(
       professional_license: @event_registration.registrant.professional_licenses.first,
       hours: @event_registration.event.ce_hours_offered,
@@ -22,8 +40,8 @@ class ContinuingEducationRegistrationsController < ApplicationController
       @ce_registration.save!
     end
     redirect_to helpers.ce_registration_return_path(@ce_registration.event_registration), notice: "CE registration created.", status: :see_other
-  rescue ActiveRecord::RecordInvalid
-    flash.now[:alert] = @ce_registration.errors.full_messages.to_sentence
+  rescue ActiveRecord::RecordInvalid => e
+    flash.now[:alert] = error_sentence(e.record)
     render :new, status: :unprocessable_content
   end
 
@@ -37,10 +55,11 @@ class ContinuingEducationRegistrationsController < ApplicationController
     ActiveRecord::Base.transaction do
       apply_ce_params(@ce_registration)
       @ce_registration.save!
+      apply_time_entries(@ce_registration.event_registration)
     end
     redirect_to helpers.ce_registration_return_path(@ce_registration.event_registration), notice: "CE registration updated.", status: :see_other
-  rescue ActiveRecord::RecordInvalid
-    flash.now[:alert] = @ce_registration.errors.full_messages.to_sentence
+  rescue ActiveRecord::RecordInvalid => e
+    flash.now[:alert] = error_sentence(e.record)
     render :edit, status: :unprocessable_content
   end
 
@@ -89,11 +108,31 @@ class ContinuingEducationRegistrationsController < ApplicationController
                                    expires_on: params.dig(:continuing_education_registration, :license_expires_on),
                                    license_id: params.dig(:continuing_education_registration, :professional_license_id))
     ce_registration.hours = params.dig(:continuing_education_registration, :hours)
-    cost = params.dig(:continuing_education_registration, :cost_dollars)
-    ce_registration.cost_cents = (cost.to_d * 100).round if cost.present?
+    # A transfer-created record's cost is snapshotted from the source's outstanding
+    # balance and admin-locked, so ignore any submitted cost for it. (#1944)
+    unless ce_registration.transfer_created?
+      cost = params.dig(:continuing_education_registration, :cost_dollars)
+      ce_registration.cost_cents = (cost.to_d * 100).round if cost.present?
+    end
 
-    comments = params.fetch(:continuing_education_registration, {})
-      .permit(comments_attributes: [ :id, :topic, :body, :flagged, :_destroy ])[:comments_attributes]
-    ce_registration.comments_attributes = comments if comments.present?
+    nested = params.fetch(:continuing_education_registration, {})
+      .permit(comments_attributes: [ :id, :topic, :body, :flagged, :_destroy ],
+              notifications_attributes: [ :id, :channel, :sender_id, :email_subject, :email_body_text, :direction, :responded, :noticeable_type, :noticeable_id, :_destroy ])
+    ce_registration.comments_attributes = nested[:comments_attributes] if nested[:comments_attributes].present?
+    ce_registration.notifications_attributes = nested[:notifications_attributes] if nested[:notifications_attributes].present?
+  end
+
+  # Staff corrections to the registrant's attendance times, submitted alongside the
+  # CE form under continuing_education_registration[time_entries] as full datetimes
+  # (this form spans every day, unlike the report's per-day editor).
+  def apply_time_entries(registration)
+    EventAttendanceEntriesUpdate.new(registration, time_entries_attributes, editor: current_user).save!
+  end
+
+  def time_entries_attributes
+    params.fetch(:continuing_education_registration, {})
+          .permit(time_entries: [ :id, :signed_in_at, :signed_out_at, :_destroy ])
+          .fetch(:time_entries, {})
+          .values
   end
 end

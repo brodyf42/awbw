@@ -4,7 +4,7 @@
       Scholarships (<%= scholarships.total_entries %>)
     </h2>
     <%= link_to new_scholarship_path(grant_id: grant.id, return_to: return_to),
-                class: "inline-flex items-center gap-1.5 text-sm font-medium text-gray-500 hover:text-gray-700" do %>
+                class: "inline-flex items-center gap-1.5 text-sm font-medium #{eyebrow_link_class}" do %>
       <i class="fa-solid fa-plus text-xs"></i>
       Add scholarship
       <i class="fa-solid fa-arrow-up-right-from-square text-xs text-gray-400"></i>
@@ -27,8 +27,10 @@
             <tr class="hover:bg-gray-50">
               <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-900">
                 <%= scholarship.recipient&.full_name || "Unknown recipient" %>
+                <%= scholarship.decorate.agreement_status_badge %>
               </td>
-              <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-900 text-right">
+              <%# Declined awards don't draw down the grant, so the amount is struck through. %>
+              <td class="px-4 py-2 whitespace-nowrap text-sm text-right <%= scholarship.agreement_declined? ? "text-gray-400 line-through" : "text-gray-900" %>">
                 <%= dollars_from_cents(scholarship.amount_cents) %>
               </td>
               <td class="px-4 py-2 whitespace-nowrap text-sm text-center">
@@ -43,7 +45,7 @@
               </td>
               <td class="px-4 py-2 whitespace-nowrap text-sm text-right">
                 <%= link_to "Edit", edit_scholarship_path(scholarship, return_to: return_to),
-                            class: "text-gray-500 hover:text-gray-700 underline" %>
+                            class: "#{eyebrow_link_class} underline" %>
               </td>
             </tr>
           <% end %>

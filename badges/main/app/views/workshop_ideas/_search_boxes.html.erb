@@ -1,34 +1,27 @@
 <%= form_tag(workshop_ideas_path, method: :get, class: "space-y-4") do |f| %>
   <!-- Filters Header -->
   <div>
-    <h3 class="text-sm font-semibold uppercase text-gray-500 tracking-wide">Search filters</h3>
+    <h3 class="text-sm font-semibold tracking-wide text-gray-500 uppercase">Search filters</h3>
   </div>
   <!-- Search Fields -->
-  <div class="grid grid-cols-1 md:grid-cols-3 gap-4 px-4 py-0 mb-0">
+  <div class="mb-0 grid grid-cols-1 gap-4 px-4 py-0 md:grid-cols-3">
     <div class="relative">
       <%= text_field_tag :title,
                          params[:title],
                          placeholder: "Title",
-                         class: "w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 focus:ring-blue-500 focus:border-blue-500" %>
-      <button
-        type="submit"
-        class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700"
-      >
-        <i class="fa fa-search"></i>
-      </button>
+                         class: search_field_class(extra: "pr-10") %>
+      <%= render "shared/search_submit" %>
     </div>
-    <div data-controller="searchable-select" data-searchable-select-mode-value="person">
-      <%= select_tag :created_by_id,
-                     options_from_collection_for_select(@users, :id, :full_name_with_email, params[:created_by_id].to_i),
-                     include_blank: "Author",
-                     data: { searchable_select_target: "select", action: "change->searchable-select#submit" },
-                     class: "w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500" %>
+    <div class="relative">
+      <%= text_field_tag :author_name,
+                         params[:author_name],
+                         placeholder: "Author name",
+                         class: search_field_class(extra: "pr-10") %>
+      <%= render "shared/search_submit" %>
     </div>
     <!-- Clear filters -->
-    <div class="flex sm:justify-end items-end">
-      <%= link_to 'Clear filters', workshop_ideas_path,
-                  class: "btn btn-utility",
-                  data: { action: "collection#clearAndSubmit" } %>
+    <div class="flex items-end sm:justify-end">
+      <%= render "shared/search_clear", url: workshop_ideas_path %>
     </div>
   </div>
 <% end %>

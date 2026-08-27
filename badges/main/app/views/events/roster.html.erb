@@ -12,7 +12,7 @@
 <div class="<%= DomainTheme.bg_class_for(:events) %> border border-gray-200 rounded-xl shadow p-4 sm:p-6">
   <%# Top bar: back link + sub-nav, matching the other event pages %>
   <div class="flex flex-wrap items-center justify-between gap-2 sm:gap-4 mb-6 print:hidden">
-    <%= link_to "← Dashboard", dashboard_event_path(@event), class: "text-sm text-gray-500 hover:text-gray-700" %>
+    <%= link_to "← Dashboard", dashboard_event_path(@event), class: "text-sm #{eyebrow_link_class} px-2 py-1" %>
     <%= render "events/subnav", event: @event, current: :roster %>
   </div>
   <% print_button = capture do %>
@@ -28,7 +28,7 @@
       own attendance pill. %>
   <% partial_count = @dashboard.attendance_count_for("incomplete_attendance") %>
   <%= render "events/report_header",
-        title: "Registrant roster",
+        title: "Roster",
         icon: "fa-solid fa-users-viewfinder",
         theme: :people,
         event: @event,
@@ -60,7 +60,7 @@
         <%= link_to roster_event_path(@event), class: "group/reg block hover:underline leading-tight" do %>
           <span class="text-xl font-bold text-gray-900 tabular-nums"><%= @dashboard.registrant_count %></span>
           <span class="text-xs text-gray-500">Registrants</span>
-          <i class="fa-solid fa-arrow-up-right-from-square text-[10px] text-gray-400 opacity-0 group-hover/reg:opacity-100 transition-opacity"></i>
+          <i class="fa-solid fa-arrow-up-right-from-square text-2xs text-gray-400 opacity-0 group-hover/reg:opacity-100 transition-opacity"></i>
         <% end %>
         <span class="block text-xs text-gray-400 mt-0.5">
           <%= link_to recipients_event_path(@event), class: "hover:underline whitespace-nowrap" do %><%= pluralize(@dashboard.scholarship_recipient_count, "scholarship") %><% end %>
@@ -135,7 +135,7 @@
         </div>
       <% end %>
       <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-        <%= render "events/registrant_roster", roster: @dashboard, registrants: @roster_registrants, row_return_to: "roster", show_attendance_status: true %>
+        <%= render "events/registrant_roster", roster: @dashboard, registrants: @roster_registrants, row_return_to: "roster", show_attendance_status: true, program_status_event: @event %>
       </div>
     </div>
 

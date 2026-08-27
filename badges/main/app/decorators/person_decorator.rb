@@ -8,12 +8,14 @@ class PersonDecorator < ApplicationDecorator
     length ? text&.truncate(length) : text
   end
 
-  def default_display_image
-    "missing.png"
-  end
-
   def primary_asset
     avatar
+  end
+
+  # The subscriptions index filtered to this person's News (mailing-list) topic —
+  # where mailing-list interest now lives since the person-level consent flag retired.
+  def news_subscriptions_path
+    h.topic_subscriptions_path(person_id: id, topic_subscription_type_id: TopicSubscriptionType.news&.id)
   end
 
   def pronouns_display
@@ -23,11 +25,6 @@ class PersonDecorator < ApplicationDecorator
   def default_display_image
     return avatar if respond_to?(:avatar) && avatar&.attached?
     "missing.png"
-  end
-
-  def affiliation_end_date
-    return nil if affiliations.active.exists?
-    affiliations.maximum(:end_date)
   end
 
   # Org names where this person is currently an active facilitator. Filters the
@@ -57,19 +54,9 @@ class PersonDecorator < ApplicationDecorator
     member_since.present? && earliest_facilitator.present? && member_since.beginning_of_month < earliest_facilitator.beginning_of_month
   end
 
-  def member_since_earlier_than_all_affiliations?
-    earliest = affiliations.minimum(:start_date)
-    member_since.present? && earliest.present? && member_since.beginning_of_month < earliest.beginning_of_month
-  end
-
   def member_since_differs_from_facilitator_affiliations?
     earliest_facilitator = affiliations.facilitators.minimum(:start_date)
     member_since.present? && earliest_facilitator.present? && member_since.beginning_of_month != earliest_facilitator.beginning_of_month
-  end
-
-  def member_since_differs_from_all_affiliations?
-    earliest = affiliations.minimum(:start_date)
-    member_since.present? && earliest.present? && member_since.beginning_of_month != earliest.beginning_of_month
   end
 
   def badges
@@ -88,6 +75,20 @@ class PersonDecorator < ApplicationDecorator
     # preload affiliations don't fire a MIN(start_date) query per row.
     # `.minimum` would ignore the loaded records and hit the DB every time.
     @affiliated_since_date ||= affiliations.filter_map(&:start_date).min
+  end
+
+  def facilitator_since_range
+    date_range_display(facilitator_since_date, facilitation_end_date, ended_title: "No active facilitator affiliations")
+  end
+
+  # A grey secondary line under "Facilitator since", shown only when the earliest
+  # affiliation start differs (by month/year) from the facilitator start — so the
+  # two aren't redundant. Nil when they match or there's no affiliation date.
+  def affiliated_since_note
+    date = affiliated_since_date
+    return nil if date.nil?
+    return nil if facilitator_since_date && date.beginning_of_month == facilitator_since_date.beginning_of_month
+    "Affiliated since #{date.strftime('%b %Y')}"
   end
 
   private
@@ -110,6 +111,14 @@ class PersonDecorator < ApplicationDecorator
       badges << badge("Affiliated since #{affiliated_since_date.strftime('%B %Y')}", :affiliated_person)
     end
     badges
+  end
+
+  def date_range_display(since, ended, ended_title:)
+    parts = []
+    parts << h.content_tag(:i, "", class: "fa-solid fa-circle-xmark text-red-400 mr-1", title: ended_title) if ended
+    parts << (since&.strftime("%b %Y") || "—")
+    parts << " – #{ended.strftime('%b %Y')}" if ended
+    h.safe_join(parts)
   end
 
   def badge(label, key)
